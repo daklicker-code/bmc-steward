@@ -1,0 +1,4665 @@
+#!/usr/bin/env python3
+"""BMC-Steward: BMC-Erstkonfiguration für Dell iDRAC, HPE iLO, Supermicro und Lenovo XCC.
+
+Bedient jeden Server der Reihe nach. Eine Datei für Linux und Windows. Benötigt Python 3.9+ und PyQt6.
+Oberfläche in Deutsch, Englisch, Französisch und Schweizerdeutsch.
+
+Autor: Björn Franzke
+Lizenz: MIT (siehe LICENSE)
+Quelle: https://github.com/daklicker-code/bmc-steward
+"""
+__author__ = "Björn Franzke"
+__version__ = "1.0.0"
+__license__ = "MIT"
+URL = "https://github.com/daklicker-code/bmc-steward"
+import base64
+import errno
+import glob
+import html
+import http.client
+import ipaddress
+import json
+import os
+import random
+import re
+import shutil
+import signal
+import socket
+import ssl
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from PyQt6.QtCore import QLocale, QProcess, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QFontDatabase
+from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
+from PyQt6.QtWidgets import (
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+    QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
+)
+from PyQt6.QtCore import Qt
+
+WINDOWS = os.name == "nt"
+LANGS = [("de", "Deutsch"), ("en", "English"), ("fr", "Français"), ("gsw", "Schwiizerdütsch")]
+LANG = "de"
+MAIN = None         # das Hauptfenster; beim Sprachwechsel wird es neu aufgebaut
+
+
+def T(text):
+    """Übersetzt einen deutschen Text der Oberfläche in die gewählte Sprache (TR steht am Dateiende)."""
+    if LANG == "de":
+        return text
+    hit = TR.get(text)
+    return hit[("en", "fr", "gsw").index(LANG)] if hit else text
+
+
+# Ordner des Tools (bei einer mit PyInstaller gebauten .exe der Ordner der .exe)
+HERE = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+LIST = HERE / "servers.csv"          # Vorschlag für „Liste speichern“; von selbst wird nichts gespeichert
+PROFILES = HERE / "bmc-profile.json"   # Profile: Einstellungen ohne Passwörter und ohne Serverliste
+BIOS_PROFILES = HERE / "bmc-bios-profile.json"   # UEFI-Vorlagen: eigener Bereich, getrennt von PROFILES
+def build_texts():
+    """Texte, die schon vor dem Fenster gebraucht werden; nach einem Sprachwechsel neu aufrufen."""
+    global NO_PROFILE, VENDORS, USER_HINT, PASS_HINT, VERSION_HINT, COL_TIPS, COLS
+    NO_PROFILE = T("(kein Profil)")
+    VENDORS = [(T("Automatisch erkennen"), ""), (T("Dell iDRAC"), "dell"), (T("HPE iLO"), "hpe"), ("Supermicro", "smc"),
+               (T("Lenovo XCC"), "lenovo")]
+    USER_HINT = {"": T("automatisch je Hersteller"), "dell": "root", "hpe": "Administrator", "smc": "ADMIN",
+                 "lenovo": "USERID"}
+    PASS_HINT = {"": T("Werkspasswort"), "dell": T("ab Werk calvin oder laut Service-Tag-Auszug"),
+                 "hpe": T("steht auf dem Anhänger am Gerät"), "smc": T("steht auf dem Aufkleber am Gerät"),
+                 "lenovo": T("steht auf dem Anhänger am Gerät")}
+    VERSION_HINT = {
+        "": T("Geprüft: Dell iDRAC9 · HPE iLO 5/6 · Supermicro X12/X13 · Lenovo XCC2/XCC3. "
+            "Andere Generationen zuerst an einem einzelnen Gerät testen."),
+        "dell": T("iDRAC9, 14. bis 16. Generation (z. B. R6625). iDRAC10 (17. Generation) ist nicht geprüft, "
+                "einzelne Aufrufe können dort abweichen."),
+        "hpe": T("iLO 5 und 6 (Gen10, Gen10 Plus, Gen11, z. B. DL345/DL365). iLO 7 (Gen12) ist nicht geprüft."),
+        "smc": T("Aktuelle X12/X13-Boards mit Redfish 1.x, auch baugleiche Nutanix-NX-Nodes. Bei älteren Boards "
+               "können einzelne Redfish-Funktionen eine Lizenz erfordern."),
+        "lenovo": T("ThinkSystem mit XCC2/XCC3 (z. B. SR6xx, SR8xx). Ältere Systeme mit XCC1 sind nicht geprüft."),
+    }
+    COL_TIPS = [
+        T("Adresse, unter der der BMC jetzt erreichbar ist, z. B. die per DHCP vergebene."),
+        T("Aktuelles Passwort dieses Geräts. Nur nötig, wenn es vom Werkspasswort oben abweicht\n"
+        "(bei HPE, Supermicro und Lenovo ist es pro Gerät verschieden)."),
+        T("Feste Adresse, die der BMC bekommen soll."),
+        T("Subnetzmaske zur neuen Adresse, z. B. 255.255.255.0. Eingabe als /24 wird umgewandelt."),
+        T("Gateway im Netz der neuen Adresse."),
+        T("Name, den der BMC bekommt (iDRAC-, iLO- bzw. BMC-Hostname), nicht der Name des Betriebssystems."),
+    ]
+    COLS = [T("Aktuelle IP"), T("Passwort"), T("Neue IP"), T("Subnetzmaske"), T("Gateway"), T("Hostname")]
+
+
+def load_lang():
+    """Zuletzt gewählte Sprache, sonst die des Systems, sonst Englisch."""
+    try:
+        code = json.loads(PROFILES.read_text(encoding="utf-8")).get("lang")
+    except (OSError, ValueError, AttributeError):
+        code = None
+    if code not in dict(LANGS):
+        code = QLocale.system().name().split("_")[0].lower()
+    return code if code in dict(LANGS) else "en"
+
+
+def set_language(code):
+    global LANG
+    LANG = code
+    build_texts()
+
+
+def stop_leftover_dhcp():
+    """Beendet dnsmasq-Prozesse, die ein früher abgestürzter Lauf des Tools hinterlassen hat (nur Linux).
+    Ein vergessener DHCP-Server wäre gefährlich, sobald der Rechner in ein anderes Netz gesteckt wird."""
+    count = 0
+    if WINDOWS:
+        return count
+    for pidfile in glob.glob(os.path.join(tempfile.gettempdir(), "bmc-dhcp-*", "pid")):
+        try:
+            pid = int(Path(pidfile).read_text().strip())
+            if Path(f"/proc/{pid}/comm").read_text().strip() == "dnsmasq":
+                os.kill(pid, signal.SIGTERM)
+                count += 1
+        except (OSError, ValueError):
+            pass
+        shutil.rmtree(os.path.dirname(pidfile), ignore_errors=True)
+    return count
+
+
+ERR_BG = QColor(217, 83, 79, 150)      # Fehler
+MISS_BG = QColor(240, 173, 78, 150)    # Pflichtfeld noch leer
+MISS_CSS = "QLineEdit { border: 2px solid #f0ad4e; background: rgba(240, 173, 78, 90); }"
+ERR_CSS = "QLineEdit { border: 2px solid #d9534f; background: rgba(217, 83, 79, 80); }"
+LIVE_CSS = ("QPushButton { background: #c9302c; color: white; font-weight: bold; padding: 4px 14px; }"
+            "QPushButton:disabled { background: #8a5a58; color: #dddddd; }")
+ABOUT = (f"<hr><p><small>BMC-Steward {__version__} · © 2026 {__author__} · MIT License · "
+         f'<a href="{URL}">{URL}</a></small></p>')
+DONE_BG = QColor(63, 164, 91, 90)      # Server fertig konfiguriert
+HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+USER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,16}$")
+
+
+def ipv4(text):
+    """IPv4-Adresse oder None. Führende Nullen und Kurzformen wie 10.1 sind ungültig."""
+    try:
+        return ipaddress.IPv4Address(text)
+    except ValueError:
+        return None
+
+
+def netmask(text):
+    """Netz zu einer Subnetzmaske (255.255.255.0) oder None bei ungültiger Maske."""
+    if not ipv4(text):
+        return None
+    try:
+        net = ipaddress.IPv4Network(f"0.0.0.0/{text}")
+    except ValueError:
+        return None
+    return net if 1 <= net.prefixlen <= 30 else None
+
+
+def row_errors(v):
+    """Prüft eine Tabellenzeile, gibt {Spalte: Meldung} zurück ("" = Pflichtfeld leer)."""
+    e = {}
+    for c in (0, 2, 3, 4, 5):
+        if not v[c]:
+            e[c] = ""
+    if v[0] and not ipv4(v[0]):
+        e[0] = T("Keine gültige IPv4-Adresse")
+    if "," in v[1]:
+        e[1] = T("Kommas im Passwort werden nicht unterstützt")
+    new, gw = ipv4(v[2]), ipv4(v[4])
+    mask = netmask(v[3])
+    if v[2] and not new:
+        e[2] = T("Keine gültige IPv4-Adresse")
+    if v[3] and not mask:
+        e[3] = T("Keine gültige Subnetzmaske (z. B. 255.255.255.0 oder /24)")
+    if v[4] and not gw:
+        e[4] = T("Keine gültige IPv4-Adresse")
+    if new and mask:
+        net = ipaddress.IPv4Network(f"{new}/{mask.prefixlen}", strict=False)
+        if new in (net.network_address, net.broadcast_address):
+            e[2] = T('Netz- oder Broadcast-Adresse von {0}').format(net)
+        if gw and gw not in net:
+            e[4] = T('Gateway liegt nicht im Netz der neuen IP ({0})').format(net)
+        elif gw and gw in (net.network_address, net.broadcast_address):
+            e[4] = T('Netz- oder Broadcast-Adresse von {0}').format(net)
+    if new and gw and new == gw:
+        e[4] = T("Gateway und neue IP sind identisch")
+    if v[5] and not HOST_RE.match(v[5]):
+        e[5] = T("Nur Buchstaben, Ziffern und Bindestrich (nicht am Anfang/Ende), höchstens 63 Zeichen")
+    return e
+
+
+# ======================================================================
+# Redfish-Ablauf (reines Python, läuft unter Linux und Windows)
+# ======================================================================
+TLS = ssl.create_default_context()
+TLS.check_hostname = False
+TLS.verify_mode = ssl.CERT_NONE          # BMCs haben ab Werk selbstsignierte Zertifikate
+# BMCs immer direkt ansprechen, nie über einen (System-)Proxy
+HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=TLS))
+
+
+class RedfishClient:
+    """Gemeinsamer Unterbau: HTTP/Redfish-Zugriff und Hersteller-Erkennung, ohne eigenen Ablauf."""
+
+    DEFAULT_USER = {"dell": "root", "hpe": "Administrator", "smc": "ADMIN", "lenovo": "USERID"}
+    NAME = {"dell": "Dell (iDRAC)", "hpe": "HPE (iLO)", "smc": "Supermicro", "lenovo": "Lenovo (XCC)"}
+    SYS_ID = {"dell": "System.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
+
+    def __init__(self, dry=True, log=print, stopped=lambda: False):
+        self.dry, self.log, self.stopped = dry, log, stopped
+        self.cur_user = ""
+        self.code, self.body = 0, None
+
+    def sys_path(self, vendor):
+        return f"/redfish/v1/Systems/{self.SYS_ID[vendor]}"
+
+    def pause(self, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not self.stopped():
+            time.sleep(0.2)
+
+    # ---------- HTTP ----------
+    def api(self, ip, user, pw, method, path, data=None, timeout=30):
+        """Sendet eine Anfrage, gibt den HTTP-Code zurück (0 = keine Verbindung); Antwort in self.body."""
+        self.body = None
+        if self.dry:
+            shown = ""
+            if data is not None:
+                shown = json.dumps({k: ("***" if k == "Password" else v) for k, v in data.items()},
+                                   separators=(",", ":"), ensure_ascii=False)
+            self.log(f"  DRYRUN {method} https://{ip}{path} {shown}")
+            return 200
+        req = urllib.request.Request(f"https://{ip}{path}", method=method,
+                                     data=None if data is None else json.dumps(data).encode())
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode())
+        try:
+            with HTTP.open(req, timeout=timeout) as r:
+                code, raw = r.status, r.read()
+        except urllib.error.HTTPError as e:
+            code, raw = e.code, e.read()
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            return 0
+        try:
+            self.body = json.loads(raw) if raw else None
+        except ValueError:
+            self.body = None
+        return code
+
+    @staticmethod
+    def ok(code):
+        return 200 <= code <= 209
+
+    def errmsg(self):
+        """Meldungen des BMC aus der letzten Antwort."""
+        found = set()
+
+        def walk(o):
+            if isinstance(o, dict):
+                m = o.get("Message") or o.get("MessageId")
+                if isinstance(m, str) and m:
+                    found.add(m)
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+        walk(self.body)
+        return [f"    {m}" for m in sorted(found)]
+
+    def fail_lines(self, what, code):
+        http = str(code) if code else T("keine Verbindung")
+        return [T('  FEHLER: {0} (HTTP {1})').format(what, http)] + self.errmsg()
+
+    def fail(self, what, code):
+        self.log_lines(self.fail_lines(what, code))
+
+    def attempt(self, what, ip, pw, method, path, *bodies):
+        """Probiert die JSON-Varianten der Reihe nach (Firmware-Unterschiede), die erste erfolgreiche zählt."""
+        for body in bodies or (None,):
+            self.code = self.api(ip, self.cur_user, pw, method, path, body)
+            if self.ok(self.code):
+                return True
+        self.fail(what, self.code)
+        return False
+
+    def vendor(self, ip):
+        """dell | hpe | smc | lenovo | unbekannt | offline (Abfrage ohne Anmeldung)."""
+        try:
+            with HTTP.open(f"https://{ip}/redfish/v1/", timeout=3 if self.dry else 10) as r:
+                root = json.loads(r.read())
+        except urllib.error.HTTPError:
+            return "unbekannt"
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            return "offline"
+        except ValueError:
+            return "unbekannt"
+        if not isinstance(root, dict):
+            return "unbekannt"
+        oem = root.get("Oem") if isinstance(root.get("Oem"), dict) else {}
+        text = (str(root.get("Vendor") or "") + " " + " ".join(oem)).lower()
+        if "dell" in text:
+            return "dell"
+        if "supermicro" in text or "smc" in text:
+            return "smc"
+        if "lenovo" in text:
+            return "lenovo"
+        if "hp" in text or "hewlett" in text:
+            return "hpe"
+        return "unbekannt"
+
+    def log_lines(self, lines):
+        """Erste Zeile als Fehler, die folgenden (Meldungen des BMC) normal."""
+        for i, line in enumerate(lines):
+            self.log(line, "" if i else "err")
+
+
+class Engine(RedfishClient):
+    """Konfiguriert Benutzer/Netzwerk aller Server der Liste; Protokollzeilen gehen an log()."""
+
+    def __init__(self, rows, cur_user, cur_pass, new_user, new_pass, slot=3, dry=True,
+                 log=print, stopped=lambda: False, verify_wait=240, vendor=None, on_done=lambda ip: None):
+        super().__init__(dry, log, stopped)
+        self.rows, self.cur_user_set, self.cur_pass = rows, cur_user, cur_pass
+        self.new_user, self.new_pass, self.slot = new_user, new_pass, slot
+        self.verify_wait, self.force_vendor = verify_wait, vendor
+        self.on_done = on_done      # wird mit der bisherigen IP aufgerufen, sobald ein Server umgestellt ist
+        self.verify_path = ""
+
+    def find_account(self, ip, pw, collection):
+        """Pfad des Kontos mit UserName == neuer Benutzer oder None."""
+        if not self.ok(self.api(ip, self.cur_user, pw, "GET", collection)) or not isinstance(self.body, dict):
+            return None
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if path and self.ok(self.api(ip, self.cur_user, pw, "GET", path)) \
+                    and isinstance(self.body, dict) and self.body.get("UserName") == self.new_user:
+                return path
+        return None
+
+    def existing_account(self, ip, pw, collection, code):
+        """Anlegen schlug fehl: gibt es das Konto schon, Passwort und Rolle setzen. Gibt das gültige Passwort zurück."""
+        msg = self.fail_lines(T("Benutzer"), code)
+        acct = self.find_account(ip, pw, collection)
+        if not acct:
+            self.log_lines(msg)
+            return None
+        if not self.attempt(T("Benutzer (vorhandenes Konto)"), ip, pw, "PATCH", acct,
+                            {"Password": self.new_pass, "RoleId": "Administrator"}):
+            return None
+        self.log(T('  Benutzer {0} existierte schon, Passwort und Rolle gesetzt').format(self.new_user), "ok")
+        return self.new_pass if self.new_user == self.cur_user else pw     # eigenes Passwort geändert
+
+    # ---------- Dell iDRAC ----------
+    def setup_dell(self, ip, pw, new_ip, mask, gw, host):
+        mgr = "/redfish/v1/Managers/iDRAC.Embedded.1"
+        acct = f"/redfish/v1/AccountService/Accounts/{self.slot}"
+        self.verify_path = mgr
+        if not self.attempt(T("Login/Erreichbarkeit"), ip, pw, "GET", mgr):
+            return False
+        # Schutz: einen fremden Benutzer im Slot nie überschreiben
+        if not self.attempt(T("User-Slot lesen"), ip, pw, "GET", acct):
+            return False
+        owner = str(self.body.get("UserName") or "") if isinstance(self.body, dict) else ""
+        if owner and owner != self.new_user:
+            self.log(T('  FEHLER: User-Slot {0} ist schon belegt (Benutzer {1}). Nichts überschrieben, bitte einen freien Slot wählen.').format(self.slot, owner), "err")
+            return False
+        if not self.attempt(T("Benutzer"), ip, pw, "PATCH", acct,
+                            {"UserName": self.new_user, "Password": self.new_pass,
+                             "RoleId": "Administrator", "Enabled": True}):
+            return False
+        self.log(T('  Benutzer {0} ok').format(self.new_user), "ok")
+        if not self.attempt(T("Hostname"), ip, pw, "PATCH", mgr + "/Attributes",
+                            {"Attributes": {"NIC.1.DNSRacName": host}}):
+            return False
+        self.log(T("  Hostname ok"), "ok")
+        # Netzwerk zuletzt - danach ist die alte IP weg
+        code = self.api(ip, self.cur_user, pw, "PATCH", mgr + "/Attributes", {"Attributes": {
+            "IPv4Static.1.Address": new_ip, "IPv4Static.1.Netmask": mask, "IPv4Static.1.Gateway": gw,
+            "IPv4.1.DHCPEnable": "Disabled"}})
+        if self.ok(code) or code == 0:          # 0 = Verbindung beim IP-Wechsel abgerissen
+            if not self.moved(ip, code):
+                return False
+            self.log(T("  Netzwerk gesetzt"), "ok")
+            return True
+        self.fail(T("Netzwerk"), code)
+        return False
+
+    # ---------- HPE iLO ----------
+    def setup_hpe(self, ip, pw, new_ip, mask, gw, host):
+        nic = "/redfish/v1/Managers/1/EthernetInterfaces/1/"       # dedizierter iLO-Port
+        accounts = "/redfish/v1/AccountService/Accounts/"
+        self.verify_path = "/redfish/v1/Managers/1/"
+        if not self.attempt(T("Login/Erreichbarkeit"), ip, pw, "GET", "/redfish/v1/Managers/1/"):
+            if self.cur_user == "root":
+                self.log(T("    Hinweis: bei HPE heißt der Werksbenutzer meist Administrator"))
+            return False
+        # 1) Benutzer anlegen; existiert er schon, Passwort und Rolle setzen
+        code = self.api(ip, self.cur_user, pw, "POST", accounts,
+                        {"UserName": self.new_user, "Password": self.new_pass, "RoleId": "Administrator"})
+        if self.ok(code):
+            self.log(T('  Benutzer {0} ok').format(self.new_user), "ok")
+        else:
+            pw = self.existing_account(ip, pw, accounts, code)
+            if pw is None:
+                return False
+        # 2) Hostname
+        if not self.attempt(T("Hostname"), ip, pw, "PATCH", nic,
+                            {"HostName": host}, {"Oem": {"Hpe": {"HostName": host}}}):
+            return False
+        self.log(T("  Hostname ok"), "ok")
+        # 3) DHCP aus, 4) statische Adresse (wirkt erst nach dem iLO-Neustart)
+        if not self.attempt(T("DHCP abschalten"), ip, pw, "PATCH", nic,
+                            {"DHCPv4": {"DHCPEnabled": False}, "Oem": {"Hpe": {"DHCPv4": {"Enabled": False}}}},
+                            {"DHCPv4": {"DHCPEnabled": False}},
+                            {"Oem": {"Hpe": {"DHCPv4": {"Enabled": False}}}}):
+            return False
+        addr = [{"Address": new_ip, "SubnetMask": mask, "Gateway": gw}]
+        if not self.attempt(T("Statische IP"), ip, pw, "PATCH", nic,
+                            {"IPv4StaticAddresses": addr}, {"IPv4Addresses": addr}):
+            return False
+        self.log(T("  Netzwerk gesetzt"), "ok")
+        # 5) iLO neu starten, damit Hostname und Adresse aktiv werden
+        if not self.attempt(T("iLO-Neustart"), ip, pw, "POST", "/redfish/v1/Managers/1/Actions/Manager.Reset/",
+                            {"ResetType": "ForceRestart"}, {}):
+            return False
+        self.log(T("  iLO-Neustart ausgelöst"), "ok")
+        return True
+
+    # ---------- Supermicro ----------
+    def setup_smc(self, ip, pw, new_ip, mask, gw, host):
+        nic = "/redfish/v1/Managers/1/EthernetInterfaces/1"
+        accounts = "/redfish/v1/AccountService/Accounts"
+        self.verify_path = "/redfish/v1/Managers/1"
+        if not self.attempt(T("Login/Erreichbarkeit"), ip, pw, "GET", "/redfish/v1/Managers/1"):
+            if self.cur_user != "ADMIN":
+                self.log(T("    Hinweis: bei Supermicro heißt der Werksbenutzer meist ADMIN"))
+            return False
+        # 1) Benutzer anlegen. Neuere Firmware gibt ohne AccountTypes nur Redfish-Zugriff,
+        #    deshalb erst mit Zugriffsarten versuchen, dann ohne (ältere Firmware).
+        code, types = 0, None
+        for types in (["Redfish", "WebUI", "IPMI", "HostConsole", "ManagerConsole", "KVMIP", "VirtualMedia"],
+                      ["Redfish", "WebUI", "IPMI"], None):
+            body = {"UserName": self.new_user, "Password": self.new_pass, "RoleId": "Administrator", "Enabled": True}
+            if types:
+                body["AccountTypes"] = types
+            code = self.api(ip, self.cur_user, pw, "POST", accounts, body)
+            if self.ok(code):
+                break
+        if self.ok(code):
+            self.log(T('  Benutzer {0} ok').format(self.new_user) + (
+                "" if types or self.dry else T(" (ohne Zugriffsarten angelegt: Web-Anmeldung bitte einmal prüfen)")), "ok")
+        else:
+            pw = self.existing_account(ip, pw, accounts, code)
+            if pw is None:
+                return False
+        # 2) Hostname
+        if not self.attempt(T("Hostname"), ip, pw, "PATCH", nic, {"HostName": host}):
+            return False
+        self.log(T("  Hostname ok"), "ok")
+        # 3) Netzwerk zuletzt - der BMC wechselt die Adresse sofort
+        addr = [{"Address": new_ip, "SubnetMask": mask, "Gateway": gw}]
+        code = 0
+        for body in ({"DHCPv4": {"DHCPEnabled": False}, "IPv4StaticAddresses": addr},
+                     {"DHCPv4": {"DHCPEnabled": False}, "IPv4Addresses": addr}):
+            code = self.api(ip, self.cur_user, pw, "PATCH", nic, body)
+            if self.ok(code) or code == 0:      # 0 = Verbindung beim IP-Wechsel abgerissen
+                if not self.moved(ip, code):
+                    return False
+                self.log(T("  Netzwerk gesetzt"), "ok")
+                return True
+        self.fail(T("Netzwerk"), code)
+        return False
+
+    # ---------- Lenovo XCC ----------
+    def setup_lenovo(self, ip, pw, new_ip, mask, gw, host):
+        nic = "/redfish/v1/Managers/1/EthernetInterfaces/NIC"
+        accounts = "/redfish/v1/AccountService/Accounts"
+        self.verify_path = "/redfish/v1/Managers/1"
+        if not self.attempt(T("Login/Erreichbarkeit"), ip, pw, "GET", "/redfish/v1/Managers/1"):
+            if self.cur_user != "USERID":
+                self.log(T("    Hinweis: bei Lenovo heißt der Werksbenutzer meist USERID"))
+            return False
+        # 1) Benutzer anlegen; existiert er schon, Passwort und Rolle setzen
+        code = self.api(ip, self.cur_user, pw, "POST", accounts,
+                        {"UserName": self.new_user, "Password": self.new_pass, "RoleId": "Administrator"})
+        if self.ok(code):
+            self.log(T('  Benutzer {0} ok').format(self.new_user), "ok")
+        else:
+            pw = self.existing_account(ip, pw, accounts, code)
+            if pw is None:
+                return False
+        # 2) Hostname
+        if not self.attempt(T("Hostname"), ip, pw, "PATCH", nic, {"HostName": host}):
+            return False
+        self.log(T("  Hostname ok"), "ok")
+        # 3) Netzwerk zuletzt - der BMC wechselt die Adresse sofort
+        addr = [{"Address": new_ip, "SubnetMask": mask, "Gateway": gw}]
+        code = 0
+        for body in ({"IPv4StaticAddresses": addr, "Oem": {"Lenovo": {"DHCPEnabled": False}}},
+                     {"IPv4StaticAddresses": addr, "DHCPv4": {"DHCPEnabled": False}},
+                     {"IPv4StaticAddresses": addr}):
+            code = self.api(ip, self.cur_user, pw, "PATCH", nic, body)
+            if self.ok(code) or code == 0:      # 0 = Verbindung beim IP-Wechsel abgerissen
+                if not self.moved(ip, code):
+                    return False
+                self.log(T("  Netzwerk gesetzt"), "ok")
+                return True
+        self.fail(T("Netzwerk"), code)
+        return False
+
+    # ---------- Hauptschleife ----------
+    def pause(self, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not self.stopped():
+            time.sleep(0.2)
+
+    def run(self):
+        """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
+        done, failed = [], []
+        for cur_ip, row_pw, new_ip, mask, gw, host in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                failed.append(T("Abbruch"))
+                break
+            pw = row_pw or self.cur_pass
+            if not pw:
+                self.log(T('== {0}: kein Passwort (weder in der Zeile noch oben)').format(cur_ip), "err")
+                failed.append(cur_ip)
+                continue
+            self.log(f"== {cur_ip} -> {new_ip} ({host})", "head")
+            v = self.force_vendor or self.vendor(cur_ip)
+            if self.dry and v not in self.NAME:
+                self.log(T('  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf').format(v))
+                v = "dell"
+            if v == "offline":
+                self.log(T("  FEHLER: nicht erreichbar"), "err")
+                failed.append(cur_ip)
+                continue
+            if v not in self.NAME:
+                self.log(T("  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"), "err")
+                failed.append(cur_ip)
+                continue
+            # Schutz: keine Adresse vergeben, unter der schon ein anderes Gerät antwortet
+            if new_ip != cur_ip and self.in_use(new_ip):
+                self.log(T('  FEHLER: Die neue IP {0} ist schon vergeben, dort antwortet bereits ein Gerät. Nichts geändert.').format(new_ip), "err")
+                failed.append(cur_ip)
+                continue
+            self.cur_user = self.cur_user_set or self.DEFAULT_USER[v]
+            self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], self.cur_user))
+            if getattr(self, "setup_" + v)(cur_ip, pw, new_ip, mask, gw, host):
+                done.append((new_ip, self.verify_path))
+                if not self.dry:
+                    self.on_done(cur_ip)        # Zeile in der Maske als fertig markieren
+            else:
+                failed.append(cur_ip)
+
+        # Kontrolle: neue IP mit neuem Benutzer erreichbar? (iLO braucht nach dem Neustart 1-3 Minuten)
+        if not self.dry and done and not self.stopped():
+            self.log("")
+            self.log(T('Kontrolle der neuen Adressen (bis zu {0}s)...').format(self.verify_wait))
+            pending, end = list(done), time.monotonic() + self.verify_wait
+            self.pause(min(self.verify_wait, 20))
+            while pending and not self.stopped():
+                still = []
+                for ip, path in pending:
+                    if self.ok(self.api(ip, self.new_user, self.new_pass, "GET", path, timeout=10)):
+                        self.log(T('  OK      {0}').format(ip), "ok")
+                    else:
+                        still.append((ip, path))
+                pending = still
+                if not pending or time.monotonic() >= end:
+                    break
+                self.pause(10)
+            for ip, _ in pending:
+                self.log(T('  FEHLT   {0}').format(ip), "err")
+                failed.append(ip)
+
+        self.log("")
+        summary = T('Fertig: {0} konfiguriert, {1} Fehler').format(len(done), len(failed))
+        self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
+        return not failed
+
+    @staticmethod
+    def in_use(ip):
+        """True, wenn unter der Adresse schon ein Gerät antwortet (Verbindung klappt oder wird aktiv abgelehnt)."""
+        alive = {0, errno.ECONNREFUSED, getattr(errno, "WSAECONNREFUSED", 10061)}
+        for port in (443, 80, 22, 445):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex((ip, port)) in alive:
+                    return True
+            except OSError:
+                pass
+            finally:
+                s.close()
+        return False
+
+    @staticmethod
+    def alive(ip):
+        """True, wenn unter der Adresse noch ein BMC auf Port 443 antwortet."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        try:
+            return s.connect_ex((ip, 443)) == 0
+        except OSError:
+            return False
+        finally:
+            s.close()
+
+    def moved(self, ip, code):
+        """Nach dem Setzen der Adresse: True, wenn der BMC die alte Adresse verlassen hat. Eine saubere
+        Antwort (2xx) gilt als erledigt. Riss nur die Verbindung ab (0), wird bis zu 15 Sekunden geprüft,
+        ob das Gerät unter der alten Adresse verschwindet - sonst wäre ein gezogenes Kabel ein „Erfolg“."""
+        if code != 0 or self.dry:
+            return True
+        end = time.monotonic() + 15
+        while not self.stopped():
+            if not self.alive(ip):
+                return True
+            if time.monotonic() >= end:
+                break
+            self.pause(2)
+        self.log(T("  FEHLER: Die Verbindung brach ab, aber das Gerät antwortet weiter unter der alten Adresse. "
+                   "Netzwerk nicht umgestellt."), "err")
+        return False
+
+
+class BiosEngine(RedfishClient):
+    """Setzt UEFI/BIOS-Attribute auf allen Servern der Liste. Eigener, von den Netzwerk-Profilen
+    getrennter Bereich: Attribute kommen aus einer eigenen Vorlage (Name -> gewünschter Wert) und
+    werden je Gerät gegen die tatsächlich vorhandenen geprüft - nicht vorhandene werden übersprungen,
+    nicht geraten. Protokollzeilen gehen an log()."""
+
+    def __init__(self, rows, cur_user, attrs, dry=True, log=print, stopped=lambda: False,
+                 vendor=None, reboot=True):
+        super().__init__(dry, log, stopped)
+        self.rows, self.cur_user_set, self.attrs = rows, cur_user, attrs
+        self.force_vendor, self.reboot = vendor, reboot
+
+    def bios_path(self, vendor):
+        return self.sys_path(vendor) + "/Bios"
+
+    def read_bios(self, ip, user, pw, vendor):
+        """Liest die aktuellen Attribute und den Pfad zum Schreiben; gibt (Attribute, Pfad) oder (None, None)."""
+        code = self.api(ip, user, pw, "GET", self.bios_path(vendor))
+        if not self.ok(code) or not isinstance(self.body, dict):
+            return None, None
+        attrs = self.body.get("Attributes")
+        if not isinstance(attrs, dict):
+            return None, None
+        settings_path = self.bios_path(vendor) + "/Settings"
+        rs = self.body.get("@Redfish.Settings")
+        if isinstance(rs, dict) and isinstance(rs.get("SettingsObject"), dict):
+            settings_path = rs["SettingsObject"].get("@odata.id") or settings_path
+        return attrs, settings_path
+
+    def power_state(self, ip, user, pw, vendor):
+        code = self.api(ip, user, pw, "GET", self.sys_path(vendor))
+        return self.body.get("PowerState") if self.ok(code) and isinstance(self.body, dict) else None
+
+    @classmethod
+    def coerce(cls, current, new):
+        """Passt den eingegebenen Text an den Typ des bisherigen Werts an. Gibt (True, Wert) zurück oder
+        (False, None), wenn der Text nicht zum Typ passt - dann wird nichts geraten."""
+        text = str(new).strip()
+        if isinstance(current, bool):
+            if text.lower() in cls.TRUE:
+                return True, True
+            if text.lower() in cls.FALSE:
+                return True, False
+            return False, None
+        try:
+            if isinstance(current, int):
+                return True, int(text)
+            if isinstance(current, float):
+                return True, float(text)
+        except ValueError:
+            return False, None
+        return True, text
+
+    def apply_row(self, ip, pw, vendor):
+        user = self.cur_user_set or self.DEFAULT_USER[vendor]
+        self.cur_user = user
+        live, settings_path = self.read_bios(ip, user, pw, vendor)
+        checked = live is not None
+        if not checked:
+            if not self.dry:
+                self.fail(T("BIOS-Attribute lesen"), self.code)
+                return False
+            self.log(T("  Trockenlauf: Attribute nicht wirklich gelesen, zeige den Ablauf ungeprüft"))
+            live, settings_path = {}, self.bios_path(vendor) + "/Settings"
+        wanted, missing, same, bad, locked = {}, [], [], [], []
+        for key, val in self.attrs.items():
+            if self.blocked(key):
+                locked.append(key)
+            elif not checked:
+                wanted[key] = val
+            elif key not in live:
+                missing.append(key)
+            else:
+                good, value = self.coerce(live[key], val)
+                if not good:
+                    bad.append(key)
+                elif value == live[key]:
+                    same.append(key)
+                else:
+                    wanted[key] = value
+        if locked:
+            self.log(T("  FEHLER: gesperrt, wird nie gesetzt (Passwort-, TPM- und Lösch-Attribute): ")
+                     + ", ".join(sorted(locked)), "err")
+        if bad:
+            self.log(T("  FEHLER: Wert passt nicht zum Attribut (Zahl bzw. Ein/Aus erwartet), nicht gesetzt: ")
+                     + ", ".join(sorted(bad)), "err")
+        if missing:
+            self.log(T("  nicht auf diesem Gerät vorhanden, übersprungen: ") + ", ".join(sorted(missing)))
+        if same:
+            self.log(T("  schon so eingestellt: ") + ", ".join(sorted(same)))
+        clean = not locked and not bad
+        if not wanted:
+            self.log(T("  nichts zu ändern, kein Neustart"))
+            return clean
+        code = self.api(ip, user, pw, "PATCH", settings_path, {"Attributes": wanted})
+        if not self.ok(code):
+            self.fail(T("BIOS-Attribute setzen"), code)
+            return False
+        self.log(T("  gesetzt: ") + ", ".join(f"{k}={v}" for k, v in wanted.items()), "ok")
+        if not self.reboot:
+            self.log(T("  Hinweis: wird erst beim nächsten Neustart übernommen (kein Neustart ausgelöst)"))
+            return clean
+        state = self.power_state(ip, user, pw, vendor)
+        reset = "ForceRestart" if self.dry else {"Off": "On", "On": "ForceRestart"}.get(state)
+        if not reset:
+            self.log(T("  Hinweis: Betriebszustand unbekannt, kein Neustart ausgelöst. Bitte von Hand neu starten."))
+            return clean
+        code = self.api(ip, user, pw, "POST", self.sys_path(vendor) + "/Actions/ComputerSystem.Reset",
+                        {"ResetType": reset})
+        if self.ok(code) or code == 0:
+            self.log(T('  Neustart ausgelöst ({0}); die Attribute greifen danach').format(reset), "ok")
+            return clean
+        self.fail(T("Neustart"), code)
+        return False
+
+    def run(self):
+        """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
+        done, failed = [], []
+        for cur_ip, row_pw in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                failed.append(T("Abbruch"))
+                break
+            if not row_pw:
+                self.log(T('== {0}: kein Passwort').format(cur_ip), "err")
+                failed.append(cur_ip)
+                continue
+            self.log(f"== {cur_ip}", "head")
+            v = self.force_vendor or self.vendor(cur_ip)
+            if self.dry and v not in self.NAME:
+                self.log(T('  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf').format(v))
+                v = "dell"
+            if v == "offline":
+                self.log(T("  FEHLER: nicht erreichbar"), "err")
+                failed.append(cur_ip)
+                continue
+            if v not in self.NAME:
+                self.log(T("  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"), "err")
+                failed.append(cur_ip)
+                continue
+            self.log(T('  Hersteller: {0}').format(self.NAME[v]))
+            if self.apply_row(cur_ip, row_pw, v):
+                done.append(cur_ip)
+            else:
+                failed.append(cur_ip)
+        self.log("")
+        summary = T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(len(done), len(failed))
+        self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
+        return not failed
+
+    # Attribute, die das Tool nie setzt: ein Tippfehler dort sperrt den Server aus oder kostet Daten
+    BLOCKED = ("password", "passwd", "pwd", "tpm", "trustedcomputing", "erase", "sanitize")
+    TRUE = ("1", "true", "wahr", "ja", "yes", "oui", "on", "enabled")
+    FALSE = ("0", "false", "falsch", "nein", "no", "non", "off", "disabled")
+
+    @classmethod
+    def blocked(cls, name):
+        low = str(name).lower()
+        return any(b in low for b in cls.BLOCKED)
+
+
+# ======================================================================
+# Kleiner DHCP-Server (für Windows; unter Linux wird dnsmasq verwendet)
+# ======================================================================
+class DhcpServer:
+    """Vergibt Adressen aus einem Bereich an alle anfragenden Geräte. Nur für ein getrenntes Staging-Netz."""
+
+    MAGIC = b"\x63\x82\x53\x63"
+
+    def __init__(self, ip, mask, lo, hi, log=print, on_leases=lambda rows: None, stopped=lambda: False,
+                 port=67, client_port=68, reply_to=None, lease_time=3600):
+        self.ip, self.mask = ipaddress.IPv4Address(ip), ipaddress.IPv4Address(mask)
+        self.lo, self.hi = ipaddress.IPv4Address(lo), ipaddress.IPv4Address(hi)
+        self.log, self.on_leases, self.stopped = log, on_leases, stopped
+        self.port, self.client_port, self.reply_to, self.lease_time = port, client_port, reply_to, lease_time
+        self.assigned = {}      # MAC -> IP (angeboten oder bestätigt)
+        self.acked = {}         # MAC -> (IP, Name)
+
+    def allocate(self, mac, wanted=None):
+        if mac in self.assigned:
+            return self.assigned[mac]
+        used = set(self.assigned.values()) | {self.ip}
+        if wanted and self.lo <= wanted <= self.hi and wanted not in used:
+            self.assigned[mac] = wanted
+            return wanted
+        ip = self.lo
+        while ip <= self.hi:
+            if ip not in used:
+                self.assigned[mac] = ip
+                return ip
+            ip += 1
+        return None
+
+    @staticmethod
+    def options(raw):
+        out, i = {}, 0
+        while i < len(raw):
+            code = raw[i]
+            if code == 255:
+                break
+            if code == 0:
+                i += 1
+                continue
+            if i + 1 >= len(raw):
+                break
+            out[code] = raw[i + 2:i + 2 + raw[i + 1]]
+            i += 2 + raw[i + 1]
+        return out
+
+    def reply(self, req, mtype, yiaddr):
+        opts = bytes([53, 1, mtype, 54, 4]) + self.ip.packed
+        if mtype != 6:
+            opts += bytes([51, 4]) + struct.pack("!I", self.lease_time) + bytes([1, 4]) + self.mask.packed
+        pkt = struct.pack("!BBBB4sHH4s4s4s4s16s192x4s", 2, req[1], req[2], 0, req[4:8], 0,
+                          struct.unpack("!H", req[10:12])[0], b"\0" * 4,
+                          yiaddr.packed if yiaddr else b"\0" * 4, self.ip.packed, req[24:28],
+                          req[28:44], self.MAGIC) + opts + b"\xff"
+        return pkt + b"\0" * max(0, 300 - len(pkt))
+
+    def handle(self, data):
+        """Verarbeitet eine Anfrage, gibt (Antwortpaket, Zieladresse) oder None zurück."""
+        if len(data) < 240 or data[0] != 1 or data[236:240] != self.MAGIC:
+            return None
+        hlen = min(data[2] or 6, 16)
+        mac = ":".join(f"{b:02x}" for b in data[28:28 + hlen])
+        ciaddr = ipaddress.IPv4Address(data[12:16])
+        opts = self.options(data[240:])
+        mtype = (opts.get(53) or b"\0")[0]
+        name = (opts.get(12) or b"").decode("ascii", "replace").strip("\0")
+        wanted = ipaddress.IPv4Address(opts[50]) if len(opts.get(50, b"")) == 4 else None
+        dest = (self.reply_to or "255.255.255.255", self.client_port)
+
+        if mtype == 1:                                   # DISCOVER -> OFFER
+            ip = self.allocate(mac, wanted)
+            if not ip:
+                self.log(T("Adressbereich erschöpft, keine Adresse mehr frei für ") + mac)
+                return None
+            self.log(T('Angebot   {0}  an {1} {2}').format(ip, mac, name))
+            return self.reply(data, 2, ip), dest
+        if mtype == 3:                                   # REQUEST -> ACK / NAK
+            server = opts.get(54)
+            if server and server != self.ip.packed:      # Gerät hat einen anderen Server gewählt
+                if mac not in self.acked:
+                    self.assigned.pop(mac, None)
+                return None
+            if not server and mac not in self.assigned:
+                return None                              # Gerät eines anderen Servers: nie abweisen (kein NAK)
+            if not wanted and int(ciaddr):
+                wanted = ciaddr
+            ip = self.allocate(mac, wanted)
+            if not ip or (wanted and ip != wanted):
+                self.log(T('Abgelehnt {0}  von {1}').format(wanted, mac))
+                return self.reply(data, 6, None), dest
+            self.acked[mac] = (ip, name or self.acked.get(mac, (None, ""))[1])
+            self.log(T('Vergeben  {0}  an {1} {2}').format(ip, mac, name))
+            self.on_leases(sorted((str(i), m, n) for m, (i, n) in self.acked.items()))
+            if int(ciaddr) and not self.reply_to:        # Verlängerung: direkt antworten
+                dest = (str(ciaddr), self.client_port)
+            return self.reply(data, 5, ip), dest
+        if mtype in (4, 7):                              # DECLINE / RELEASE
+            self.assigned.pop(mac, None)
+            if self.acked.pop(mac, None):
+                self.on_leases(sorted((str(i), m, n) for m, (i, n) in self.acked.items()))
+        return None
+
+    def run(self):
+        """Läuft bis stopped() wahr wird. Wirft OSError, wenn der Port nicht geöffnet werden kann."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.bind((str(self.ip), self.port))
+            sock.settimeout(0.5)
+            self.log(T('DHCP-Server läuft auf {0}, Bereich {1} bis {2}').format(self.ip, self.lo, self.hi))
+            while not self.stopped():
+                try:
+                    data, _ = sock.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    continue        # z. B. Windows meldet "Port unreachable" eines früheren Sendens
+                try:
+                    answer = self.handle(data)
+                    if answer:
+                        sock.sendto(*answer)
+                except Exception as e:      # ein kaputtes Paket darf den Server nicht beenden
+                    self.log(T('Paket verworfen: {0}').format(e))
+        finally:
+            sock.close()
+        self.log(T("DHCP-Server gestoppt"))
+
+
+def probe_dhcp_servers(ip, timeout=1.5):
+    """Sendet ein DHCPDISCOVER und sammelt die Adressen antwortender Server (reine Beobachtung, startet
+    selbst keinen Server). Gibt None zurück, wenn Port 68 nicht geöffnet werden konnte (fehlende Rechte)."""
+    xid = struct.pack("!I", random.getrandbits(32))
+    mac = bytes([0x02, 0x00, 0x00] + [random.randint(0, 255) for _ in range(3)])   # lokal verwaltet, zufällig
+    opts = bytes([53, 1, 1, 55, 3, 1, 3, 6, 255])          # DHCPDISCOVER, Parameter Request List, Ende
+    pkt = struct.pack("!BBBB4sHH4s4s4s4s16s192x4s", 1, 1, 6, 0, xid, 0, 0x8000,
+                      b"\0" * 4, b"\0" * 4, b"\0" * 4, b"\0" * 4, mac + b"\0" * 10, DhcpServer.MAGIC) + opts
+    pkt += b"\0" * max(0, 300 - len(pkt))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        sock.bind((ip, 68))
+    except OSError:
+        sock.close()
+        return None
+    try:
+        sock.sendto(pkt, ("255.255.255.255", 67))
+        found = set()
+        sock.settimeout(0.3)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                data, addr = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if len(data) >= 240 and data[0] == 2 and data[236:240] == DhcpServer.MAGIC and data[4:8] == xid:
+                found.add(addr[0])
+        return found
+    finally:
+        sock.close()
+
+
+class EngineThread(QThread):
+    line = pyqtSignal(str, str)     # Text, Art (err/ok/head)
+    row_done = pyqtSignal(str)      # bisherige IP eines fertig umgestellten Servers
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good = Engine(log=lambda text, kind="": self.line.emit(text, kind),
+                          stopped=self.isInterruptionRequested, on_done=self.row_done.emit, **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good = False
+        self.result.emit(0 if good else 1)
+
+
+class BiosEngineThread(QThread):
+    line = pyqtSignal(str, str)
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good = BiosEngine(log=lambda text, kind="": self.line.emit(text, kind),
+                              stopped=self.isInterruptionRequested, **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good = False
+        self.result.emit(0 if good else 1)
+
+
+class BiosReadThread(QThread):
+    """Liest einmalig die UEFI/BIOS-Attribute eines einzelnen Referenzgeräts, ändert nichts."""
+    done = pyqtSignal(object, str, str)     # Attribute-Dict oder None, Hersteller, Fehlertext
+
+    def __init__(self, parent, ip, user, pw, vendor):
+        super().__init__(parent)
+        self.ip, self.user, self.pw, self.vendor = ip, user, pw, vendor
+
+    def run(self):
+        be = BiosEngine(rows=[], cur_user=self.user, attrs={}, dry=False)
+        try:
+            v = self.vendor or be.vendor(self.ip)
+            if v == "offline":
+                self.done.emit(None, v, T("Gerät nicht erreichbar."))
+                return
+            if v not in be.NAME:
+                self.done.emit(None, v, T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)."))
+                return
+            user = self.user or be.DEFAULT_USER[v]
+            attrs, _ = be.read_bios(self.ip, user, self.pw, v)
+            if attrs is None:
+                self.done.emit(None, v, "\n".join(be.fail_lines(T("BIOS-Attribute lesen"), be.code)))
+            else:
+                self.done.emit(attrs, v, "")
+        except Exception as e:
+            self.done.emit(None, "", T('Unerwarteter Fehler: {0!r}').format(e))
+
+
+class DhcpThread(QThread):
+    line = pyqtSignal(str)
+    leases = pyqtSignal(list)
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            DhcpServer(log=self.line.emit, on_leases=self.leases.emit,
+                       stopped=self.isInterruptionRequested, **self.kw).run()
+            self.result.emit(0)
+        except OSError as e:
+            self.line.emit("error: " + T('Port 67 lässt sich nicht öffnen: {0}').format(e))
+            self.result.emit(2)
+
+
+
+class Window(QWidget):
+    def __init__(self, state=None):
+        super().__init__()
+        self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
+        self.resize(900, 780)
+        self.worker = None
+        self.bios_worker = None
+
+        # --- Aktueller Login ---
+        self.vendor = QComboBox()
+        for text, key in VENDORS:
+            self.vendor.addItem(text, key)
+        self.vendor.currentIndexChanged.connect(self.vendor_changed)
+        self.cur_user = QLineEdit()
+        self.cur_pass = self._pw()
+        self.user_hint = QLabel()
+        apply_pw = QPushButton(T("Passwort für alle Server übernehmen"))
+        apply_pw.setToolTip(T("Trägt das Passwort von oben in die Spalte „Passwort“ aller Zeilen ein\n"
+                            "und überschreibt dort vorhandene Einträge."))
+        apply_pw.clicked.connect(self.apply_password)
+        box_cur = QGroupBox(T("Aktueller Login (Auslieferungszustand)"))
+        box_cur.setToolTip(T("Mit diesen Daten meldet sich das Tool an den Geräten an, um sie umzustellen."))
+        f = QFormLayout(box_cur)
+        self.tip_row(f, T("Hersteller"), self.vendor,
+                     T("„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller, gemischte Listen sind möglich.\n"
+                     "Eine feste Wahl überspringt die Erkennung und gilt für alle Zeilen. Nützlich, wenn die\n"
+                     "Erkennung danebenliegt oder der Trockenlauf den richtigen Ablauf zeigen soll."))
+        self.version_hint = QLabel()
+        self.version_hint.setWordWrap(True)
+        f.addRow("", self.version_hint)
+        self.tip_row(f, T("Benutzer"), self.cur_user,
+                     T("Benutzer, mit dem sich das Tool jetzt am BMC anmeldet, also der Werksbenutzer.\n"
+                     "Leer lassen: Dann wird je Hersteller root, Administrator oder ADMIN verwendet."))
+        f.addRow("", self.user_hint)
+        self.tip_row(f, T("Passwort"), self._with_eye(self.cur_pass),
+                     T("Passwort des Werksbenutzers. Es gilt für alle Zeilen, deren Spalte „Passwort“ leer ist,\n"
+                     "und wird bei neuen Zeilen vorbelegt. Hat jedes Gerät ein eigenes Passwort\n"
+                     "(HPE, Supermicro, Lenovo), dieses in der Tabelle je Zeile eintragen."))
+        f.addRow("", apply_pw)
+
+        # --- Neuer Benutzer ---
+        self.new_user = QLineEdit()
+        self.new_pass = self._pw()
+        self.new_pass2 = self._pw()
+        self.slot = QSpinBox()
+        self.slot.setRange(3, 16)
+        self.slot.setValue(3)
+        box_new = QGroupBox(T("Neuer Administrator"))
+        box_new.setToolTip(T("Dieses Konto wird auf jedem Gerät der Liste eingerichtet."))
+        f = QFormLayout(box_new)
+        self.tip_row(f, T("Benutzer"), self.new_user,
+                     T("Name des Administrator-Kontos, das auf allen Geräten angelegt wird.\n"
+                     "Existiert der Name bei HPE, Supermicro oder Lenovo schon, werden nur Passwort und Rolle gesetzt."))
+        self.tip_row(f, T("Passwort"), self._with_eye(self.new_pass),
+                     T("Passwort des neuen Administrators, auf allen Geräten gleich.\n"
+                     "Die Geräte prüfen ihre eigenen Regeln, iLO verlangt z. B. mindestens 8 Zeichen.\n"
+                     "Vor dem scharfen Lauf über das Auge kontrollieren."))
+        self.tip_row(f, T("Passwort wiederholen"), self._with_eye(self.new_pass2),
+                     T("Das Passwort zur Sicherheit ein zweites Mal eingeben.\n"
+                       "Stimmen die beiden Eingaben nicht überein, startet kein Lauf."))
+        self.tip_row(f, T("User-Slot (nur Dell)"), self.slot,
+                     T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
+                     "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
+                     "von einem anderen Benutzer belegt, wird nichts überschrieben. Standard ist Platz 3."))
+
+        # --- Vorgaben für neue Zeilen ---
+        self.def_mask = QLineEdit()
+        self.def_mask.setPlaceholderText(T("z. B. 255.255.255.0 oder /24"))
+        self.def_gw = QLineEdit()
+        self.def_gw.setPlaceholderText(T("z. B. 10.20.0.1"))
+        for w in (self.def_mask, self.def_gw):
+            w.editingFinished.connect(self.validate_defaults)
+        box_def = QGroupBox(T("Vorgaben für neue Zeilen"))
+        f = QFormLayout(box_def)
+        self.tip_row(f, T("Subnetzmaske"), self.def_mask,
+                     T("Wird bei jeder neuen Zeile der Serverliste vorbelegt, auch bei Geräten aus der DHCP-Liste.\n"
+                     "Leer lassen: Dann wird der Wert der vorherigen Zeile übernommen."))
+        self.tip_row(f, T("Gateway"), self.def_gw,
+                     T("Wird bei jeder neuen Zeile der Serverliste vorbelegt.\n"
+                     "Leer lassen: Dann wird der Wert der vorherigen Zeile übernommen."))
+
+        right = QVBoxLayout()
+        right.addWidget(box_new)
+        right.addWidget(box_def)
+        top = QHBoxLayout()
+        top.addWidget(box_cur)
+        top.addLayout(right)
+
+        # --- Serverliste ---
+        self.table = QTableWidget(0, len(COLS))
+        self.table.setHorizontalHeaderLabels(COLS)
+        for c, tip in enumerate(COL_TIPS):
+            self.table.horizontalHeaderItem(c).setToolTip(tip)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.itemChanged.connect(self.update_count)
+        add = QPushButton(T("+ Server"))
+        add.setToolTip(T("Neue Zeile. Passwort, Subnetzmaske und Gateway werden vorbelegt."))
+        add.clicked.connect(lambda: self.add_row())
+        rem = QPushButton(T("– Entfernen"))
+        rem.setToolTip(T("Entfernt die markierten Zeilen."))
+        rem.clicked.connect(self.remove_rows)
+        again = QPushButton(T("Erneut bearbeiten"))
+        again.setToolTip(T("Nimmt bei den markierten Zeilen die grüne Fertig-Markierung zurück,\n"
+                         "damit sie beim nächsten Start wieder bearbeitet werden."))
+        again.clicked.connect(self.reopen_rows)
+        load = QPushButton(T("Liste laden …"))
+        load.setToolTip(T("Lädt eine gespeicherte Liste oder eine CSV-Datei, z. B. aus Excel:\n"
+                        "aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname"))
+        load.clicked.connect(self.load_dialog)
+        save = QPushButton(T("Liste speichern …"))
+        save.setToolTip(T("Speichert die Liste in eine Datei. Das Tool speichert nie von selbst.\n"
+                        "Beim Speichern wird gefragt, ob die Passwörter mit in die Datei sollen."))
+        save.clicked.connect(self.save_dialog)
+        self.count = QLabel()
+        btns = QHBoxLayout()
+        btns.addWidget(add)
+        btns.addWidget(rem)
+        btns.addWidget(again)
+        btns.addWidget(load)
+        btns.addWidget(save)
+        btns.addStretch()
+        btns.addWidget(self.count)
+        box_list = QGroupBox(T("Serverliste"))
+        v = QVBoxLayout(box_list)
+        v.addWidget(self.table)
+        v.addLayout(btns)
+
+        # --- Start ---
+        self.dry = QCheckBox(T("Trockenlauf (nichts ändern)"))
+        self.dry.setChecked(True)
+        self.dry.setToolTip(T("Mit Haken wird nichts geändert: Das Protokoll zeigt nur, welche Aufrufe\n"
+                            "an welches Gerät gingen. Ohne Haken werden die Geräte wirklich umgestellt."))
+        self.start = QPushButton(T("Start"))
+        self.start.setDefault(True)
+        self.start.setMinimumHeight(38)
+        self.start.setToolTip(T("Prüft die Eingaben und bearbeitet dann alle noch offenen Zeilen der Reihe nach:\n"
+                              "Benutzer anlegen, Hostname setzen, feste Adresse setzen.\n"
+                              "Fertige (grüne) Zeilen werden übersprungen. Vor einem scharfen Lauf\n"
+                              "wird nachgefragt."))
+        self.start.clicked.connect(self.run)
+        self.stop = QPushButton(T("Abbrechen"))
+        self.stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
+        self.stop.setEnabled(False)
+        self.stop.clicked.connect(self.abort)
+        log_save = QPushButton(T("Protokoll speichern …"))
+        log_save.setToolTip(T("Speichert das Protokoll als Textdatei, z. B. für die Dokumentation.\n"
+                              "Passwörter stehen nicht darin."))
+        log_save.clicked.connect(self.save_log)
+        actions = QHBoxLayout()
+        actions.addWidget(self.dry)
+        actions.addStretch()
+        actions.addWidget(log_save)
+        actions.addWidget(self.stop)
+        actions.addWidget(self.start)
+
+        # --- Was fehlt noch? ---
+        self.cells_missing = self.cells_bad = 0
+        self.todo = QLabel()
+        self.todo.setWordWrap(True)
+        self.todo.setToolTip(T("Zeigt, was vor dem Start noch auszufüllen ist. Die betroffenen Felder sind\n"
+                               "gelb (fehlt noch) oder rot (fehlerhaft) markiert."))
+        legend = QLabel(
+            "<small><span style='background:#f0ad4e; color:#000000'>&nbsp;" + T("fehlt noch") + "&nbsp;</span> "
+            "<span style='background:#d9534f; color:#ffffff'>&nbsp;" + T("fehlerhaft") + "&nbsp;</span> "
+            "<span style='background:#3fa45b; color:#ffffff'>&nbsp;" + T("fertig") + "&nbsp;</span></small>")
+        hints = QHBoxLayout()
+        hints.addWidget(self.todo, 1)
+        hints.addWidget(legend)
+
+        # --- Protokoll ---
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.status = QLabel(T("Bereit"))
+
+        upper = QWidget()
+        u = QVBoxLayout(upper)
+        u.setContentsMargins(0, 0, 0, 0)
+        u.addWidget(box_list)
+        u.addLayout(hints)
+        u.addLayout(actions)
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(upper)
+        split.addWidget(self.log)
+        split.setSizes([380, 260])
+
+        page = QWidget()
+        pl = QVBoxLayout(page)
+        pl.addLayout(self.build_profiles())
+        pl.addLayout(top)
+        pl.addWidget(split, 1)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.build_dhcp(), T("1 · DHCP-Server"))
+        self.tabs.addTab(page, T("2 · Server konfigurieren"))
+        self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
+        help_view = QTextBrowser()
+        help_view.setOpenExternalLinks(True)
+        help_view.setHtml(HELP[LANG] + ABOUT)
+        self.tabs.addTab(help_view, T("4 · Hilfe"))
+        self.lang = QComboBox()
+        for code, name in LANGS:
+            self.lang.addItem(name, code)
+        self.lang.setCurrentIndex(max(0, self.lang.findData(LANG)))
+        self.lang.setToolTip("Sprache · Language · Langue · Sproch")
+        self.lang.activated.connect(self.switch_language)
+        self.tabs.setCornerWidget(self.lang)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.tabs, 1)
+        lay.addWidget(self.status)
+
+        self.dirty = False
+        self.vendor_changed()
+        self.read_profiles()
+        self.add_row()
+        self.update_count()
+        self.tabs.setCurrentIndex(0)
+        for w in (self.dhcp_from, self.dhcp_to):
+            w.textChanged.connect(self.validate_range)
+        self.iface.currentIndexChanged.connect(self.validate_range)
+        self.validate_range()
+
+        # Änderungen merken, damit beim Schließen nachgefragt werden kann
+        self.table.itemChanged.connect(self.touch)
+        for w in (self.cur_user, self.cur_pass, self.new_user, self.new_pass):
+            w.textChanged.connect(self.touch)
+        for w in (self.cur_pass, self.new_user, self.new_pass, self.new_pass2):
+            w.textChanged.connect(self.update_missing)
+        self.dry.toggled.connect(self.mode_changed)
+        self.bios_dry.toggled.connect(self.bios_mode_changed)
+        self.dirty = False
+        if state:
+            self.import_state(state)
+        elif stop_leftover_dhcp():
+            self.status.setText(T("Ein DHCP-Server aus einem früheren, abgebrochenen Lauf lief noch und wurde beendet."))
+        self.mode_changed()
+        self.bios_mode_changed()
+
+    # ---------- Hilfen ----------
+    @staticmethod
+    def tip_row(form, label, widget, tip):
+        """Formularzeile, bei der Beschriftung und Feld denselben Hilfetext zeigen."""
+        lab = QLabel(label)
+        lab.setToolTip(tip)
+        widget.setToolTip(tip)
+        form.addRow(lab, widget)
+
+    def touch(self, *_):
+        self.dirty = True
+
+    # ---------- Profile ----------
+    def build_profiles(self):
+        self.profiles = {}
+        self.profile = QComboBox()
+        self.profile.setMinimumWidth(240)
+        self.profile.setToolTip(
+            T("Ein Profil merkt sich die Einstellungen dieser Maske: Hersteller, Werksbenutzer, neuen\n"
+            "Administrator, User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen.\n"
+            "Passwörter und die Serverliste gehören nicht dazu."))
+        self.profile.activated.connect(self.profile_selected)
+        bar = QHBoxLayout()
+        lab = QLabel(T("Profil"))
+        lab.setToolTip(self.profile.toolTip())
+        bar.addWidget(lab)
+        bar.addWidget(self.profile)
+        for text, tip, slot in (
+                (T("Speichern"), T("Speichert die aktuellen Einstellungen in das gewählte Profil.\n"
+                              "Ohne gewähltes Profil wird ein neues angelegt."), self.profile_save),
+                (T("Neu …"), T("Legt aus den aktuellen Einstellungen ein neues Profil an."), self.profile_new),
+                (T("Umbenennen …"), T("Gibt dem gewählten Profil einen anderen Namen."), self.profile_rename),
+                (T("Löschen"), T("Löscht das gewählte Profil. Die Einstellungen in der Maske bleiben stehen."),
+                 self.profile_delete)):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            bar.addWidget(b)
+        bar.addStretch()
+        return bar
+
+    def profile_values(self):
+        """Aktuelle Einstellungen der Maske, ohne Passwörter."""
+        return {"vendor": self.vendor.currentData() or "", "cur_user": self.cur_user.text().strip(),
+                "new_user": self.new_user.text().strip(), "slot": self.slot.value(),
+                "mask": self.def_mask.text().strip(), "gateway": self.def_gw.text().strip(),
+                "dhcp_if": (self.iface.currentData() or [""])[0],
+                "dhcp_from": self.dhcp_from.text().strip(), "dhcp_to": self.dhcp_to.text().strip()}
+
+    def apply_profile(self, p):
+        dirty = self.dirty                      # ein Profilwechsel ändert die Serverliste nicht
+        self.vendor.setCurrentIndex(max(0, self.vendor.findData(str(p.get("vendor", "")))))
+        self.cur_user.setText(str(p.get("cur_user", "")))
+        self.new_user.setText(str(p.get("new_user", "")))
+        if str(p.get("slot", "")).isdigit():
+            self.slot.setValue(int(p["slot"]))
+        self.def_mask.setText(str(p.get("mask", "")))
+        self.def_gw.setText(str(p.get("gateway", "")))
+        for i in range(self.iface.count()):
+            if self.iface.itemData(i)[0] == p.get("dhcp_if"):
+                self.iface.setCurrentIndex(i)
+        if p.get("dhcp_from") and p.get("dhcp_to"):
+            self.dhcp_from.setText(str(p["dhcp_from"]))
+            self.dhcp_to.setText(str(p["dhcp_to"]))
+        self.validate_defaults()
+        self.validate_range()
+        self.dirty = dirty
+
+    def current_profile(self):
+        name = self.profile.currentText()
+        return name if name in self.profiles else None
+
+    def refill_profiles(self, select=None):
+        self.profile.clear()
+        self.profile.addItem(NO_PROFILE)
+        self.profile.addItems(sorted(self.profiles, key=str.lower))
+        self.profile.setCurrentIndex(max(0, self.profile.findText(select or NO_PROFILE)))
+
+    def read_profiles(self):
+        """Profile beim Start einlesen und das zuletzt genutzte anwenden."""
+        last = None
+        try:
+            data = json.loads(PROFILES.read_text(encoding="utf-8"))
+            self.profiles = {str(k): v for k, v in data.get("profiles", {}).items() if isinstance(v, dict)}
+            last = data.get("last")
+        except (OSError, ValueError, AttributeError):
+            self.profiles = {}
+        self.refill_profiles(last)
+        if self.current_profile():
+            self.apply_profile(self.profiles[self.current_profile()])
+
+    def write_profiles(self):
+        try:
+            PROFILES.write_text(json.dumps({"lang": LANG, "last": self.current_profile(), "profiles": self.profiles},
+                                           indent=2, ensure_ascii=False), encoding="utf-8")
+            return True
+        except OSError as e:
+            QMessageBox.warning(self, T("Profile"), T('{0} nicht schreibbar:\n{1}').format(PROFILES.name, e))
+            return False
+
+    def profile_selected(self, *_):
+        name = self.current_profile()
+        if name:
+            self.apply_profile(self.profiles[name])
+            self.status.setText(T('Profil „{0}“ geladen').format(name))
+        if PROFILES.exists():
+            self.write_profiles()               # merkt sich das zuletzt genutzte Profil
+
+    def profile_save(self):
+        name = self.current_profile()
+        if not name:
+            return self.profile_new()
+        self.profiles[name] = self.profile_values()
+        if self.write_profiles():
+            self.status.setText(T('Profil „{0}“ gespeichert (ohne Passwörter)').format(name))
+
+    def ask_profile_name(self, title, preset=""):
+        name, good = QInputDialog.getText(self, title, T("Name des Profils:"), text=preset)
+        name = name.strip()
+        if not good or not name:
+            return None
+        if name == NO_PROFILE:
+            QMessageBox.warning(self, title, T("Dieser Name ist reserviert."))
+            return None
+        return name
+
+    def profile_new(self):
+        name = self.ask_profile_name(T("Neues Profil"))
+        if not name:
+            return
+        if name in self.profiles and QMessageBox.question(
+                self, T("Neues Profil"), T('Das Profil „{0}“ gibt es schon. Überschreiben?').format(name)
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.profiles[name] = self.profile_values()
+        self.refill_profiles(name)
+        if self.write_profiles():
+            self.status.setText(T('Profil „{0}“ gespeichert (ohne Passwörter)').format(name))
+
+    def profile_rename(self):
+        old = self.current_profile()
+        if not old:
+            self.status.setText(T("Kein Profil gewählt"))
+            return
+        name = self.ask_profile_name(T("Profil umbenennen"), old)
+        if not name or name == old:
+            return
+        if name in self.profiles:
+            QMessageBox.warning(self, T("Profil umbenennen"), T('Das Profil „{0}“ gibt es schon.').format(name))
+            return
+        self.profiles[name] = self.profiles.pop(old)
+        self.refill_profiles(name)
+        if self.write_profiles():
+            self.status.setText(T('Profil „{0}“ heißt jetzt „{1}“').format(old, name))
+
+    def profile_delete(self):
+        name = self.current_profile()
+        if not name:
+            self.status.setText(T("Kein Profil gewählt"))
+            return
+        if QMessageBox.question(self, T("Profil löschen"), T('Profil „{0}“ wirklich löschen?').format(name)
+                                ) != QMessageBox.StandardButton.Yes:
+            return
+        del self.profiles[name]
+        self.refill_profiles()
+        if self.write_profiles():
+            self.status.setText(T('Profil „{0}“ gelöscht').format(name))
+
+    def validate_defaults(self):
+        """Prüft die Vorgaben für neue Zeilen und markiert ungültige Felder."""
+        m = re.fullmatch(r"/?(\d{1,2})", self.def_mask.text().strip())      # /24 oder 24 -> 255.255.255.0
+        if m and int(m.group(1)) <= 32:
+            self.def_mask.setText(str(ipaddress.IPv4Network(f"0.0.0.0/{m.group(1)}").netmask))
+        mask, gw = self.def_mask.text().strip(), self.def_gw.text().strip()
+        bad = {self.def_mask: bool(mask) and not netmask(mask), self.def_gw: bool(gw) and not ipv4(gw)}
+        for w, wrong in bad.items():
+            w.setStyleSheet("QLineEdit { border: 1px solid #d9534f; }" if wrong else "")
+        return not any(bad.values())
+
+    def vendor_changed(self, *_):
+        v = self.vendor.currentData() or ""
+        self.cur_user.setPlaceholderText(USER_HINT[v])
+        self.cur_pass.setPlaceholderText(PASS_HINT[v])
+        self.user_hint.setText(
+            T("<small>Leer lassen für: Dell root · HPE Administrator · Supermicro ADMIN · Lenovo USERID</small>") if not v
+            else T('<small>Leer lassen für den Werksbenutzer {0}</small>').format(USER_HINT[v]))
+        self.version_hint.setText(f"<small>{VERSION_HINT[v]}</small>")
+        self.version_hint.setToolTip(VERSION_HINT[v])
+        self.slot.setEnabled(v in ("", "dell"))
+
+    @staticmethod
+    def _pw(text=""):
+        e = QLineEdit(text)
+        e.setEchoMode(QLineEdit.EchoMode.Password)
+        return e
+
+    @staticmethod
+    def _with_eye(edit):
+        btn = QPushButton("👁")
+        btn.setCheckable(True)
+        btn.setFixedWidth(36)
+        btn.toggled.connect(lambda on: edit.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(edit)
+        h.addWidget(btn)
+        return w
+
+    def say(self, text, color=None, bold=False):
+        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
+        if bold:
+            style += "font-weight:bold;"
+        self.log.append(f'<span style="{style}">{html.escape(text)}</span>')
+
+    # ---------- Serverliste ----------
+    def add_row(self, values=None):
+        """Neue Zeile; ohne Werte gelten die Vorgaben, sonst Maske und Gateway der letzten Zeile."""
+        r = self.table.rowCount()
+        if values is None:
+            values = [""] * len(COLS)
+            values[1] = self.cur_pass.text()
+            values[3] = self.def_mask.text().strip() or (self.cell(r - 1, 3) if r else "")
+            values[4] = self.def_gw.text().strip() or (self.cell(r - 1, 4) if r else "")
+        self.table.insertRow(r)
+        for c, val in enumerate(values):
+            self.table.setItem(r, c, QTableWidgetItem(val))
+        self.table.setCurrentCell(r, 0)
+
+    def remove_rows(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            self.table.removeRow(r)
+        self.update_count()
+        self.touch()
+
+    def is_done(self, r):
+        """Zeile ist fertig, solange die Aktuelle IP noch die ist, mit der sie umgestellt wurde."""
+        item = self.table.item(r, 0)
+        return bool(item) and item.text().strip() != "" and item.data(Qt.ItemDataRole.UserRole) == item.text().strip()
+
+    def mark_done(self, ip):
+        """Der Engine-Thread meldet einen fertig umgestellten Server: Zeile grün markieren."""
+        for r in range(self.table.rowCount()):
+            if self.cell(r, 0) == ip and not self.is_done(r):
+                self.table.blockSignals(True)
+                self.table.item(r, 0).setData(Qt.ItemDataRole.UserRole, ip)
+                self.table.blockSignals(False)
+                break
+        self.update_count()
+
+    def apply_password(self):
+        for r in range(self.table.rowCount()):
+            if any(self.cell(r, c) for c in range(len(COLS))):
+                self.table.item(r, 1).setText(self.cur_pass.text())
+
+    def cell(self, r, c):
+        item = self.table.item(r, c)
+        return item.text().strip() if item else ""
+
+    def rows(self, open_only=False):
+        """Alle nicht leeren Zeilen als Listen mit 6 Feldern; mit open_only ohne die fertigen."""
+        out = []
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(COLS))]
+            if (vals[0] or vals[2] or vals[5]) and not (open_only and self.is_done(r)):    # nur vorbelegte Felder zählen nicht
+                out.append(vals)
+        return out
+
+    def update_count(self, *_):
+        issues = self.validate_table()
+        self.cells_missing = sum(1 for r, c, m in issues if not m)
+        self.cells_bad = sum(1 for r, c, m in issues if m)
+        bad = len({r for r, c, m in issues if m})
+        total = len(self.rows())
+        fertig = total - len(self.rows(open_only=True))
+        self.count.setText(T('{0} Server').format(total)
+                           + (T(" · <span style='color:#3fa45b'>{0} fertig</span>").format(fertig) if fertig else '')
+                           + (T(" · <span style='color:#d9534f'>{0} mit Fehlern</span>").format(bad) if bad else ''))
+        self.update_missing()
+
+    def load(self, path, settings=False):
+        """Liest eine Liste ein; mit settings=True auch die gespeicherten Felder der Maske."""
+        try:
+            lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+        except (OSError, UnicodeError) as e:
+            QMessageBox.warning(self, T("Liste laden"), T('Datei nicht lesbar:\n{0}').format(e))
+            return False
+        self.table.blockSignals(True)
+        for line in lines:
+            line = line.strip()
+            if line.startswith("#@ ") and "=" in line:
+                if not settings:
+                    continue
+                key, val = line[3:].split("=", 1)
+                field = {"cur_user": self.cur_user, "cur_pass": self.cur_pass,
+                         "new_user": self.new_user, "new_pass": self.new_pass,
+                         "dhcp_from": self.dhcp_from, "dhcp_to": self.dhcp_to}.get(key)
+                if field:
+                    field.setText(val)
+                    if key == "new_pass":
+                        self.new_pass2.setText(val)
+                elif key == "slot" and val.isdigit():
+                    self.slot.setValue(int(val))
+                elif key == "vendor":
+                    self.vendor.setCurrentIndex(max(0, self.vendor.findData(val)))
+                elif key == "dhcp_if":
+                    for i in range(self.iface.count()):
+                        if self.iface.itemData(i)[0] == val:
+                            self.iface.setCurrentIndex(i)
+                continue
+            if not line or line.startswith("#"):
+                continue
+            f = [x.strip() for x in line.replace(";", ",").split(",")]     # Excel exportiert mit Semikolon
+            done = False
+            if len(f) == 7:              # 7. Spalte: „fertig“, Server schon umgestellt
+                done = f.pop().lower() in ("fertig", "done", "1", "x")
+            if len(f) == 5:              # ohne Passwort-Spalte
+                f.insert(1, "")
+            if len(f) == 6:
+                self.add_row(f)
+                if done and f[0]:
+                    self.table.item(self.table.rowCount() - 1, 0).setData(Qt.ItemDataRole.UserRole, f[0])
+        self.table.blockSignals(False)
+        self.update_count()
+        return True
+
+    def load_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, T("Liste laden"), str(HERE), T("CSV (*.csv);;Alle Dateien (*)"))
+        if not path:
+            return
+        replace = True
+        if self.rows():
+            box = QMessageBox(QMessageBox.Icon.Question, T("Liste laden"),
+                              T("Es sind schon Einträge vorhanden."), parent=self)
+            b_replace = box.addButton(T("Ersetzen"), QMessageBox.ButtonRole.AcceptRole)
+            b_append = box.addButton(T("Anhängen"), QMessageBox.ButtonRole.ActionRole)
+            box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() not in (b_replace, b_append):
+                return
+            replace = box.clickedButton() is b_replace
+        if replace:
+            self.table.setRowCount(0)
+        else:   # leere Zeilen am Ende entfernen
+            for r in reversed(range(self.table.rowCount())):
+                if not any(self.cell(r, c) for c in (0, 2, 5)):
+                    self.table.removeRow(r)
+        if self.load(path, settings=replace):
+            if self.table.rowCount() == 0:
+                self.add_row()
+            self.dirty = not replace
+            self.tabs.setCurrentIndex(1)
+            self.status.setText(T('Geladen: {0}').format(path))
+
+    def save_dialog(self):
+        """Fragt nach Datei und danach, ob Passwörter hinein sollen. Gibt True zurück, wenn gespeichert wurde."""
+        path, _ = QFileDialog.getSaveFileName(self, T("Liste speichern"), str(LIST), T("CSV (*.csv)"))
+        if not path:
+            return False
+        box = QMessageBox(QMessageBox.Icon.Question, T("Liste speichern"),
+                          T("Sollen die Passwörter mit in die Datei?"), parent=self)
+        box.setInformativeText(T("Ohne Passwörter enthält die Datei nur Adressen, Hostnamen und Einstellungen. "
+                               "Mit Passwörtern stehen diese im Klartext in der Datei."))
+        b_without = box.addButton(T("Ohne Passwörter"), QMessageBox.ButtonRole.AcceptRole)
+        b_with = box.addButton(T("Mit Passwörtern"), QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(b_without)
+        box.exec()
+        if box.clickedButton() not in (b_without, b_with):
+            return False
+        try:
+            self.write_file(path, with_passwords=box.clickedButton() is b_with)
+        except OSError as e:
+            QMessageBox.warning(self, T("Liste speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
+            return False
+        self.dirty = False
+        self.status.setText(T('Gespeichert in {0}').format(path) + (
+            T(" (mit Passwörtern im Klartext)") if box.clickedButton() is b_with else T(" (ohne Passwörter)")))
+        return True
+
+    def write_file(self, path, with_passwords=False):
+        """Schreibt Liste und Einstellungen; Passwörter nur auf ausdrücklichen Wunsch."""
+        settings = [("vendor", self.vendor.currentData() or ""), ("cur_user", self.cur_user.text()),
+                    ("new_user", self.new_user.text()), ("slot", self.slot.value()),
+                    ("dhcp_if", (self.iface.currentData() or [""])[0]),
+                    ("dhcp_from", self.dhcp_from.text()), ("dhcp_to", self.dhcp_to.text())]
+        if with_passwords:
+            settings += [("cur_pass", self.cur_pass.text()), ("new_pass", self.new_pass.text())]
+        text = "".join(f"#@ {k}={v}\n" for k, v in settings)
+        text += "# aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,fertig\n"
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(COLS))]
+            if not (vals[0] or vals[2] or vals[5]):
+                continue
+            if not with_passwords:
+                vals[1] = ""
+            text += ",".join(vals + ["fertig" if self.is_done(r) else ""]) + "\n"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if not WINDOWS:
+            os.chmod(path, 0o600)       # nur für den eigenen Benutzer lesbar
+
+    def validate_table(self):
+        """Färbt die Zellen ein (gelb = fehlt noch, rot = fehlerhaft, grün = fertig) und gibt
+        [(Zeile, Spalte, Meldung)] zurück ("" = Pflichtfeld leer)."""
+        t = self.table
+        t.blockSignals(True)
+        rows = {}
+        for r in range(t.rowCount()):
+            m = re.fullmatch(r"/?(\d{1,2})", self.cell(r, 3))      # /24 oder 24 -> 255.255.255.0
+            if m and int(m.group(1)) <= 32:
+                t.item(r, 3).setText(str(ipaddress.IPv4Network(f"0.0.0.0/{m.group(1)}").netmask))
+            vals = [self.cell(r, c) for c in range(len(COLS))]
+            if vals[0] or vals[2] or vals[5]:
+                rows[r] = vals
+        errs = {r: row_errors(v) for r, v in rows.items()}
+        for c in (0, 2, 5):
+            seen = {}
+            for r, v in rows.items():
+                key = v[c].lower()
+                # die alte IP eines fertigen Servers ist frei und darf neu vergeben werden
+                if key and c not in errs[r] and not (c == 0 and self.is_done(r)):
+                    seen.setdefault(key, []).append(r)
+            for dup in (x for x in seen.values() if len(x) > 1):
+                nums = ", ".join(str(x + 1) for x in dup)
+                for r in dup:
+                    errs[r][c] = T('{0} kommt mehrfach vor (Zeilen {1})').format(COLS[c], nums)
+        # die neue IP darf nicht die aktuelle Adresse eines anderen, noch offenen Geräts sein
+        current = {v[0]: r for r, v in rows.items() if v[0] and not self.is_done(r)}
+        for r, v in rows.items():
+            other = current.get(v[2])
+            if other is not None and other != r and 2 not in errs[r] and not self.is_done(r):
+                errs[r][2] = T('Diese Adresse ist die aktuelle IP von Zeile {0}').format(other + 1)
+        empty_tip = "\n\n" + T("Pflichtfeld, noch leer.")
+        out = []
+        for r in range(t.rowCount()):
+            done = self.is_done(r)
+            for c in range(len(COLS)):
+                item = t.item(r, c)
+                if not item:
+                    continue
+                msg = errs.get(r, {}).get(c)
+                if msg is not None:
+                    item.setBackground(ERR_BG if msg else MISS_BG)
+                    item.setToolTip(msg if msg else COL_TIPS[c] + empty_tip)
+                    out.append((r, c, msg))
+                elif not rows and c != 1 and not item.text().strip():
+                    item.setBackground(MISS_BG)         # Liste noch ganz leer: zeigen, wo es losgeht
+                    item.setToolTip(COL_TIPS[c] + empty_tip)
+                elif done:
+                    item.setBackground(DONE_BG)
+                    item.setToolTip(T("Fertig umgestellt, wird beim nächsten Start übersprungen.\n"
+                                    "Soll das Gerät noch einmal bearbeitet werden: Zeile markieren und "
+                                    "„Erneut bearbeiten“ klicken."))
+                else:
+                    item.setBackground(QBrush())
+                    item.setToolTip(COL_TIPS[c])
+        t.blockSignals(False)
+        return out
+
+    def check(self):
+        """Prüft alle Eingaben vor einem Lauf. Gibt eine Fehlermeldung zurück oder None."""
+        if not self.new_user.text() or not self.new_pass.text():
+            return T("Neuen Benutzer und Passwort ausfüllen.")
+        if not USER_RE.match(self.new_user.text()):
+            return (T("Neuer Benutzer: nur Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, "
+                    "höchstens 16 Zeichen."))
+        if len(self.new_pass.text()) < 8:
+            return T("Neues Passwort: mindestens 8 Zeichen. Kürzere lehnen die meisten BMCs ab.")
+        if self.new_pass.text() != self.new_pass2.text():
+            return T("Neues Passwort: Die beiden Eingaben stimmen nicht überein.")
+        if not self.rows():
+            return T("Die Serverliste ist leer.")
+        errs = self.validate_table()
+        if errs:
+            r, c, msg = errs[0]
+            self.table.setCurrentCell(r, c)
+            if not msg:
+                msg = T("fehlt")
+            text = T('Zeile {0}, {1}: {2}').format(r + 1, COLS[c], msg)
+            if len(errs) > 1:
+                text += "\n\n" + T('({0} weitere markierte Felder)').format(len(errs) - 1)
+            return text
+        own = {str(i.ip) for i in self.local_ifaces()}
+        pool = None
+        if self.dhcp_running():
+            pool = ipv4(self.dhcp_from.text().strip()), ipv4(self.dhcp_to.text().strip())
+        for r in range(self.table.rowCount()):
+            if self.is_done(r) or not (self.cell(r, 0) or self.cell(r, 2)):
+                continue
+            if not self.cell(r, 1) and not self.cur_pass.text():
+                return T('Zeile {0}: kein Passwort (weder in der Zeile noch oben).').format(r + 1)
+            new = ipv4(self.cell(r, 2))
+            if new and str(new) in own:
+                return T('Zeile {0}: Die neue IP ist eine Adresse dieses Rechners.').format(r + 1)
+            if new and pool and pool[0] and pool[1] and pool[0] <= new <= pool[1]:
+                return (T('Zeile {0}: Die neue IP liegt im Bereich des laufenden DHCP-Servers ({1} bis {2}). Dort könnte sie ein zweites Mal vergeben werden.').format(r + 1, pool[0], pool[1]))
+        return None
+
+    def running(self):
+        return (bool(self.worker) and self.worker.isRunning()) \
+            or (bool(getattr(self, "bios_worker", None)) and self.bios_worker.isRunning())
+
+    def closeEvent(self, event):
+        if getattr(self, "switching", False):   # Sprachwechsel: das neue Fenster hat alles übernommen
+            event.accept()
+            return
+        if self.running():
+            QMessageBox.information(self, T("Lauf aktiv"), T("Es läuft noch eine Konfiguration. "
+                                    "Bitte warten oder erst abbrechen."))
+            event.ignore()
+            return
+        if self.dirty and self.rows():
+            box = QMessageBox(QMessageBox.Icon.Question, T("Beenden"),
+                              T("Die Serverliste wurde nicht gespeichert."), parent=self)
+            box.setInformativeText(T("Das Tool speichert nichts von selbst. Ohne Speichern ist die Liste "
+                                   "nach dem Schließen weg."))
+            b_save = box.addButton(T("Speichern …"), QMessageBox.ButtonRole.AcceptRole)
+            b_drop = box.addButton(T("Verwerfen"), QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is b_save:
+                if not self.save_dialog():
+                    event.ignore()
+                    return
+            elif box.clickedButton() is not b_drop:
+                event.ignore()
+                return
+        self.stop_dhcp()
+        event.accept()
+
+    # ---------- UEFI/BIOS-Einstellungen ----------
+    def reachable_rows(self):
+        """(Adresse, Passwort) je Zeile; fertig umgestellte (grüne) Zeilen sind jetzt unter der neuen IP erreichbar."""
+        out = []
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(COLS))]
+            if vals[0] or vals[2] or vals[5]:
+                ip = vals[2] if self.is_done(r) else vals[0]
+                if ip:
+                    out.append((ip, vals[1]))
+        return out
+
+    def build_bios(self):
+        self.bios_live = {}        # zuletzt gelesene Attribute eines Referenzgeräts: Name -> aktueller Wert
+        self.bios_pending = {}     # aus einer geladenen Vorlage, noch nicht in der Tabelle angezeigt
+        self.bios_reader = None
+
+        self.bios_vendor = QComboBox()
+        for text, key in VENDORS:
+            self.bios_vendor.addItem(text, key)
+        self.bios_user = QLineEdit()
+        self.bios_user.setPlaceholderText(T("automatisch je Hersteller"))
+        self.bios_pass = self._pw()
+        ref_refresh = QPushButton("↻")
+        ref_refresh.setFixedWidth(36)
+        ref_refresh.setToolTip(T("Adressen aus der Serverliste (Reiter 2) neu einlesen"))
+        ref_refresh.clicked.connect(self.bios_refresh_ips)
+        self.bios_ref = QComboBox()
+        self.bios_ref.setEditable(True)
+        self.bios_ref.setToolTip(T("Adresse des Geräts, von dem die Attribute gelesen werden.\n"
+                                 "Vorschläge kommen aus der Serverliste in Reiter 2, es geht aber jede\n"
+                                 "erreichbare Adresse."))
+        refrow = QHBoxLayout()
+        refrow.addWidget(self.bios_ref, 1)
+        refrow.addWidget(ref_refresh)
+        self.bios_read_btn = QPushButton(T("Attribute lesen"))
+        self.bios_read_btn.setToolTip(T("Liest die tatsächlich vorhandenen UEFI-Attribute von diesem einen\n"
+                                      "Gerät. Nur Lesen, es wird nichts verändert."))
+        self.bios_read_btn.clicked.connect(self.bios_read)
+        self.bios_read_status = QLabel()
+
+        box_ref = QGroupBox(T("Referenzgerät (nur zum Lesen)"))
+        box_ref.setToolTip(T("Da sich UEFI-Attribute je Modell unterscheiden, zeigt das Tool nur die\n"
+                           "tatsächlich vorhandenen eines echten Geräts an, statt sie zu erraten."))
+        f = QFormLayout(box_ref)
+        self.tip_row(f, T("Hersteller"), self.bios_vendor,
+                     T("Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ ermittelt den\n"
+                     "Hersteller dieses einen Geräts selbst."))
+        self.tip_row(f, T("Benutzer"), self.bios_user,
+                     T("Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet\n"
+                     "(root/Administrator/ADMIN/USERID)."))
+        self.tip_row(f, T("Passwort"), self._with_eye(self.bios_pass),
+                     T("Gilt zum Lesen des Referenzgeräts und, wenn die Vorlage später angewendet wird,\n"
+                     "für alle Zeilen der Serverliste ohne eigenes Passwort."))
+        f.addRow(T("Adresse"), refrow)
+        act = QHBoxLayout()
+        act.addWidget(self.bios_read_status)
+        act.addStretch()
+        act.addWidget(self.bios_read_btn)
+        f.addRow(act)
+
+        self.bios_filter = QLineEdit()
+        self.bios_filter.setPlaceholderText(T("Attribut suchen …"))
+        self.bios_filter.setToolTip(T("Blendet Zeilen aus, deren Name den Suchtext nicht enthält."))
+        self.bios_filter.textChanged.connect(self.bios_apply_filter)
+        self.bios_table = QTableWidget(0, 3)
+        self.bios_table.setHorizontalHeaderLabels([T("Attribut"), T("Aktueller Wert"), T("Neuer Wert")])
+        self.bios_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.bios_table.setToolTip(T("Nur die Spalte „Neuer Wert“ ist bearbeitbar. Leer lassen, um ein\n"
+                                   "Attribut unverändert zu lassen. Graue Zeilen (Passwörter, TPM,\n"
+                                   "Löschfunktionen) sind gesperrt."))
+        box_table = QGroupBox(T("UEFI/BIOS-Attribute"))
+        vt = QVBoxLayout(box_table)
+        vt.addWidget(self.bios_filter)
+        vt.addWidget(self.bios_table)
+
+        self.bios_dry = QCheckBox(T("Trockenlauf (nichts ändern)"))
+        self.bios_dry.setChecked(True)
+        self.bios_dry.setToolTip(T("Mit Haken wird nichts gesendet, das Protokoll zeigt nur den Ablauf.\n"
+                                 "Ohne Haken werden die ausgefüllten „Neuer Wert“-Felder auf jedem Server\n"
+                                 "der Liste (Reiter 2) gesetzt, der das jeweilige Attribut tatsächlich hat."))
+        self.bios_reboot = QCheckBox(T("Danach hart neu starten"))
+        self.bios_reboot.setChecked(False)
+        self.bios_reboot.setToolTip(T("UEFI-Einstellungen werden erst nach einem Neustart aktiv. Ohne Haken\n"
+                                    "werden sie nur vorgemerkt, es wird kein Neustart ausgelöst.\n"
+                                    "Mit Haken wird ein laufender Server hart neu gestartet (wie mit der\n"
+                                    "Reset-Taste), ein ausgeschalteter wird eingeschaltet. Nur für Server\n"
+                                    "ohne laufendes Betriebssystem verwenden."))
+        self.bios_start = QPushButton(T("Auf allen Servern der Liste setzen"))
+        self.bios_start.setMinimumHeight(34)
+        self.bios_start.setToolTip(T("Wendet jedes ausgefüllte „Neuer Wert“-Feld auf jede Zeile der\n"
+                                   "Serverliste (Reiter 2) an, der Reihe nach, mit Login wie oben."))
+        self.bios_start.clicked.connect(self.bios_run)
+        self.bios_stop = QPushButton(T("Abbrechen"))
+        self.bios_stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
+        self.bios_stop.setEnabled(False)
+        self.bios_stop.clicked.connect(self.bios_abort)
+        actions = QHBoxLayout()
+        actions.addWidget(self.bios_dry)
+        actions.addWidget(self.bios_reboot)
+        actions.addStretch()
+        actions.addWidget(self.bios_stop)
+        actions.addWidget(self.bios_start)
+
+        self.bios_log = QTextEdit()
+        self.bios_log.setReadOnly(True)
+        self.bios_log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.bios_status = QLabel(T("Bereit"))
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.addLayout(self.bios_build_profiles())
+        lay.addWidget(box_ref)
+        lay.addWidget(box_table, 1)
+        lay.addLayout(actions)
+        lay.addWidget(self.bios_log)
+        lay.addWidget(self.bios_status)
+        self.bios_refresh_ips()
+        self.bios_read_profiles()
+        return page
+
+    def bios_refresh_ips(self):
+        keep = self.bios_ref.currentText()
+        self.bios_ref.blockSignals(True)
+        self.bios_ref.clear()
+        for ip, _ in self.reachable_rows():
+            self.bios_ref.addItem(ip)
+        idx = self.bios_ref.findText(keep) if keep else -1
+        if idx >= 0:
+            self.bios_ref.setCurrentIndex(idx)
+        elif keep:
+            self.bios_ref.setEditText(keep)
+        self.bios_ref.blockSignals(False)
+
+    def bios_read(self):
+        ip = self.bios_ref.currentText().strip()
+        if not ip:
+            QMessageBox.warning(self, T("Attribute lesen"),
+                                T("Bitte eine Adresse eintragen oder aus der Serverliste wählen."))
+            return
+        self.bios_read_btn.setEnabled(False)
+        self.bios_read_status.setText(T("Lese …"))
+        self.bios_reader = BiosReadThread(self, ip, self.bios_user.text().strip(), self.bios_pass.text(),
+                                          self.bios_vendor.currentData() or None)
+        self.bios_reader.done.connect(self.bios_read_done)
+        self.bios_reader.start()
+
+    def bios_read_done(self, attrs, vendor, err):
+        self.bios_read_btn.setEnabled(True)
+        if attrs is None:
+            self.bios_read_status.setText("")
+            QMessageBox.warning(self, T("Attribute lesen"), err or T("Attribute konnten nicht gelesen werden."))
+            return
+        self.bios_live = {str(k): v for k, v in attrs.items()}
+        self.bios_fill_table()
+        self.bios_read_status.setText(T('{0} Attribute ({1})').format(len(self.bios_live), Engine.NAME.get(vendor, vendor)))
+
+    def bios_fill_table(self, keep_values=True):
+        old_new = {}
+        if keep_values:
+            for r in range(self.bios_table.rowCount()):
+                name, val = self.bios_table.item(r, 0), self.bios_table.item(r, 2)
+                if name and val and val.text().strip():
+                    old_new[name.text()] = val.text().strip()
+        self.bios_table.setRowCount(0)
+        for name in sorted(self.bios_live, key=str.lower):
+            cur = self.bios_live[name]
+            locked = BiosEngine.blocked(name)
+            r = self.bios_table.rowCount()
+            self.bios_table.insertRow(r)
+            it0, it1 = QTableWidgetItem(name), QTableWidgetItem("" if cur is None else str(cur))
+            it2 = QTableWidgetItem("" if locked else old_new.get(name) or self.bios_pending.get(name, ""))
+            it0.setFlags(it0.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            it1.setFlags(it1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if locked:
+                it2.setFlags(it2.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                for it in (it0, it1, it2):
+                    it.setForeground(QBrush(QColor(140, 140, 140)))
+                    it.setToolTip(T("Gesperrt: Passwort-, TPM- und Lösch-Attribute ändert das Tool nie. "
+                                  "Ein Fehler dort kann den Server aussperren oder Daten kosten."))
+            self.bios_table.setItem(r, 0, it0)
+            self.bios_table.setItem(r, 1, it1)
+            self.bios_table.setItem(r, 2, it2)
+        self.bios_apply_filter()
+
+    def bios_apply_filter(self, *_):
+        needle = self.bios_filter.text().strip().lower()
+        for r in range(self.bios_table.rowCount()):
+            name = self.bios_table.item(r, 0)
+            self.bios_table.setRowHidden(r, bool(needle) and needle not in name.text().lower())
+
+    def bios_wanted(self):
+        """Attribut -> ausgefüllter „Neuer Wert“, für alle nicht leeren und nicht gesperrten Zeilen."""
+        out = {}
+        for r in range(self.bios_table.rowCount()):
+            name, val = self.bios_table.item(r, 0).text(), self.bios_table.item(r, 2).text().strip()
+            if val and not BiosEngine.blocked(name):
+                out[name] = val
+        return out
+
+    # ---------- UEFI-Vorlagen (eigener Bereich, getrennt von den Profilen in Reiter 2) ----------
+    def bios_build_profiles(self):
+        self.bios_profiles = {}
+        self.bios_profile = QComboBox()
+        self.bios_profile.setMinimumWidth(240)
+        self.bios_profile.setToolTip(
+            T("Eine Vorlage merkt sich Hersteller und die ausgefüllten „Neuer Wert“-Felder (Attribut ->\n"
+            "Wert). Eigener Bereich, getrennt von den Profilen in Reiter 2 und ohne Passwörter."))
+        self.bios_profile.activated.connect(self.bios_profile_selected)
+        bar = QHBoxLayout()
+        lab = QLabel(T("UEFI-Vorlage"))
+        lab.setToolTip(self.bios_profile.toolTip())
+        bar.addWidget(lab)
+        bar.addWidget(self.bios_profile)
+        for text, tip, slot in (
+                (T("Speichern"), T("Speichert die aktuellen „Neuer Wert“-Felder in die gewählte Vorlage.\n"
+                              "Ohne gewählte Vorlage wird eine neue angelegt."), self.bios_profile_save),
+                (T("Neu …"), T("Legt aus den aktuellen Feldern eine neue Vorlage an."), self.bios_profile_new),
+                (T("Umbenennen …"), T("Gibt der gewählten Vorlage einen anderen Namen."), self.bios_profile_rename),
+                (T("Löschen"), T("Löscht die gewählte Vorlage."), self.bios_profile_delete)):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            bar.addWidget(b)
+        bar.addStretch()
+        return bar
+
+    def bios_profile_values(self):
+        return {"vendor": self.bios_vendor.currentData() or "", "attrs": self.bios_wanted()}
+
+    def bios_apply_profile(self, p):
+        self.bios_vendor.setCurrentIndex(max(0, self.bios_vendor.findData(str(p.get("vendor", "")))))
+        attrs = p.get("attrs") if isinstance(p.get("attrs"), dict) else {}
+        self.bios_pending = {str(k): str(v) for k, v in attrs.items() if not BiosEngine.blocked(k)}
+        for r in range(self.bios_table.rowCount()):
+            name = self.bios_table.item(r, 0).text()
+            if name in self.bios_pending:
+                self.bios_table.item(r, 2).setText(self.bios_pending[name])
+
+    def bios_current_profile(self):
+        name = self.bios_profile.currentText()
+        return name if name in self.bios_profiles else None
+
+    def bios_refill_profiles(self, select=None):
+        self.bios_profile.clear()
+        self.bios_profile.addItem(NO_PROFILE)
+        self.bios_profile.addItems(sorted(self.bios_profiles, key=str.lower))
+        self.bios_profile.setCurrentIndex(max(0, self.bios_profile.findText(select or NO_PROFILE)))
+
+    def bios_read_profiles(self):
+        last = None
+        try:
+            data = json.loads(BIOS_PROFILES.read_text(encoding="utf-8"))
+            self.bios_profiles = {str(k): v for k, v in data.get("profiles", {}).items() if isinstance(v, dict)}
+            last = data.get("last")
+        except (OSError, ValueError, AttributeError):
+            self.bios_profiles = {}
+        self.bios_refill_profiles(last)
+        if self.bios_current_profile():
+            self.bios_apply_profile(self.bios_profiles[self.bios_current_profile()])
+
+    def bios_write_profiles(self):
+        try:
+            BIOS_PROFILES.write_text(json.dumps({"last": self.bios_current_profile(),
+                                                 "profiles": self.bios_profiles},
+                                                indent=2, ensure_ascii=False), encoding="utf-8")
+            return True
+        except OSError as e:
+            QMessageBox.warning(self, T("UEFI-Vorlagen"), T('{0} nicht schreibbar:\n{1}').format(BIOS_PROFILES.name, e))
+            return False
+
+    def bios_profile_selected(self, *_):
+        name = self.bios_current_profile()
+        if name:
+            self.bios_apply_profile(self.bios_profiles[name])
+            self.bios_status.setText(T('Vorlage „{0}“ geladen').format(name))
+        if BIOS_PROFILES.exists():
+            self.bios_write_profiles()
+
+    def bios_profile_save(self):
+        name = self.bios_current_profile()
+        if not name:
+            return self.bios_profile_new()
+        self.bios_profiles[name] = self.bios_profile_values()
+        if self.bios_write_profiles():
+            self.bios_status.setText(T('Vorlage „{0}“ gespeichert').format(name))
+
+    def bios_profile_new(self):
+        name = self.ask_profile_name(T("Neue UEFI-Vorlage"))
+        if not name:
+            return
+        if name in self.bios_profiles and QMessageBox.question(
+                self, T("Neue UEFI-Vorlage"), T('Die Vorlage „{0}“ gibt es schon. Überschreiben?').format(name)
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.bios_profiles[name] = self.bios_profile_values()
+        self.bios_refill_profiles(name)
+        if self.bios_write_profiles():
+            self.bios_status.setText(T('Vorlage „{0}“ gespeichert').format(name))
+
+    def bios_profile_rename(self):
+        old = self.bios_current_profile()
+        if not old:
+            self.bios_status.setText(T("Keine Vorlage gewählt"))
+            return
+        name = self.ask_profile_name(T("UEFI-Vorlage umbenennen"), old)
+        if not name or name == old:
+            return
+        if name in self.bios_profiles:
+            QMessageBox.warning(self, T("UEFI-Vorlage umbenennen"), T('Die Vorlage „{0}“ gibt es schon.').format(name))
+            return
+        self.bios_profiles[name] = self.bios_profiles.pop(old)
+        self.bios_refill_profiles(name)
+        if self.bios_write_profiles():
+            self.bios_status.setText(T('Vorlage „{0}“ heißt jetzt „{1}“').format(old, name))
+
+    def bios_profile_delete(self):
+        name = self.bios_current_profile()
+        if not name:
+            self.bios_status.setText(T("Keine Vorlage gewählt"))
+            return
+        if QMessageBox.question(self, T("UEFI-Vorlage löschen"), T('Vorlage „{0}“ wirklich löschen?').format(name)
+                                ) != QMessageBox.StandardButton.Yes:
+            return
+        del self.bios_profiles[name]
+        self.bios_refill_profiles()
+        if self.bios_write_profiles():
+            self.bios_status.setText(T('Vorlage „{0}“ gelöscht').format(name))
+
+    # ---------- UEFI-Lauf ----------
+    def bios_run(self):
+        wanted = self.bios_wanted()
+        if not wanted:
+            QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Keine „Neuer Wert“-Felder ausgefüllt."))
+            return
+        rows = [(ip, pw or self.bios_pass.text()) for ip, pw in self.reachable_rows()]
+        if not rows:
+            QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Die Serverliste (Reiter 2) ist leer."))
+            return
+        dry = self.bios_dry.isChecked()
+        reboot = self.bios_reboot.isChecked()
+        if not dry:
+            lines = [f"{k} = {v}" for k, v in sorted(wanted.items())]
+            info = "\n".join(lines[:15])
+            if len(lines) > 15:
+                info += "\n" + T('… und {0} weitere').format(len(lines) - 15)
+            info += "\n\n" + (
+                T("Danach wird jeder Server hart neu gestartet, wie mit der Reset-Taste. Ein laufendes "
+                "Betriebssystem wird dabei nicht sauber heruntergefahren.") if reboot else
+                T("Es wird kein Neustart ausgelöst; die Änderung wirkt erst beim nächsten Neustart."))
+            info += "\n\n" + T("Falsche UEFI-Werte können dazu führen, dass ein Server nicht mehr startet.")
+            if not self.confirm(T("Scharf ausführen?"),
+                                T('Auf {0} Servern werden jetzt wirklich UEFI-Einstellungen geändert.').format(len(rows)),
+                                info, len(rows)):
+                return
+
+        self.bios_log.clear()
+        mode = T("Trockenlauf") if dry else T("Scharfer Lauf")
+        self.bios_say(T('— {0}, {1} Server —').format(mode, len(rows)), "gray")
+        self.bios_worker = BiosEngineThread(
+            self, rows=rows, cur_user=self.bios_user.text().strip(), attrs=wanted, dry=dry,
+            vendor=self.bios_vendor.currentData() or None, reboot=reboot)
+        self.bios_worker.line.connect(self.bios_show_line)
+        self.bios_worker.result.connect(self.bios_done)
+        self.bios_start.setEnabled(False)
+        self.bios_stop.setEnabled(True)
+        self.bios_status.setText(T("Läuft …"))
+        self.bios_worker.start()
+
+    def bios_say(self, text, color=None, bold=False):
+        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
+        if bold:
+            style += "font-weight:bold;"
+        self.bios_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+
+    def bios_show_line(self, line, kind=""):
+        self.bios_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
+
+    def bios_abort(self):
+        if self.bios_worker and self.bios_worker.isRunning():
+            self.bios_worker.requestInterruption()
+            self.bios_stop.setEnabled(False)
+            self.bios_status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
+
+    def bios_done(self, code, *_):
+        self.bios_start.setEnabled(True)
+        self.bios_stop.setEnabled(False)
+        self.bios_status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+
+    # ---------- DHCP-Server (dnsmasq) ----------
+    def build_dhcp(self):
+        self.dhcp = None            # dnsmasq-Prozess (Linux)
+        self.dhcp_thread = None     # eingebauter Server (Windows)
+        self.lease_file = None
+        self.lease_state = None
+
+        self.iface = QComboBox()
+        self.iface.currentIndexChanged.connect(self.suggest_range)
+        refresh = QPushButton("↻")
+        refresh.setFixedWidth(36)
+        refresh.setToolTip(T("Netzwerkkarten neu einlesen"))
+        refresh.clicked.connect(self.fill_ifaces)
+        row = QHBoxLayout()
+        row.addWidget(self.iface, 1)
+        row.addWidget(refresh)
+        self.dhcp_from = QLineEdit()
+        self.dhcp_to = QLineEdit()
+        self.iface.setToolTip(T("Netzwerkkarte dieses Rechners, die am Staging-Switch hängt.\n"
+                              "Nur auf dieser Karte werden Adressen vergeben. Sie braucht eine feste IP."))
+        tip = (T("Aus diesem Bereich bekommen die Geräte vorübergehend eine Adresse,\n"
+               "damit das Tool sie erreichen kann. Er muss im Netz der gewählten Karte liegen\n"
+               "und groß genug für alle Geräte sein."))
+        self.range_tip = tip
+        rng = QHBoxLayout()
+        rng.addWidget(self.dhcp_from)
+        rng.addWidget(QLabel(T("bis")))
+        rng.addWidget(self.dhcp_to)
+        self.dhcp_btn = QPushButton(T("DHCP starten"))
+        self.dhcp_btn.setMinimumHeight(34)
+        self.dhcp_btn.setToolTip(T("Startet bzw. stoppt die Adressvergabe auf der gewählten Karte.\n"
+                                 "Nur an einem getrennten Staging-Switch verwenden."))
+        self.dhcp_btn.clicked.connect(self.toggle_dhcp)
+        self.dhcp_state = QLabel(T("Gestoppt"))
+        act = QHBoxLayout()
+        act.addWidget(self.dhcp_state)
+        act.addStretch()
+        act.addWidget(self.dhcp_btn)
+
+        box = QGroupBox(T("DHCP-Server für das Staging-Netz"))
+        f = QFormLayout(box)
+        f.addRow(T("Netzwerkkarte"), row)
+        f.addRow(T("Adressbereich"), rng)
+        f.addRow("", QLabel(T("<small><b>Nur an einem getrennten Staging-Switch starten</b>, nie im "
+                            "Produktivnetz.</small>")))
+        f.addRow(act)
+
+        self.leases = QTableWidget(0, 3)
+        self.leases.setHorizontalHeaderLabels([T("Vergebene IP"), T("MAC-Adresse"), T("Gemeldeter Name")])
+        self.leases.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.leases.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.leases.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.leases.setToolTip(T("Geräte, die eine Adresse bekommen haben. Der gemeldete Name hilft bei der Zuordnung,\n"
+                               "z. B. „idrac-“ plus Service-Tag oder „ILO“ plus Seriennummer."))
+        take = QPushButton(T("In Serverliste übernehmen"))
+        take.setToolTip(T("Trägt die vergebenen Adressen als „Aktuelle IP“ in die Serverliste ein.\n"
+                        "Mit Markierung nur die markierten Geräte, sonst alle."))
+        take.clicked.connect(self.take_leases)
+        self.lease_count = QLabel(T("0 Geräte"))
+        lb = QHBoxLayout()
+        lb.addWidget(self.lease_count)
+        lb.addStretch()
+        lb.addWidget(take)
+        box2 = QGroupBox(T("Gefundene Geräte"))
+        v = QVBoxLayout(box2)
+        v.addWidget(self.leases)
+        v.addLayout(lb)
+
+        self.dhcp_log = QTextEdit()
+        self.dhcp_log.setReadOnly(True)
+        self.dhcp_log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.dhcp_log.setMaximumHeight(150)
+
+        self.lease_timer = QTimer(self)
+        self.lease_timer.setInterval(2000)
+        self.lease_timer.timeout.connect(self.read_leases)
+        self.dhcp_ip = None
+        self.guard_timer = QTimer(self)             # prüft laufend, ob die Karte noch ein Staging-Netz ist
+        self.guard_timer.setInterval(10000)
+        self.guard_timer.timeout.connect(self.dhcp_guard)
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.addWidget(box)
+        lay.addWidget(box2, 1)
+        lay.addWidget(self.dhcp_log)
+        self.fill_ifaces()
+        return page
+
+    def fill_ifaces(self):
+        keep = (self.iface.currentData() or [None])[0]
+        self.iface.blockSignals(True)
+        self.iface.clear()
+        for nic in QNetworkInterface.allInterfaces():
+            if nic.flags() & QNetworkInterface.InterfaceFlag.IsLoopBack:
+                continue
+            label = nic.humanReadableName() if WINDOWS else nic.name()     # Windows: "Ethernet 2"
+            v4 = [e for e in nic.addressEntries()
+                  if e.ip().protocol() == QAbstractSocket.NetworkLayerProtocol.IPv4Protocol]
+            if v4:
+                for e in v4:
+                    ip, plen = e.ip().toString(), e.prefixLength()
+                    self.iface.addItem(f"{label}  –  {ip}/{plen}", [nic.name(), ip, plen])
+            else:
+                self.iface.addItem(T('{0}  –  keine IPv4-Adresse').format(label), [nic.name(), None, None])
+        names = [self.iface.itemData(i) for i in range(self.iface.count())]
+        pick = next((i for i, d in enumerate(names) if d[0] == keep), None)
+        if pick is None:                           # sonst erste Karte mit IPv4-Adresse
+            pick = next((i for i, d in enumerate(names) if d[1]), 0)
+        self.iface.setCurrentIndex(pick)
+        self.iface.blockSignals(False)
+        self.suggest_range()
+
+    def iface_net(self):
+        data = self.iface.currentData()
+        if not data or not data[1]:
+            return None
+        return ipaddress.ip_interface(f"{data[1]}/{data[2]}")
+
+    def suggest_range(self, *_):
+        """Bereich vorschlagen, wenn der eingetragene nicht zum Netz der Karte passt."""
+        me = self.iface_net()
+        if not me:
+            return
+        try:
+            if all(ipaddress.IPv4Address(w.text()) in me.network for w in (self.dhcp_from, self.dhcp_to)):
+                return
+        except ValueError:
+            pass
+        net = me.network
+        if net.num_addresses >= 256:
+            lo, hi = net.network_address + 100, net.network_address + 200
+        else:
+            lo, hi = net.network_address + 2, net.broadcast_address - 1
+        self.dhcp_from.setText(str(lo))
+        self.dhcp_to.setText(str(hi))
+        self.validate_range()
+
+    def validate_range(self, *_):
+        """Markiert ungültige DHCP-Bereichsfelder, gibt eine Fehlermeldung zurück oder None."""
+        me = self.iface_net()
+        lo, hi = ipv4(self.dhcp_from.text().strip()), ipv4(self.dhcp_to.text().strip())
+        msgs = {}
+        for w, ip in ((self.dhcp_from, lo), (self.dhcp_to, hi)):
+            if not ip:
+                msgs[w] = T("Keine gültige IPv4-Adresse")
+            elif me and ip not in me.network:
+                msgs[w] = T('Liegt nicht im Netz der Karte ({0})').format(me.network)
+            elif me and ip in (me.network.network_address, me.network.broadcast_address):
+                msgs[w] = T("Netz- oder Broadcast-Adresse")
+        if lo and hi and lo > hi and not msgs:
+            msgs[self.dhcp_to] = T("Ende liegt vor dem Anfang des Bereichs")
+        for w in (self.dhcp_from, self.dhcp_to):
+            w.setStyleSheet("QLineEdit { border: 1px solid #d9534f; }" if w in msgs else "")
+            w.setToolTip(msgs.get(w) or self.range_tip)
+        return next(iter(msgs.values()), None)
+
+    def dlog(self, text, color=None):
+        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
+        self.dhcp_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+
+    def dhcp_running(self):
+        return (bool(self.dhcp) and self.dhcp.state() != QProcess.ProcessState.NotRunning) \
+            or (bool(self.dhcp_thread) and self.dhcp_thread.isRunning())
+
+    def toggle_dhcp(self):
+        if self.dhcp_running():
+            self.stop_dhcp()
+        else:
+            self.start_dhcp()
+
+    def start_dhcp(self):
+        data = self.iface.currentData()
+        me = self.iface_net()
+        exe = None if WINDOWS else shutil.which("dnsmasq") or next(
+            (p for p in ("/usr/bin/dnsmasq", "/usr/sbin/dnsmasq") if os.path.exists(p)), None)
+        err = None
+        if not data:
+            err = T("Keine Netzwerkkarte gefunden.")
+        elif not me and WINDOWS:
+            err = (T('Die Karte „{0}“ hat keine IPv4-Adresse.\n\nIn den Adaptereinstellungen (ncpa.cpl) bei dieser Karte unter „Internetprotokoll, Version 4“ eine feste Adresse eintragen, z. B. 192.168.0.1 mit Maske 255.255.255.0, Gateway leer lassen.\n\nDanach hier auf ↻ klicken.').format(self.iface.currentText().split('  –  ')[0]))
+        elif not me:
+            err = (T('Die Karte {0} hat keine IPv4-Adresse. Feste Adresse setzen, z. B. im Terminal:\n\nnmcli con add type ethernet ifname {1} con-name staging ipv4.method manual ipv4.addresses 192.168.0.1/24\nnmcli con up staging\n\nDanach hier auf ↻ klicken.').format(data[0], data[0]))
+        elif WINDOWS:
+            err = self.validate_range()
+            if err:
+                err = T("Adressbereich: ") + err
+            else:
+                lo, hi = (ipaddress.IPv4Address(w.text().strip()) for w in (self.dhcp_from, self.dhcp_to))
+        elif not exe:
+            err = T("dnsmasq ist nicht installiert:\n\nsudo pacman -S dnsmasq")
+        elif os.geteuid() != 0 and not shutil.which("pkexec"):
+            err = T("pkexec (polkit) fehlt, damit kann der DHCP-Server nicht mit Root-Rechten starten.")
+        else:
+            err = self.validate_range()
+            if err:
+                err = T("Adressbereich: ") + err
+            else:
+                lo, hi = (ipaddress.IPv4Address(w.text().strip()) for w in (self.dhcp_from, self.dhcp_to))
+        if err:
+            box = QMessageBox(QMessageBox.Icon.Warning, T("DHCP-Server"), err, parent=self)
+            box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            box.exec()
+            return
+
+        # Schutz: in einem Netz, das nach Produktivnetz aussieht, startet der DHCP-Server gar nicht erst
+        ip, found, block = str(me.ip), None, None
+        if not me.ip.is_private:
+            block = (T('Die Karte hat eine öffentliche Adresse ({0}). Ein Staging-Netz nutzt private Adressen, deshalb wird hier kein DHCP-Server gestartet.').format(ip))
+        elif self.default_route_ip() == ip:
+            block = (T("Über diese Karte läuft die Standardroute dieses Rechners (Internet bzw. Firmennetz). "
+                     "Das ist kein getrenntes Staging-Netz, deshalb wird hier kein DHCP-Server gestartet.\n\n"
+                     "Für das Staging die Karte mit fester Adresse und ohne Gateway einrichten."))
+        elif self.address_is_dynamic(data[0], ip):
+            block = (T("Diese Karte hat ihre eigene Adresse per DHCP bekommen. In diesem Netz läuft also schon ein "
+                     "DHCP-Server, ein zweiter würde dort alle Geräte stören. Deshalb wird hier keiner "
+                     "gestartet.\n\nFür das Staging der Karte eine feste Adresse geben."))
+        else:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                found = probe_dhcp_servers(ip)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if found:
+                others = ", ".join(sorted(found))
+                block = (T('Auf dieser Karte antwortet bereits ein DHCP-Server ({0}). Ein zweiter würde dort alle Geräte stören, deshalb wird hier keiner gestartet.').format(others))
+        if block:
+            QMessageBox.critical(self, T("DHCP-Server nicht gestartet"), block)
+            return
+        info = (T("Kein anderer DHCP-Server hat innerhalb von 1,5 Sekunden geantwortet.")
+                if found is not None else
+                T("Ob dort schon ein DHCP-Server läuft, ließ sich nicht prüfen (Port 68 braucht Root-Rechte)."))
+        info += " " + (T("Ein zweiter DHCP-Server in einem Produktivnetz stört dort alle Geräte.\n\n"
+                       "Hängt diese Karte wirklich an einem getrennten Staging-Switch?"))
+        if not self.confirm(T("DHCP-Server starten?"),
+                            T('Auf {0} ({1}) werden Adressen von {2} bis {3} vergeben.').format(data[0], me.network, lo, hi), info):
+            return
+
+        self.dhcp_log.clear()
+        self.lease_state = None
+        self.dhcp_btn.setText(T("DHCP stoppen"))
+        self.dhcp_ip = ip
+        self.guard_timer.start()
+        self.dhcp_state.setText(T("<b style='color:#3fa45b'>Läuft</b> auf {0}, {1} bis {2}").format(data[0] if not WINDOWS else data[1], lo, hi))
+        self.iface.setEnabled(False)
+        self.dhcp_from.setEnabled(False)
+        self.dhcp_to.setEnabled(False)
+
+        if WINDOWS:                                  # eingebauter Server, braucht kein Zusatzprogramm
+            self.lease_file = None
+            self.show_leases([])
+            self.dhcp_thread = DhcpThread(self, ip=data[1], mask=str(me.netmask), lo=str(lo), hi=str(hi))
+            self.dhcp_thread.line.connect(lambda t: self.dlog(t, "#d9534f" if t.startswith("error") else None))
+            self.dhcp_thread.leases.connect(self.show_leases)
+            self.dhcp_thread.result.connect(self.dhcp_done)
+            self.dhcp_thread.start()
+            return
+
+        import getpass
+        import grp
+        tmp = tempfile.mkdtemp(prefix="bmc-dhcp-")
+        self.lease_file = os.path.join(tmp, "leases")
+        args = [
+            exe, "--keep-in-foreground", "--conf-file=/dev/null",
+            "--port=0",                              # kein DNS, nur DHCP
+            f"--interface={data[0]}", "--bind-interfaces", "--except-interface=lo",
+            f"--dhcp-range={lo},{hi},{me.netmask},1h",
+            "--dhcp-option=3", "--dhcp-option=6",    # weder Gateway noch DNS verteilen
+            f"--dhcp-leasefile={self.lease_file}", f"--pid-file={os.path.join(tmp, 'pid')}",
+            "--log-facility=-", "--log-dhcp",
+            # nach dem Start Root-Rechte abgeben, damit das Tool den Dienst selbst beenden kann
+            f"--user={getpass.getuser()}", f"--group={grp.getgrgid(os.getgid()).gr_name}",
+        ]
+        if os.geteuid() != 0:
+            args.insert(0, "pkexec")
+        self.dlog("$ " + " ".join(args), "gray")
+        self.dhcp = QProcess(self)
+        self.dhcp.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.dhcp.readyReadStandardOutput.connect(self.dhcp_output)
+        self.dhcp.finished.connect(self.dhcp_done)
+        self.dhcp.errorOccurred.connect(
+            lambda e: e == QProcess.ProcessError.FailedToStart and self.dhcp_done(127))
+        self.dhcp.start(args[0], args[1:])
+        self.lease_timer.start()
+
+    def dhcp_output(self):
+        text = bytes(self.dhcp.readAllStandardOutput()).decode(errors="replace")
+        for line in text.splitlines():
+            bad = any(w in line.lower() for w in ("failed", "error", "cannot", "not authorized", "dismissed"))
+            self.dlog(line, "#d9534f" if bad else None)
+
+    def stop_dhcp(self):
+        if not self.dhcp_running():
+            return
+        if self.dhcp_thread and self.dhcp_thread.isRunning():
+            self.dhcp_thread.requestInterruption()
+            self.dhcp_thread.wait(3000)
+            return
+        pid = self.dhcp.processId()
+        self.dhcp.terminate()
+        if not self.dhcp.waitForFinished(2000) and os.geteuid() != 0:
+            # läuft noch mit Root-Rechten (z. B. Start nicht abgeschlossen): per pkexec beenden
+            QProcess.execute("pkexec", ["kill", str(pid)])
+            self.dhcp.waitForFinished(3000)
+
+    def dhcp_done(self, code=0, *_):
+        self.lease_timer.stop()
+        self.guard_timer.stop()
+        if self.lease_file:
+            self.read_leases()
+            shutil.rmtree(os.path.dirname(self.lease_file), ignore_errors=True)
+            self.lease_file = None
+        self.dhcp_btn.setText(T("DHCP starten"))
+        self.iface.setEnabled(True)
+        self.dhcp_from.setEnabled(True)
+        self.dhcp_to.setEnabled(True)
+        hints = {126: T("Anmeldung abgebrochen"), 127: T("Start nicht möglich oder Anmeldung fehlgeschlagen"),
+                 2: T("Port 67 belegt oder Karte nicht bereit, siehe Protokoll")}
+        if code in (0, 15) or (self.dhcp and self.dhcp.exitStatus() == QProcess.ExitStatus.CrashExit):
+            self.dhcp_state.setText(T("Gestoppt"))
+        else:
+            self.dhcp_state.setText(T("<b style='color:#d9534f'>Beendet (Code {0})</b>: ").format(code)
+                                    + hints.get(code, T("siehe Protokoll")))
+
+    def read_leases(self):
+        """Lease-Datei von dnsmasq lesen: Ablauf, MAC, IP, Name, Client-ID."""
+        try:
+            raw = Path(self.lease_file).read_text() if self.lease_file else ""
+        except OSError:
+            raw = ""
+        if raw == self.lease_state:
+            return
+        self.lease_state = raw
+        rows = []
+        for line in raw.splitlines():
+            f = line.split()
+            if len(f) >= 4 and f[0].isdigit():
+                rows.append((f[2], f[1], "" if f[3] == "*" else f[3]))
+        self.show_leases(rows)
+
+    def show_leases(self, rows):
+        """Geräteliste anzeigen: Zeilen aus (IP, MAC, Name)."""
+        rows = sorted(rows, key=lambda r: ipaddress.ip_address(r[0]))
+        self.leases.setRowCount(len(rows))
+        for r, vals in enumerate(rows):
+            for c, val in enumerate(vals):
+                self.leases.setItem(r, c, QTableWidgetItem(val))
+        self.lease_count.setText(T('{0} Geräte').format(len(rows)))
+
+    def take_leases(self):
+        sel = sorted({i.row() for i in self.leases.selectedIndexes()}) or range(self.leases.rowCount())
+        known = {r[0] for r in self.rows(open_only=True)}      # fertige Server haben ihre alte IP abgegeben
+        new = [self.leases.item(r, 0).text() for r in sel]
+        new = [ip for ip in new if ip not in known]
+        if not new:
+            self.status.setText(T("Keine neuen Geräte zum Übernehmen"))
+            return
+        for r in reversed(range(self.table.rowCount())):          # leere Zeilen entfernen
+            if not any(self.cell(r, c) for c in (0, 2, 5)):
+                self.table.removeRow(r)
+        for ip in new:
+            self.add_row()
+            self.table.item(self.table.rowCount() - 1, 0).setText(ip)
+        self.update_count()
+        self.touch()
+        self.tabs.setCurrentIndex(1)
+        self.status.setText(T('{0} Geräte übernommen: jetzt neue IP und Hostname eintragen').format(len(new)))
+
+    # ---------- Ablauf ----------
+    def run(self):
+        self.table.setCurrentCell(-1, -1)      # laufende Zellbearbeitung abschließen
+        err = self.check()
+        if err:
+            QMessageBox.warning(self, T("Eingabe prüfen"), err)
+            return
+        todo = self.rows(open_only=True)       # fertige (grüne) Zeilen werden übersprungen
+        if not todo:
+            QMessageBox.information(self, T("Nichts zu tun"), T("Alle Server der Liste sind schon umgestellt.\n\n"
+                                    "Neue Zeilen eintragen."))
+            return
+        n = len(todo)
+        dry = self.dry.isChecked()
+        if not dry:
+            nets = [i.network for i in self.local_ifaces()]
+            lines, far = [], 0
+            for cur, _, new, _, _, host in todo:
+                off = not any(ipv4(cur) in net for net in nets)
+                far += off
+                lines.append(f"{cur} → {new} ({host})" + ("  ⚠" if off else ""))
+            info = "\n".join(lines[:15])
+            if n > 15:
+                info += "\n" + T('… und {0} weitere').format(n - 15)
+            if far:
+                info += "\n\n" + (T("⚠ Die aktuelle IP liegt in keinem Netz, an dem dieser Rechner direkt hängt. "
+                                  "Für ein Staging-Gerät ist das ungewöhnlich. Ist es wirklich das richtige Gerät?"))
+            if not self.confirm(T("Scharf ausführen?"),
+                                T('{0} Server werden jetzt wirklich umgestellt (Benutzer, Hostname, feste IP).').format(n),
+                                info, n if far else None):
+                return
+
+        self.log.clear()
+        skipped = len(self.rows()) - n
+        mode = T("Trockenlauf") if dry else T("Scharfer Lauf")
+        self.say(T('— {0}, {1} Server').format(mode, n) + (T(', {0} fertige übersprungen').format(skipped) if skipped else "") + " —", "gray")
+        self.worker = EngineThread(
+            self, rows=todo, cur_user=self.cur_user.text().strip(), cur_pass=self.cur_pass.text(),
+            new_user=self.new_user.text(), new_pass=self.new_pass.text(), slot=self.slot.value(), dry=dry,
+            vendor=self.vendor.currentData() or None)
+        self.worker.line.connect(self.show_line)
+        self.worker.row_done.connect(self.mark_done)
+        self.worker.result.connect(self.done)
+        self.start.setEnabled(False)
+        self.stop.setEnabled(True)
+        self.table.setEnabled(False)
+        self.status.setText(T("Läuft …"))
+        self.worker.start()
+
+    def show_line(self, line, kind=""):
+        self.say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
+
+    def abort(self):
+        if self.running():
+            self.worker.requestInterruption()
+            self.stop.setEnabled(False)
+            self.status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
+
+    def done(self, code, *_):
+        self.start.setEnabled(True)
+        self.stop.setEnabled(False)
+        self.table.setEnabled(True)
+        self.status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+
+    def confirm(self, title, text, info="", type_count=None):
+        """Sicherheitsabfrage, bei der „Abbrechen“ vorausgewählt ist. Mit type_count muss zusätzlich
+        diese Zahl eingetippt werden."""
+        box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
+        if info:
+            box.setInformativeText(info)
+        b_yes = box.addButton(T("Ja"), QMessageBox.ButtonRole.YesRole)
+        b_no = box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(b_no)
+        box.setEscapeButton(b_no)
+        box.exec()
+        if box.clickedButton() is not b_yes:
+            return False
+        if type_count is None:
+            return True
+        typed, good = QInputDialog.getText(
+            self, title, T("Zur Bestätigung die Anzahl der betroffenen Server eintippen:"))
+        if good and typed.strip() == str(type_count):
+            return True
+        if good:
+            QMessageBox.information(self, title, T("Die Zahl stimmt nicht. Es wurde nichts ausgeführt."))
+        return False
+
+    @staticmethod
+    def local_ifaces():
+        """IPv4-Adressen dieses Rechners samt Netz (ohne Loopback)."""
+        out = []
+        for nic in QNetworkInterface.allInterfaces():
+            for e in nic.addressEntries():
+                if e.ip().protocol() == QAbstractSocket.NetworkLayerProtocol.IPv4Protocol and not e.ip().isLoopback():
+                    try:
+                        out.append(ipaddress.ip_interface(f"{e.ip().toString()}/{e.prefixLength()}"))
+                    except ValueError:
+                        pass
+        return out
+
+    @staticmethod
+    def default_route_ip():
+        """Eigene Adresse der Karte, über die die Standardroute läuft, oder None. Es wird nichts gesendet."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))         # Testnetz-Adresse; UDP-connect wählt nur die Route
+            return s.getsockname()[0]
+        except OSError:
+            return None
+        finally:
+            s.close()
+
+    @staticmethod
+    def address_is_dynamic(name, ip):
+        """True, wenn die Karte ihre Adresse per DHCP bekommen hat (dann läuft in dem Netz schon ein
+        DHCP-Server). None, wenn es sich nicht feststellen lässt."""
+        try:
+            if WINDOWS:
+                out = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"(Get-NetIPAddress -IPAddress {ip} -AddressFamily IPv4).PrefixOrigin"],
+                    capture_output=True, text=True, timeout=10, creationflags=0x08000000).stdout.strip()
+                return "dhcp" in out.lower() if out else None
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show", "dev", name],
+                                 capture_output=True, text=True, timeout=3).stdout
+            for line in out.splitlines():
+                if f" {ip}/" in line:
+                    return " dynamic" in line
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return None
+
+    def dhcp_guard(self):
+        """Läuft alle paar Sekunden mit: stoppt den DHCP-Server, sobald die Karte kein Staging-Netz mehr ist."""
+        if self.dhcp_running() and self.default_route_ip() == self.dhcp_ip:
+            self.stop_dhcp()
+            self.dlog(T("DHCP-Server gestoppt: Über diese Karte läuft jetzt die Standardroute, "
+                      "das ist kein getrenntes Staging-Netz mehr."), "#d9534f")
+
+    def reopen_rows(self):
+        """Nimmt bei den markierten Zeilen die grüne Fertig-Markierung zurück."""
+        self.table.blockSignals(True)
+        for r in {i.row() for i in self.table.selectedIndexes()}:
+            if self.table.item(r, 0):
+                self.table.item(r, 0).setData(Qt.ItemDataRole.UserRole, None)
+        self.table.blockSignals(False)
+        self.update_count()
+
+    STATE_FIELDS = ("cur_user", "cur_pass", "new_user", "new_pass", "new_pass2", "def_mask", "def_gw", "dhcp_from", "dhcp_to",
+                    "bios_user", "bios_pass")
+
+    def export_state(self):
+        """Alles, was beim Sprachwechsel ins neu aufgebaute Fenster mitgenommen wird."""
+        return {
+            "geometry": self.saveGeometry(), "tab": self.tabs.currentIndex(), "dirty": self.dirty,
+            "profile": self.current_profile(), "vendor": self.vendor.currentData() or "",
+            "slot": self.slot.value(), "iface": (self.iface.currentData() or [None])[0],
+            "texts": {k: getattr(self, k).text() for k in self.STATE_FIELDS},
+            "rows": [([self.cell(r, c) for c in range(len(COLS))], self.is_done(r))
+                     for r in range(self.table.rowCount())],
+            "bios_profile": self.bios_current_profile(), "bios_vendor": self.bios_vendor.currentData() or "",
+            "bios_ref": self.bios_ref.currentText(), "bios_live": dict(self.bios_live),
+            "bios_new": self.bios_wanted(), "bios_pending": dict(self.bios_pending),
+        }
+
+    def import_state(self, s):
+        self.restoreGeometry(s["geometry"])
+        self.profile.setCurrentIndex(max(0, self.profile.findText(s["profile"] or NO_PROFILE)))
+        self.vendor.setCurrentIndex(max(0, self.vendor.findData(s["vendor"])))
+        self.slot.setValue(s["slot"])
+        for i in range(self.iface.count()):
+            if self.iface.itemData(i)[0] == s["iface"]:
+                self.iface.setCurrentIndex(i)
+        for key, text in s["texts"].items():
+            getattr(self, key).setText(text)
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        for vals, done in s["rows"]:
+            self.add_row(vals)
+            if done:
+                self.table.item(self.table.rowCount() - 1, 0).setData(Qt.ItemDataRole.UserRole, vals[0])
+        self.table.blockSignals(False)
+        self.bios_profile.setCurrentIndex(max(0, self.bios_profile.findText(s["bios_profile"] or NO_PROFILE)))
+        self.bios_vendor.setCurrentIndex(max(0, self.bios_vendor.findData(s["bios_vendor"])))
+        self.bios_live = s["bios_live"]
+        self.bios_pending = dict(s["bios_pending"], **s["bios_new"])
+        self.bios_fill_table(keep_values=False)
+        self.bios_pending = s["bios_pending"]
+        self.bios_refresh_ips()
+        self.bios_ref.setEditText(s["bios_ref"])
+        self.validate_defaults()
+        self.validate_range()
+        self.update_count()
+        self.tabs.setCurrentIndex(s["tab"])
+        self.dirty = s["dirty"]
+
+    def switch_language(self, *_):
+        """Baut das Fenster in der gewählten Sprache neu auf; Eingaben und Serverliste bleiben erhalten."""
+        global MAIN
+        code = self.lang.currentData()
+        if code == LANG:
+            return
+        if self.running() or self.dhcp_running() or (self.bios_reader and self.bios_reader.isRunning()):
+            self.lang.setCurrentIndex(self.lang.findData(LANG))
+            QMessageBox.information(self, T("Sprache"), T("Die Sprache lässt sich nur wechseln, solange kein Lauf "
+                                    "aktiv ist und der DHCP-Server gestoppt ist."))
+            return
+        self.table.setCurrentCell(-1, -1)
+        state = self.export_state()
+        set_language(code)
+        self.write_profiles()                   # merkt sich die Sprache für den nächsten Start
+        MAIN = Window(state)
+        MAIN.show()
+        self.switching = True
+        self.close()
+        self.deleteLater()
+
+    def update_missing(self, *_):
+        """Hebt Pflichtfelder hervor, die noch leer (gelb) oder fehlerhaft (rot) sind, und schreibt über
+        den Start-Knopf, was vor dem Lauf noch fehlt."""
+        if not hasattr(self, "todo"):
+            return
+        user, pw, pw2 = self.new_user.text(), self.new_pass.text(), self.new_pass2.text()
+        open_rows = self.rows(open_only=True)
+        marks = {
+            self.new_user: "miss" if not user else "" if USER_RE.match(user) else "err",
+            self.new_pass: "miss" if not pw else "" if len(pw) >= 8 else "err",
+            self.new_pass2: "miss" if not pw2 else "" if pw2 == pw else "err",
+            self.cur_pass: "miss" if not self.cur_pass.text() and any(not v[1] for v in open_rows) else "",
+        }
+        for w, mark in marks.items():
+            w.setStyleSheet({"miss": MISS_CSS, "err": ERR_CSS}.get(mark, ""))
+        todo = []
+        if marks[self.new_user]:
+            todo.append(T("Neuer Administrator: Benutzer"))
+        if marks[self.new_pass] or marks[self.new_pass2]:
+            todo.append(T("Neuer Administrator: Passwort"))
+        if marks[self.cur_pass]:
+            todo.append(T("Werkspasswort"))
+        if not self.rows():
+            todo.append(T("mindestens ein Server in der Liste"))
+        if self.cells_missing:
+            todo.append(T("{0} leere Pflichtfelder in der Serverliste").format(self.cells_missing))
+        if self.cells_bad:
+            todo.append(T("{0} fehlerhafte Felder in der Serverliste").format(self.cells_bad))
+        if todo:
+            self.todo.setText("<span style='background:#f0ad4e; color:#000000'>&nbsp;" + T("Es fehlt noch:")
+                              + "&nbsp;</span> " + html.escape(", ".join(todo)))
+            return
+        if not open_rows:
+            text = T("Alle Server der Liste sind fertig.")
+        elif self.dry.isChecked():
+            text = T("Alles ausgefüllt. Jetzt den Trockenlauf starten.")
+        else:
+            text = T("Alles ausgefüllt. Der nächste Start stellt die Geräte wirklich um.")
+        self.todo.setText("<span style='background:#3fa45b; color:#ffffff'>&nbsp;OK&nbsp;</span> " + html.escape(text))
+
+    def mode_changed(self, *_):
+        """Der Start-Knopf sagt immer, was er tun wird; scharf ist er rot."""
+        dry = self.dry.isChecked()
+        self.start.setText(T("Trockenlauf starten") if dry else T("Scharf starten"))
+        self.start.setStyleSheet("" if dry else LIVE_CSS)
+        self.update_missing()
+
+    def bios_mode_changed(self, *_):
+        dry = self.bios_dry.isChecked()
+        self.bios_start.setText(T("Trockenlauf für alle Server der Liste") if dry
+                                else T("Scharf auf allen Servern der Liste setzen"))
+        self.bios_start.setStyleSheet("" if dry else LIVE_CSS)
+
+    def save_log(self):
+        """Schreibt das Protokoll des letzten Laufs in eine Textdatei (enthält keine Passwörter)."""
+        text = self.log.toPlainText()
+        if not text.strip():
+            self.status.setText(T("Das Protokoll ist noch leer."))
+            return
+        name = "bmc-steward-" + time.strftime("%Y%m%d-%H%M%S") + ".log"
+        path, _ = QFileDialog.getSaveFileName(self, T("Protokoll speichern"), str(HERE / name),
+                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
+        if not path:
+            return
+        try:
+            Path(path).write_text(text + "\n", encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, T("Protokoll speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
+            return
+        self.status.setText(T("Protokoll gespeichert in {0}").format(path))
+
+
+# ======================================================================
+# Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
+# ======================================================================
+TR = {
+"(kein Profil)": [
+"(no profile)",
+"(aucun profil)",
+"(kei Profil)"
+],
+"automatisch je Hersteller": [
+"automatic per vendor",
+"automatique selon le constructeur",
+"automatisch je Hersteller"
+],
+"Werkspasswort": [
+"factory password",
+"mot de passe d'usine",
+"Werkspasswort"
+],
+"ab Werk calvin oder laut Service-Tag-Auszug": [
+"factory default calvin, or as on the service tag sheet",
+"calvin par défaut, ou selon la fiche du Service Tag",
+"ab Werk calvin oder so wie's uf em Service-Tag-Uuszug staht"
+],
+"steht auf dem Anhänger am Gerät": [
+"printed on the pull-out tag on the device",
+"indiqué sur l'étiquette amovible de l'appareil",
+"staht uf em Aahänger am Grät"
+],
+"steht auf dem Aufkleber am Gerät": [
+"printed on the sticker on the device",
+"indiqué sur l'autocollant de l'appareil",
+"staht uf em Chläber am Grät"
+],
+"Geprüft: Dell iDRAC9 · HPE iLO 5/6 · Supermicro X12/X13 · Lenovo XCC2/XCC3. Andere Generationen zuerst an einem einzelnen Gerät testen.": [
+"Tested: Dell iDRAC9 · HPE iLO 5/6 · Supermicro X12/X13 · Lenovo XCC2/XCC3. Try other generations on a single device first.",
+"Testé : Dell iDRAC9 · HPE iLO 5/6 · Supermicro X12/X13 · Lenovo XCC2/XCC3. Essayer d'abord les autres générations sur un seul appareil.",
+"Prüeft: Dell iDRAC9 · HPE iLO 5/6 · Supermicro X12/X13 · Lenovo XCC2/XCC3. Anderi Generatione zerscht a eim einzelne Grät teste."
+],
+"iDRAC9, 14. bis 16. Generation (z. B. R6625). iDRAC10 (17. Generation) ist nicht geprüft, einzelne Aufrufe können dort abweichen.": [
+"iDRAC9, 14th to 16th generation (e.g. R6625). iDRAC10 (17th generation) is untested; individual calls may differ there.",
+"iDRAC9, 14e à 16e génération (p. ex. R6625). iDRAC10 (17e génération) n'est pas testé, certains appels peuvent y différer.",
+"iDRAC9, 14. bis 16. Generation (z. B. R6625). iDRAC10 (17. Generation) isch nöd prüeft, einzelni Uufrüef chönd det abwiiche."
+],
+"iLO 5 und 6 (Gen10, Gen10 Plus, Gen11, z. B. DL345/DL365). iLO 7 (Gen12) ist nicht geprüft.": [
+"iLO 5 and 6 (Gen10, Gen10 Plus, Gen11, e.g. DL345/DL365). iLO 7 (Gen12) is untested.",
+"iLO 5 et 6 (Gen10, Gen10 Plus, Gen11, p. ex. DL345/DL365). iLO 7 (Gen12) n'est pas testé.",
+"iLO 5 und 6 (Gen10, Gen10 Plus, Gen11, z. B. DL345/DL365). iLO 7 (Gen12) isch nöd prüeft."
+],
+"Aktuelle X12/X13-Boards mit Redfish 1.x, auch baugleiche Nutanix-NX-Nodes. Bei älteren Boards können einzelne Redfish-Funktionen eine Lizenz erfordern.": [
+"Current X12/X13 boards with Redfish 1.x, including identical Nutanix NX nodes. On older boards some Redfish functions may need a licence.",
+"Cartes X12/X13 actuelles avec Redfish 1.x, y compris les nœuds Nutanix NX identiques. Sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une licence.",
+"Aktuelli X12/X13-Boards mit Redfish 1.x, au baugliichi Nutanix-NX-Nodes. Bi ältere Boards chönd einzelni Redfish-Funktione e Lizänz bruuche."
+],
+"ThinkSystem mit XCC2/XCC3 (z. B. SR6xx, SR8xx). Ältere Systeme mit XCC1 sind nicht geprüft.": [
+"ThinkSystem with XCC2/XCC3 (e.g. SR6xx, SR8xx). Older systems with XCC1 are untested.",
+"ThinkSystem avec XCC2/XCC3 (p. ex. SR6xx, SR8xx). Les systèmes plus anciens avec XCC1 ne sont pas testés.",
+"ThinkSystem mit XCC2/XCC3 (z. B. SR6xx, SR8xx). Älteri System mit XCC1 sind nöd prüeft."
+],
+"Adresse, unter der der BMC jetzt erreichbar ist, z. B. die per DHCP vergebene.": [
+"Address where the BMC can be reached right now, e.g. the one assigned by DHCP.",
+"Adresse à laquelle le BMC est joignable actuellement, p. ex. celle attribuée par DHCP.",
+"Adrässe, under dere de BMC jetzt erreichbar isch, z. B. die vom DHCP."
+],
+"Aktuelles Passwort dieses Geräts. Nur nötig, wenn es vom Werkspasswort oben abweicht\n(bei HPE, Supermicro und Lenovo ist es pro Gerät verschieden).": [
+"Current password of this device. Only needed if it differs from the factory password above\n(on HPE, Supermicro and Lenovo it differs per device).",
+"Mot de passe actuel de cet appareil. Nécessaire seulement s'il diffère du mot de passe d'usine ci-dessus\n(chez HPE, Supermicro et Lenovo, il est différent pour chaque appareil).",
+"Aktuells Passwort vo dem Grät. Nur nötig, wenn's vom Werkspasswort obe abwiicht\n(bi HPE, Supermicro und Lenovo isch's pro Grät verschide)."
+],
+"Feste Adresse, die der BMC bekommen soll.": [
+"Static address the BMC should get.",
+"Adresse fixe que le BMC doit recevoir.",
+"Feschti Adrässe, wo de BMC söll übercho."
+],
+"Subnetzmaske zur neuen Adresse, z. B. 255.255.255.0. Eingabe als /24 wird umgewandelt.": [
+"Subnet mask for the new address, e.g. 255.255.255.0. Input like /24 is converted.",
+"Masque de sous-réseau de la nouvelle adresse, p. ex. 255.255.255.0. Une saisie comme /24 est convertie.",
+"Subnetzmaske zu de neue Adrässe, z. B. 255.255.255.0. E Iigab wie /24 wird umgwandlet."
+],
+"Gateway im Netz der neuen Adresse.": [
+"Gateway in the network of the new address.",
+"Passerelle dans le réseau de la nouvelle adresse.",
+"Gateway im Netz vo de neue Adrässe."
+],
+"Name, den der BMC bekommt (iDRAC-, iLO- bzw. BMC-Hostname), nicht der Name des Betriebssystems.": [
+"Name the BMC gets (iDRAC, iLO or BMC hostname), not the name of the operating system.",
+"Nom donné au BMC (nom d'hôte iDRAC, iLO ou BMC), pas celui du système d'exploitation.",
+"Name, wo de BMC überchunnt (iDRAC-, iLO- bzw. BMC-Hostname), nöd de Name vom Betriebssystem."
+],
+"Aktuelle IP": [
+"Current IP",
+"IP actuelle",
+"Aktuelli IP"
+],
+"Passwort": [
+"Password",
+"Mot de passe",
+"Passwort"
+],
+"Neue IP": [
+"New IP",
+"Nouvelle IP",
+"Neui IP"
+],
+"Subnetzmaske": [
+"Subnet mask",
+"Masque de sous-réseau",
+"Subnetzmaske"
+],
+"Gateway": [
+"Gateway",
+"Passerelle",
+"Gateway"
+],
+"Hostname": [
+"Hostname",
+"Nom d'hôte",
+"Hostname"
+],
+"Keine gültige IPv4-Adresse": [
+"Not a valid IPv4 address",
+"Adresse IPv4 non valide",
+"Kei gültigi IPv4-Adrässe"
+],
+"Kommas im Passwort werden nicht unterstützt": [
+"Commas in the password are not supported",
+"Les virgules dans le mot de passe ne sont pas prises en charge",
+"Komma im Passwort gönd nöd"
+],
+"Keine gültige Subnetzmaske (z. B. 255.255.255.0 oder /24)": [
+"Not a valid subnet mask (e.g. 255.255.255.0 or /24)",
+"Masque de sous-réseau non valide (p. ex. 255.255.255.0 ou /24)",
+"Kei gültigi Subnetzmaske (z. B. 255.255.255.0 oder /24)"
+],
+"Gateway und neue IP sind identisch": [
+"Gateway and new IP are identical",
+"La passerelle et la nouvelle IP sont identiques",
+"Gateway und neui IP sind gliich"
+],
+"Nur Buchstaben, Ziffern und Bindestrich (nicht am Anfang/Ende), höchstens 63 Zeichen": [
+"Only letters, digits and hyphen (not at the start or end), at most 63 characters",
+"Uniquement lettres, chiffres et tiret (pas au début ni à la fin), 63 caractères au maximum",
+"Nur Buechstabe, Ziffere und Bindestrich (nöd am Aafang/Änd), höchschtens 63 Zeiche"
+],
+"Fertig: {0} konfiguriert, {1} Fehler": [
+"Done: {0} configured, {1} errors",
+"Terminé : {0} configurés, {1} erreurs",
+"Fertig: {0} konfiguriert, {1} Fähler"
+],
+"Fertig: {0} Server ohne Fehler, {1} mit Fehlern": [
+"Done: {0} servers without errors, {1} with errors",
+"Terminé : {0} serveurs sans erreur, {1} avec erreurs",
+"Fertig: {0} Server ohni Fähler, {1} mit Fähler"
+],
+"Aus diesem Bereich bekommen die Geräte vorübergehend eine Adresse,\ndamit das Tool sie erreichen kann. Er muss im Netz der gewählten Karte liegen\nund groß genug für alle Geräte sein.": [
+"Devices temporarily get an address from this range\nso the tool can reach them. It must lie in the network of the selected card\nand be large enough for all devices.",
+"Les appareils reçoivent temporairement une adresse de cette plage\npour que l'outil puisse les joindre. Elle doit se trouver dans le réseau de la carte choisie\net être assez grande pour tous les appareils.",
+"Us dem Beriich überchömed d Grät vorübergehend e Adrässe,\ndamit s Tool sie erreicht. Er mues im Netz vo de gwählte Charte ligge\nund gross gnueg für alli Grät sii."
+],
+"Automatisch erkennen": [
+"Detect automatically",
+"Détecter automatiquement",
+"Automatisch erchänne"
+],
+"Dell iDRAC": [
+"Dell iDRAC",
+"Dell iDRAC",
+"Dell iDRAC"
+],
+"HPE iLO": [
+"HPE iLO",
+"HPE iLO",
+"HPE iLO"
+],
+"Lenovo XCC": [
+"Lenovo XCC",
+"Lenovo XCC",
+"Lenovo XCC"
+],
+"Netz- oder Broadcast-Adresse von {0}": [
+"Network or broadcast address of {0}",
+"Adresse de réseau ou de diffusion de {0}",
+"Netz- oder Broadcast-Adrässe vo {0}"
+],
+"Gateway liegt nicht im Netz der neuen IP ({0})": [
+"Gateway is not in the network of the new IP ({0})",
+"La passerelle n'est pas dans le réseau de la nouvelle IP ({0})",
+"Gateway liit nöd im Netz vo de neue IP ({0})"
+],
+"keine Verbindung": [
+"no connection",
+"pas de connexion",
+"kei Verbindig"
+],
+"Benutzer": [
+"User",
+"Utilisateur",
+"Benutzer"
+],
+"  Benutzer {0} existierte schon, Passwort und Rolle gesetzt": [
+"  User {0} already existed, password and role set",
+"  L'utilisateur {0} existait déjà, mot de passe et rôle définis",
+"  Benutzer {0} hät's scho gäh, Passwort und Rolle gsetzt"
+],
+"  Benutzer {0} ok": [
+"  User {0} ok",
+"  Utilisateur {0} ok",
+"  Benutzer {0} ok"
+],
+"  Hostname ok": [
+"  Hostname ok",
+"  Nom d'hôte ok",
+"  Hostname ok"
+],
+"Netzwerk": [
+"Network",
+"Réseau",
+"Netzwerk"
+],
+"  Netzwerk gesetzt": [
+"  Network set",
+"  Réseau configuré",
+"  Netzwerk gsetzt"
+],
+"  iLO-Neustart ausgelöst": [
+"  iLO restart triggered",
+"  Redémarrage de l'iLO lancé",
+"  iLO-Neustart uusglöst"
+],
+"Neustart": [
+"Restart",
+"Redémarrage",
+"Neustart"
+],
+"DHCP-Server gestoppt": [
+"DHCP server stopped",
+"Serveur DHCP arrêté",
+"DHCP-Server gstoppt"
+],
+"Passwort für alle Server übernehmen": [
+"Apply password to all servers",
+"Appliquer le mot de passe à tous les serveurs",
+"Passwort für alli Server übernäh"
+],
+"Trägt das Passwort von oben in die Spalte „Passwort“ aller Zeilen ein\nund überschreibt dort vorhandene Einträge.": [
+"Enters the password from above into the “Password” column of all rows\nand overwrites existing entries there.",
+"Inscrit le mot de passe ci-dessus dans la colonne « Mot de passe » de toutes les lignes\net y écrase les entrées existantes.",
+"Treit s Passwort vo obe i d Spalte „Passwort“ vo allne Ziile ii\nund überschriibt det was scho staht."
+],
+"Aktueller Login (Auslieferungszustand)": [
+"Current login (factory state)",
+"Connexion actuelle (état de livraison)",
+"Aktuells Login (Uuslieferigszuestand)"
+],
+"Mit diesen Daten meldet sich das Tool an den Geräten an, um sie umzustellen.": [
+"The tool uses these credentials to log in to the devices and reconfigure them.",
+"L'outil utilise ces données pour se connecter aux appareils et les reconfigurer.",
+"Mit dene Date mäldet sich s Tool a de Grät aa, zum sie umstelle."
+],
+"Hersteller": [
+"Vendor",
+"Constructeur",
+"Hersteller"
+],
+"„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller, gemischte Listen sind möglich.\nEine feste Wahl überspringt die Erkennung und gilt für alle Zeilen. Nützlich, wenn die\nErkennung danebenliegt oder der Trockenlauf den richtigen Ablauf zeigen soll.": [
+"“Detect automatically” asks each device for its vendor; mixed lists are possible.\nA fixed choice skips detection and applies to all rows. Useful if detection\ngets it wrong or the dry run should show the right sequence.",
+"« Détecter automatiquement » demande son constructeur à chaque appareil ; les listes mixtes sont possibles.\nUn choix fixe saute la détection et vaut pour toutes les lignes. Utile si la détection\nse trompe ou si la simulation doit montrer le bon déroulement.",
+"„Automatisch erchänne“ fröget jedes Grät nach sim Hersteller, gmischti Lischte gönd.\nE feschti Wahl überspringt d Erchännig und gilt für alli Ziile. Praktisch, wenn d\nErchännig danäbe liit oder de Trocheluuf de richtig Ablauf söll zeige."
+],
+"Benutzer, mit dem sich das Tool jetzt am BMC anmeldet, also der Werksbenutzer.\nLeer lassen: Dann wird je Hersteller root, Administrator oder ADMIN verwendet.": [
+"User the tool logs in with at the BMC right now, i.e. the factory user.\nLeave empty: root, Administrator, ADMIN or USERID is used depending on the vendor.",
+"Utilisateur avec lequel l'outil se connecte maintenant au BMC, donc l'utilisateur d'usine.\nLaisser vide : root, Administrator, ADMIN ou USERID est utilisé selon le constructeur.",
+"Benutzer, mit dem sich s Tool jetzt am BMC aamäldet, also de Werksbenutzer.\nLäär laa: Denn wird je nach Hersteller root, Administrator, ADMIN oder USERID gnoh."
+],
+"Passwort des Werksbenutzers. Es gilt für alle Zeilen, deren Spalte „Passwort“ leer ist,\nund wird bei neuen Zeilen vorbelegt. Hat jedes Gerät ein eigenes Passwort\n(HPE, Supermicro, Lenovo), dieses in der Tabelle je Zeile eintragen.": [
+"Password of the factory user. It applies to all rows whose “Password” column is empty\nand is pre-filled in new rows. If every device has its own password\n(HPE, Supermicro, Lenovo), enter it per row in the table.",
+"Mot de passe de l'utilisateur d'usine. Il vaut pour toutes les lignes dont la colonne « Mot de passe » est vide\net est prérempli dans les nouvelles lignes. Si chaque appareil a son propre mot de passe\n(HPE, Supermicro, Lenovo), le saisir ligne par ligne dans le tableau.",
+"Passwort vom Werksbenutzer. Es gilt für alli Ziile, wo d Spalte „Passwort“ läär isch,\nund wird bi neue Ziile vorbeleit. Hät jedes Grät es eigets Passwort\n(HPE, Supermicro, Lenovo), das i de Tabälle pro Ziile iiträge."
+],
+"Neuer Administrator": [
+"New administrator",
+"Nouvel administrateur",
+"Neue Administrator"
+],
+"Dieses Konto wird auf jedem Gerät der Liste eingerichtet.": [
+"This account is set up on every device in the list.",
+"Ce compte est créé sur chaque appareil de la liste.",
+"Das Konto wird uf jedem Grät vo de Lischte iigrichtet."
+],
+"Name des Administrator-Kontos, das auf allen Geräten angelegt wird.\nExistiert der Name bei HPE, Supermicro oder Lenovo schon, werden nur Passwort und Rolle gesetzt.": [
+"Name of the administrator account created on all devices.\nIf the name already exists on HPE, Supermicro or Lenovo, only password and role are set.",
+"Nom du compte administrateur créé sur tous les appareils.\nSi le nom existe déjà chez HPE, Supermicro ou Lenovo, seuls le mot de passe et le rôle sont définis.",
+"Name vom Administrator-Konto, wo uf allne Grät aagleit wird.\nGit's de Name bi HPE, Supermicro oder Lenovo scho, wärded nur Passwort und Rolle gsetzt."
+],
+"Passwort des neuen Administrators, auf allen Geräten gleich.\nDie Geräte prüfen ihre eigenen Regeln, iLO verlangt z. B. mindestens 8 Zeichen.\nVor dem scharfen Lauf über das Auge kontrollieren.": [
+"Password of the new administrator, the same on all devices.\nThe devices check their own rules; iLO, for example, requires at least 8 characters.\nCheck it with the eye button before a live run.",
+"Mot de passe du nouvel administrateur, identique sur tous les appareils.\nLes appareils appliquent leurs propres règles ; iLO exige p. ex. au moins 8 caractères.\nLe vérifier avec l'œil avant une exécution réelle.",
+"Passwort vom neue Administrator, uf allne Grät gliich.\nD Grät prüefed ihri eigete Regle, iLO verlangt z. B. mindeschtens 8 Zeiche.\nVor em scharfe Luuf über s Aug kontrolliere."
+],
+"User-Slot (nur Dell)": [
+"User slot (Dell only)",
+"Emplacement utilisateur (Dell uniquement)",
+"User-Slot (nur Dell)"
+],
+"Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\nDer neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\nvon einem anderen Benutzer belegt, wird nichts überschrieben. Standard ist Platz 3.": [
+"Dell only: the iDRAC has 16 fixed user slots, slot 2 is root.\nThe new administrator is written into this slot. If the slot is already\nused by another user, nothing is overwritten. Default is slot 3.",
+"Dell uniquement : l'iDRAC a 16 emplacements utilisateur fixes, le 2 est root.\nLe nouvel administrateur est écrit dans cet emplacement. S'il est déjà\noccupé par un autre utilisateur, rien n'est écrasé. Par défaut : emplacement 3.",
+"Nur Dell: De iDRAC hät 16 feschti Benutzerplätz, Platz 2 isch root.\nDe neu Administrator wird i dä Platz gschribe. Isch de Platz scho\nvo eme andere Benutzer bsetzt, wird nüt überschribe. Standard isch Platz 3."
+],
+"z. B. 255.255.255.0 oder /24": [
+"e.g. 255.255.255.0 or /24",
+"p. ex. 255.255.255.0 ou /24",
+"z. B. 255.255.255.0 oder /24"
+],
+"Vorgaben für neue Zeilen": [
+"Defaults for new rows",
+"Valeurs par défaut des nouvelles lignes",
+"Vorgabe für neui Ziile"
+],
+"Wird bei jeder neuen Zeile der Serverliste vorbelegt, auch bei Geräten aus der DHCP-Liste.\nLeer lassen: Dann wird der Wert der vorherigen Zeile übernommen.": [
+"Pre-filled in every new row of the server list, also for devices from the DHCP list.\nLeave empty: the value of the previous row is used.",
+"Prérempli dans chaque nouvelle ligne de la liste, y compris pour les appareils de la liste DHCP.\nLaisser vide : la valeur de la ligne précédente est reprise.",
+"Wird bi jedere neue Ziile vo de Serverlischte vorbeleit, au bi Grät us de DHCP-Lischte.\nLäär laa: Denn wird de Wärt vo de vorherige Ziile übernoh."
+],
+"Wird bei jeder neuen Zeile der Serverliste vorbelegt.\nLeer lassen: Dann wird der Wert der vorherigen Zeile übernommen.": [
+"Pre-filled in every new row of the server list.\nLeave empty: the value of the previous row is used.",
+"Prérempli dans chaque nouvelle ligne de la liste.\nLaisser vide : la valeur de la ligne précédente est reprise.",
+"Wird bi jedere neue Ziile vo de Serverlischte vorbeleit.\nLäär laa: Denn wird de Wärt vo de vorherige Ziile übernoh."
+],
+"+ Server": [
+"+ Server",
+"+ Serveur",
+"+ Server"
+],
+"Neue Zeile. Passwort, Subnetzmaske und Gateway werden vorbelegt.": [
+"New row. Password, subnet mask and gateway are pre-filled.",
+"Nouvelle ligne. Mot de passe, masque et passerelle sont préremplis.",
+"Neui Ziile. Passwort, Subnetzmaske und Gateway wärded vorbeleit."
+],
+"– Entfernen": [
+"– Remove",
+"– Retirer",
+"– Ewägnäh"
+],
+"Entfernt die markierten Zeilen.": [
+"Removes the selected rows.",
+"Retire les lignes sélectionnées.",
+"Nimmt di markierte Ziile ewäg."
+],
+"Erneut bearbeiten": [
+"Process again",
+"Traiter à nouveau",
+"Nomal bearbeite"
+],
+"Nimmt bei den markierten Zeilen die grüne Fertig-Markierung zurück,\ndamit sie beim nächsten Start wieder bearbeitet werden.": [
+"Removes the green “done” mark from the selected rows\nso they are processed again at the next start.",
+"Retire la marque verte « terminé » des lignes sélectionnées\npour qu'elles soient retraitées au prochain démarrage.",
+"Nimmt bi de markierte Ziile di grüen Fertig-Markierig zrugg,\ndamit sie bim nächschte Start wider bearbeitet wärded."
+],
+"Liste laden …": [
+"Load list …",
+"Charger la liste …",
+"Lischte lade …"
+],
+"Lädt eine gespeicherte Liste oder eine CSV-Datei, z. B. aus Excel:\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname": [
+"Loads a saved list or a CSV file, e.g. from Excel:\ncurrent_ip,password,new_ip,subnet_mask,gateway,hostname",
+"Charge une liste enregistrée ou un fichier CSV, p. ex. depuis Excel :\nip_actuelle,mot_de_passe,nouvelle_ip,masque,passerelle,nom_hote",
+"Ladt e gspeichereti Lischte oder e CSV-Datei, z. B. us em Excel:\naktuelli_ip,passwort,neui_ip,subnetzmaske,gateway,hostname"
+],
+"Liste speichern …": [
+"Save list …",
+"Enregistrer la liste …",
+"Lischte speichere …"
+],
+"Speichert die Liste in eine Datei. Das Tool speichert nie von selbst.\nBeim Speichern wird gefragt, ob die Passwörter mit in die Datei sollen.": [
+"Saves the list to a file. The tool never saves on its own.\nWhen saving you are asked whether the passwords should go into the file.",
+"Enregistre la liste dans un fichier. L'outil n'enregistre jamais de lui-même.\nÀ l'enregistrement, il demande si les mots de passe doivent figurer dans le fichier.",
+"Speicheret d Lischte i e Datei. S Tool speicheret nie vo sälber.\nBim Speichere wird gfröget, öb d Passwörter mit i d Datei sölled."
+],
+"Serverliste": [
+"Server list",
+"Liste des serveurs",
+"Serverlischte"
+],
+"Trockenlauf (nichts ändern)": [
+"Dry run (change nothing)",
+"Simulation (ne rien modifier)",
+"Trocheluuf (nüt ändere)"
+],
+"Mit Haken wird nichts geändert: Das Protokoll zeigt nur, welche Aufrufe\nan welches Gerät gingen. Ohne Haken werden die Geräte wirklich umgestellt.": [
+"When ticked, nothing is changed: the log only shows which calls\nwould go to which device. Unticked, the devices are really reconfigured.",
+"Coché, rien n'est modifié : le journal montre seulement quels appels\niraient à quel appareil. Décoché, les appareils sont réellement reconfigurés.",
+"Mit Häägli wird nüt gänderet: S Protokoll zeiget nur, weli Uufrüef\na weles Grät giengted. Ohni Häägli wärded d Grät würkli umgstellt."
+],
+"Start": [
+"Start",
+"Démarrer",
+"Start"
+],
+"Prüft die Eingaben und bearbeitet dann alle noch offenen Zeilen der Reihe nach:\nBenutzer anlegen, Hostname setzen, feste Adresse setzen.\nFertige (grüne) Zeilen werden übersprungen. Vor einem scharfen Lauf\nwird nachgefragt.": [
+"Checks the input and then processes all open rows one after the other:\ncreate user, set hostname, set static address.\nDone (green) rows are skipped. Before a live run\nyou are asked to confirm.",
+"Vérifie la saisie puis traite toutes les lignes encore ouvertes, l'une après l'autre :\ncréer l'utilisateur, définir le nom d'hôte, définir l'adresse fixe.\nLes lignes terminées (vertes) sont ignorées. Avant une exécution réelle,\nune confirmation est demandée.",
+"Prüeft d Iigabe und bearbeitet denn alli no offene Ziile de Reihe naa:\nBenutzer aalegge, Hostname setze, feschti Adrässe setze.\nFertigi (grüeni) Ziile wärded überspronge. Vor eme scharfe Luuf\nwird nagfröget."
+],
+"Abbrechen": [
+"Cancel",
+"Annuler",
+"Abbräche"
+],
+"Bricht nach dem Server ab, der gerade bearbeitet wird": [
+"Stops after the server currently being processed",
+"S'arrête après le serveur en cours de traitement",
+"Bricht nach em Server ab, wo grad bearbeitet wird"
+],
+"Bereit": [
+"Ready",
+"Prêt",
+"Parat. De Steward wartet uf Arbet."
+],
+"1 · DHCP-Server": [
+"1 · DHCP server",
+"1 · Serveur DHCP",
+"1 · DHCP-Server"
+],
+"2 · Server konfigurieren": [
+"2 · Configure servers",
+"2 · Configurer les serveurs",
+"2 · Server konfiguriere"
+],
+"3 · UEFI-Einstellungen": [
+"3 · UEFI settings",
+"3 · Réglages UEFI",
+"3 · UEFI-Iistellige"
+],
+"4 · Hilfe": [
+"4 · Help",
+"4 · Aide",
+"4 · Hilf"
+],
+"Ein Profil merkt sich die Einstellungen dieser Maske: Hersteller, Werksbenutzer, neuen\nAdministrator, User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen.\nPasswörter und die Serverliste gehören nicht dazu.": [
+"A profile remembers the settings of this form: vendor, factory user, new\nadministrator, user slot, defaults for new rows and the DHCP settings.\nPasswords and the server list are not part of it.",
+"Un profil mémorise les réglages de ce formulaire : constructeur, utilisateur d'usine, nouvel\nadministrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP.\nLes mots de passe et la liste des serveurs n'en font pas partie.",
+"Es Profil merkt sich d Iistellige vo dere Maske: Hersteller, Werksbenutzer, neue\nAdministrator, User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige.\nPasswörter und d Serverlischte ghöred nöd dezue."
+],
+"Profil": [
+"Profile",
+"Profil",
+"Profil"
+],
+"Name des Profils:": [
+"Profile name:",
+"Nom du profil :",
+"Name vom Profil:"
+],
+"Neues Profil": [
+"New profile",
+"Nouveau profil",
+"Neus Profil"
+],
+"Profil umbenennen": [
+"Rename profile",
+"Renommer le profil",
+"Profil umbenänne"
+],
+"Liste laden": [
+"Load list",
+"Charger la liste",
+"Lischte lade"
+],
+"CSV (*.csv);;Alle Dateien (*)": [
+"CSV (*.csv);;All files (*)",
+"CSV (*.csv);;Tous les fichiers (*)",
+"CSV (*.csv);;Alli Dateie (*)"
+],
+"Liste speichern": [
+"Save list",
+"Enregistrer la liste",
+"Lischte speichere"
+],
+"CSV (*.csv)": [
+"CSV (*.csv)",
+"CSV (*.csv)",
+"CSV (*.csv)"
+],
+"Sollen die Passwörter mit in die Datei?": [
+"Should the passwords go into the file?",
+"Faut-il inclure les mots de passe dans le fichier ?",
+"Sölled d Passwörter mit i d Datei?"
+],
+"Ohne Passwörter enthält die Datei nur Adressen, Hostnamen und Einstellungen. Mit Passwörtern stehen diese im Klartext in der Datei.": [
+"Without passwords the file only contains addresses, hostnames and settings. With passwords, they are stored in the file in plain text.",
+"Sans mots de passe, le fichier ne contient que les adresses, noms d'hôte et réglages. Avec, ils y figurent en clair.",
+"Ohni Passwörter hät d Datei nur Adrässe, Hostnäme und Iistellige dine. Mit Passwörter stönd die im Klartext i de Datei."
+],
+"Ohne Passwörter": [
+"Without passwords",
+"Sans mots de passe",
+"Ohni Passwörter"
+],
+"Mit Passwörtern": [
+"With passwords",
+"Avec mots de passe",
+"Mit Passwörter"
+],
+"Neuen Benutzer und Passwort ausfüllen.": [
+"Fill in the new user and password.",
+"Renseigner le nouvel utilisateur et le mot de passe.",
+"Neue Benutzer und Passwort uusfülle."
+],
+"Neuer Benutzer: nur Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, höchstens 16 Zeichen.": [
+"New user: only letters, digits, dot, hyphen and underscore, at most 16 characters.",
+"Nouvel utilisateur : uniquement lettres, chiffres, point, tiret et tiret bas, 16 caractères au maximum.",
+"Neue Benutzer: nur Buechstabe, Ziffere, Punkt, Bindestrich und Understrich, höchschtens 16 Zeiche."
+],
+"Neues Passwort: mindestens 8 Zeichen. Kürzere lehnen die meisten BMCs ab.": [
+"New password: at least 8 characters. Most BMCs reject shorter ones.",
+"Nouveau mot de passe : au moins 8 caractères. La plupart des BMC refusent les plus courts.",
+"Neus Passwort: mindeschtens 8 Zeiche. Chürzeri lehned di meischte BMCs ab."
+],
+"Die Serverliste ist leer.": [
+"The server list is empty.",
+"La liste des serveurs est vide.",
+"D Serverlischte isch läär."
+],
+"Zeile {0}, {1}: {2}": [
+"Row {0}, {1}: {2}",
+"Ligne {0}, {1} : {2}",
+"Ziile {0}, {1}: {2}"
+],
+"Adressen aus der Serverliste (Reiter 2) neu einlesen": [
+"Re-read the addresses from the server list (tab 2)",
+"Relire les adresses de la liste des serveurs (onglet 2)",
+"Adrässe us de Serverlischte (Riiter 2) neu iiläse"
+],
+"Adresse des Geräts, von dem die Attribute gelesen werden.\nVorschläge kommen aus der Serverliste in Reiter 2, es geht aber jede\nerreichbare Adresse.": [
+"Address of the device the attributes are read from.\nSuggestions come from the server list in tab 2, but any\nreachable address works.",
+"Adresse de l'appareil dont les attributs sont lus.\nLes suggestions viennent de la liste de l'onglet 2, mais toute\nadresse joignable convient.",
+"Adrässe vom Grät, vo dem d Attribut gläse wärded.\nVorschläg chömed us de Serverlischte im Riiter 2, es gaht aber jedi\nerreichbari Adrässe."
+],
+"Attribute lesen": [
+"Read attributes",
+"Lire les attributs",
+"Attribut läse"
+],
+"Liest die tatsächlich vorhandenen UEFI-Attribute von diesem einen\nGerät. Nur Lesen, es wird nichts verändert.": [
+"Reads the UEFI attributes that actually exist on this one\ndevice. Read only, nothing is changed.",
+"Lit les attributs UEFI réellement présents sur cet\nappareil. Lecture seule, rien n'est modifié.",
+"Liest d UEFI-Attribut, wo's uf dem einte Grät würkli git.\nNur läse, es wird nüt gänderet."
+],
+"Referenzgerät (nur zum Lesen)": [
+"Reference device (read only)",
+"Appareil de référence (lecture seule)",
+"Referänzgrät (nur zum Läse)"
+],
+"Da sich UEFI-Attribute je Modell unterscheiden, zeigt das Tool nur die\ntatsächlich vorhandenen eines echten Geräts an, statt sie zu erraten.": [
+"Because UEFI attributes differ per model, the tool only shows those\nthat really exist on a real device instead of guessing them.",
+"Comme les attributs UEFI diffèrent selon le modèle, l'outil n'affiche que ceux\nréellement présents sur un vrai appareil, au lieu de les deviner.",
+"Will sich UEFI-Attribut je nach Modäll underscheided, zeiget s Tool nur die,\nwo's uf eme ächte Grät würkli git, statt sie z errate."
+],
+"Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ ermittelt den\nHersteller dieses einen Geräts selbst.": [
+"A fixed choice skips detection. “Detect automatically” determines the\nvendor of this one device itself.",
+"Un choix fixe saute la détection. « Détecter automatiquement » détermine\nle constructeur de cet appareil.",
+"E feschti Wahl überspringt d Erchännig. „Automatisch erchänne“ findet de\nHersteller vo dem einte Grät sälber use."
+],
+"Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet\n(root/Administrator/ADMIN/USERID).": [
+"Leave empty: the factory user of the vendor is used\n(root/Administrator/ADMIN/USERID).",
+"Laisser vide : l'utilisateur d'usine du constructeur est utilisé\n(root/Administrator/ADMIN/USERID).",
+"Läär laa: Denn wird je nach Hersteller de Werksbenutzer gnoh\n(root/Administrator/ADMIN/USERID)."
+],
+"Gilt zum Lesen des Referenzgeräts und, wenn die Vorlage später angewendet wird,\nfür alle Zeilen der Serverliste ohne eigenes Passwort.": [
+"Used to read the reference device and, when the template is applied later,\nfor all rows of the server list without a password of their own.",
+"Sert à lire l'appareil de référence et, quand le modèle est appliqué ensuite,\npour toutes les lignes de la liste sans mot de passe propre.",
+"Gilt zum Läse vom Referänzgrät und, wenn d Vorlag spöter aagwändet wird,\nfür alli Ziile vo de Serverlischte ohni eigets Passwort."
+],
+"Adresse": [
+"Address",
+"Adresse",
+"Adrässe"
+],
+"Attribut suchen …": [
+"Search attribute …",
+"Rechercher un attribut …",
+"Attribut sueche …"
+],
+"Blendet Zeilen aus, deren Name den Suchtext nicht enthält.": [
+"Hides rows whose name does not contain the search text.",
+"Masque les lignes dont le nom ne contient pas le texte recherché.",
+"Bländet Ziile uus, wo de Name de Suechtext nöd dine hät."
+],
+"Nur die Spalte „Neuer Wert“ ist bearbeitbar. Leer lassen, um ein\nAttribut unverändert zu lassen. Graue Zeilen (Passwörter, TPM,\nLöschfunktionen) sind gesperrt.": [
+"Only the “New value” column can be edited. Leave empty to keep an\nattribute unchanged. Grey rows (passwords, TPM,\nerase functions) are locked.",
+"Seule la colonne « Nouvelle valeur » est modifiable. Laisser vide pour ne pas\nchanger un attribut. Les lignes grises (mots de passe, TPM,\nfonctions d'effacement) sont verrouillées.",
+"Nur d Spalte „Neue Wärt“ cha me bearbeite. Läär laa, zum es\nAttribut nöd z ändere. Graui Ziile (Passwörter, TPM,\nLöschfunktione) sind gsperrt."
+],
+"UEFI/BIOS-Attribute": [
+"UEFI/BIOS attributes",
+"Attributs UEFI/BIOS",
+"UEFI/BIOS-Attribut"
+],
+"Mit Haken wird nichts gesendet, das Protokoll zeigt nur den Ablauf.\nOhne Haken werden die ausgefüllten „Neuer Wert“-Felder auf jedem Server\nder Liste (Reiter 2) gesetzt, der das jeweilige Attribut tatsächlich hat.": [
+"When ticked, nothing is sent; the log only shows the sequence.\nUnticked, the filled-in “New value” fields are set on every server\nof the list (tab 2) that actually has the attribute.",
+"Coché, rien n'est envoyé ; le journal montre seulement le déroulement.\nDécoché, les champs « Nouvelle valeur » remplis sont appliqués sur chaque serveur\nde la liste (onglet 2) qui possède réellement l'attribut.",
+"Mit Häägli wird nüt gschickt, s Protokoll zeiget nur de Ablauf.\nOhni Häägli wärded di uusgfüllte „Neue Wärt“-Fälder uf jedem Server\nvo de Lischte (Riiter 2) gsetzt, wo das Attribut würkli hät."
+],
+"Danach hart neu starten": [
+"Then hard restart",
+"Puis redémarrage forcé",
+"Dänn hert neu starte"
+],
+"UEFI-Einstellungen werden erst nach einem Neustart aktiv. Ohne Haken\nwerden sie nur vorgemerkt, es wird kein Neustart ausgelöst.\nMit Haken wird ein laufender Server hart neu gestartet (wie mit der\nReset-Taste), ein ausgeschalteter wird eingeschaltet. Nur für Server\nohne laufendes Betriebssystem verwenden.": [
+"UEFI settings only take effect after a restart. Unticked,\nthey are only staged and no restart is triggered.\nTicked, a running server is hard restarted (like pressing the\nreset button) and a powered-off one is switched on. Use only for\nservers without a running operating system.",
+"Les réglages UEFI ne prennent effet qu'après un redémarrage. Décoché,\nils sont seulement mis en attente, sans redémarrage.\nCoché, un serveur en marche est redémarré de force (comme avec le\nbouton Reset) et un serveur éteint est allumé. À n'utiliser que pour\ndes serveurs sans système d'exploitation en cours d'exécution.",
+"UEFI-Iistellige wärded erscht nach eme Neustart aktiv. Ohni Häägli\nwärded sie nur vorgmerkt, es wird kein Neustart uusglöst.\nMit Häägli wird en laufende Server hert neu gstartet (wie mit de\nReset-Taschte), en abgstellte wird iigschaltet. Nur für Server\nohni laufends Betriebssystem bruuche."
+],
+"Auf allen Servern der Liste setzen": [
+"Set on all servers in the list",
+"Appliquer à tous les serveurs de la liste",
+"Uf allne Server vo de Lischte setze"
+],
+"Wendet jedes ausgefüllte „Neuer Wert“-Feld auf jede Zeile der\nServerliste (Reiter 2) an, der Reihe nach, mit Login wie oben.": [
+"Applies every filled-in “New value” field to every row of the\nserver list (tab 2), one after the other, with the login above.",
+"Applique chaque champ « Nouvelle valeur » rempli à chaque ligne de la\nliste des serveurs (onglet 2), l'une après l'autre, avec la connexion ci-dessus.",
+"Wändet jedes uusgfüllte „Neue Wärt“-Fäld uf jedi Ziile vo de\nServerlischte (Riiter 2) aa, de Reihe naa, mit em Login wie obe."
+],
+"Lese …": [
+"Reading …",
+"Lecture …",
+"Am Läse …"
+],
+"{0} Attribute ({1})": [
+"{0} attributes ({1})",
+"{0} attributs ({1})",
+"{0} Attribut ({1})"
+],
+"Eine Vorlage merkt sich Hersteller und die ausgefüllten „Neuer Wert“-Felder (Attribut ->\nWert). Eigener Bereich, getrennt von den Profilen in Reiter 2 und ohne Passwörter.": [
+"A template remembers the vendor and the filled-in “New value” fields (attribute ->\nvalue). A separate area, apart from the profiles in tab 2 and without passwords.",
+"Un modèle mémorise le constructeur et les champs « Nouvelle valeur » remplis (attribut ->\nvaleur). Domaine à part, séparé des profils de l'onglet 2 et sans mots de passe.",
+"E Vorlag merkt sich de Hersteller und di uusgfüllte „Neue Wärt“-Fälder (Attribut ->\nWärt). Eigene Beriich, trännt vo de Profil im Riiter 2 und ohni Passwörter."
+],
+"UEFI-Vorlage": [
+"UEFI template",
+"Modèle UEFI",
+"UEFI-Vorlag"
+],
+"Neue UEFI-Vorlage": [
+"New UEFI template",
+"Nouveau modèle UEFI",
+"Neui UEFI-Vorlag"
+],
+"UEFI-Vorlage umbenennen": [
+"Rename UEFI template",
+"Renommer le modèle UEFI",
+"UEFI-Vorlag umbenänne"
+],
+"Trockenlauf": [
+"Dry run",
+"Simulation",
+"Trocheluuf"
+],
+"Scharfer Lauf": [
+"Live run",
+"Exécution réelle",
+"Scharfe Luuf"
+],
+"— {0}, {1} Server —": [
+"— {0}, {1} servers —",
+"— {0}, {1} serveurs —",
+"— {0}, {1} Server —"
+],
+"Läuft …": [
+"Running …",
+"En cours …",
+"De Steward isch dra …"
+],
+"Netzwerkkarten neu einlesen": [
+"Re-read network cards",
+"Relire les cartes réseau",
+"Netzwerkcharte neu iiläse"
+],
+"Netzwerkkarte dieses Rechners, die am Staging-Switch hängt.\nNur auf dieser Karte werden Adressen vergeben. Sie braucht eine feste IP.": [
+"Network card of this computer that is connected to the staging switch.\nAddresses are only handed out on this card. It needs a static IP.",
+"Carte réseau de cet ordinateur reliée au switch de staging.\nLes adresses ne sont attribuées que sur cette carte. Elle doit avoir une IP fixe.",
+"Netzwerkcharte vo dem Rächner, wo am Staging-Switch hanget.\nNur uf dere Charte wärded Adrässe vergäh. Sie bruucht e feschti IP."
+],
+"DHCP starten": [
+"Start DHCP",
+"Démarrer DHCP",
+"DHCP starte"
+],
+"Startet bzw. stoppt die Adressvergabe auf der gewählten Karte.\nNur an einem getrennten Staging-Switch verwenden.": [
+"Starts or stops handing out addresses on the selected card.\nUse only on a separate staging switch.",
+"Démarre ou arrête l'attribution d'adresses sur la carte choisie.\nÀ n'utiliser que sur un switch de staging séparé.",
+"Startet bzw. stoppt d Adrässvergab uf de gwählte Charte.\nNur a eme trännte Staging-Switch bruuche."
+],
+"Gestoppt": [
+"Stopped",
+"Arrêté",
+"Gstoppt"
+],
+"DHCP-Server für das Staging-Netz": [
+"DHCP server for the staging network",
+"Serveur DHCP pour le réseau de staging",
+"DHCP-Server fürs Staging-Netz"
+],
+"Netzwerkkarte": [
+"Network card",
+"Carte réseau",
+"Netzwerkcharte"
+],
+"Adressbereich": [
+"Address range",
+"Plage d'adresses",
+"Adrässberiich"
+],
+"Geräte, die eine Adresse bekommen haben. Der gemeldete Name hilft bei der Zuordnung,\nz. B. „idrac-“ plus Service-Tag oder „ILO“ plus Seriennummer.": [
+"Devices that received an address. The reported name helps to identify them,\ne.g. “idrac-” plus service tag or “ILO” plus serial number.",
+"Appareils ayant reçu une adresse. Le nom annoncé aide à les identifier,\np. ex. « idrac- » plus Service Tag ou « ILO » plus numéro de série.",
+"Grät, wo e Adrässe übercho händ. De gmäldet Name hilft bi de Zueordnig,\nz. B. „idrac-“ plus Service-Tag oder „ILO“ plus Serienummere."
+],
+"In Serverliste übernehmen": [
+"Add to server list",
+"Reprendre dans la liste des serveurs",
+"I d Serverlischte übernäh"
+],
+"Trägt die vergebenen Adressen als „Aktuelle IP“ in die Serverliste ein.\nMit Markierung nur die markierten Geräte, sonst alle.": [
+"Enters the assigned addresses as “Current IP” in the server list.\nWith a selection only the selected devices, otherwise all.",
+"Inscrit les adresses attribuées comme « IP actuelle » dans la liste des serveurs.\nAvec une sélection, seulement les appareils sélectionnés, sinon tous.",
+"Treit di vergäbne Adrässe als „Aktuelli IP“ i d Serverlischte ii.\nMit Markierig nur di markierte Grät, susch alli."
+],
+"0 Geräte": [
+"0 devices",
+"0 appareil",
+"0 Grät"
+],
+"Gefundene Geräte": [
+"Devices found",
+"Appareils trouvés",
+"Gfundeni Grät"
+],
+"Ende liegt vor dem Anfang des Bereichs": [
+"End is before the start of the range",
+"La fin précède le début de la plage",
+"S Änd liit vor em Aafang vom Beriich"
+],
+"Keine Netzwerkkarte gefunden.": [
+"No network card found.",
+"Aucune carte réseau trouvée.",
+"Kei Netzwerkcharte gfunde."
+],
+"Die Karte hat eine öffentliche Adresse ({0}). Ein Staging-Netz nutzt private Adressen, deshalb wird hier kein DHCP-Server gestartet.": [
+"The card has a public address ({0}). A staging network uses private addresses, so no DHCP server is started here.",
+"La carte a une adresse publique ({0}). Un réseau de staging utilise des adresses privées ; aucun serveur DHCP n'est donc démarré ici.",
+"D Charte hät e öffentlichi Adrässe ({0}). Es Staging-Netz bruucht privati Adrässe, drum wird da kein DHCP-Server gstartet."
+],
+"Kein anderer DHCP-Server hat innerhalb von 1,5 Sekunden geantwortet.": [
+"No other DHCP server answered within 1.5 seconds.",
+"Aucun autre serveur DHCP n'a répondu en 1,5 seconde.",
+"Kein andere DHCP-Server hät innert 1,5 Sekunde Antwort gäh."
+],
+"Ob dort schon ein DHCP-Server läuft, ließ sich nicht prüfen (Port 68 braucht Root-Rechte).": [
+"Whether a DHCP server is already running there could not be checked (port 68 needs root rights).",
+"Impossible de vérifier si un serveur DHCP y fonctionne déjà (le port 68 exige les droits root).",
+"Öb det scho en DHCP-Server lauft, hät sich nöd la prüefe (Port 68 bruucht Root-Rächt)."
+],
+"Ein zweiter DHCP-Server in einem Produktivnetz stört dort alle Geräte.\n\nHängt diese Karte wirklich an einem getrennten Staging-Switch?": [
+"A second DHCP server in a production network disrupts all devices there.\n\nIs this card really connected to a separate staging switch?",
+"Un second serveur DHCP dans un réseau de production y perturbe tous les appareils.\n\nCette carte est-elle vraiment reliée à un switch de staging séparé ?",
+"En zweite DHCP-Server im Produktivnetz stört det alli Grät.\n\nHanget die Charte würkli a eme trännte Staging-Switch?"
+],
+"DHCP stoppen": [
+"Stop DHCP",
+"Arrêter DHCP",
+"DHCP stoppe"
+],
+"<b style='color:#3fa45b'>Läuft</b> auf {0}, {1} bis {2}": [
+"<b style='color:#3fa45b'>Running</b> on {0}, {1} to {2}",
+"<b style='color:#3fa45b'>Actif</b> sur {0}, {1} à {2}",
+"<b style='color:#3fa45b'>Lauft</b> uf {0}, {1} bis {2}"
+],
+"Anmeldung abgebrochen": [
+"Authentication cancelled",
+"Authentification annulée",
+"Aamäldig abbroche"
+],
+"Start nicht möglich oder Anmeldung fehlgeschlagen": [
+"Could not start, or authentication failed",
+"Démarrage impossible ou échec de l'authentification",
+"Start nöd möglich oder Aamäldig fählgschlage"
+],
+"Port 67 belegt oder Karte nicht bereit, siehe Protokoll": [
+"Port 67 in use or card not ready, see log",
+"Port 67 occupé ou carte non prête, voir le journal",
+"Port 67 bsetzt oder Charte nöd parat, lueg im Protokoll"
+],
+"{0} Geräte": [
+"{0} devices",
+"{0} appareils",
+"{0} Grät"
+],
+"{0} Geräte übernommen: jetzt neue IP und Hostname eintragen": [
+"{0} devices added: now enter new IP and hostname",
+"{0} appareils repris : saisir maintenant la nouvelle IP et le nom d'hôte",
+"{0} Grät übernoh: jetzt neui IP und Hostname iiträge"
+],
+"Ja": [
+"Yes",
+"Oui",
+"Ja"
+],
+"Zur Bestätigung die Anzahl der betroffenen Server eintippen:": [
+"To confirm, type the number of servers affected:",
+"Pour confirmer, saisir le nombre de serveurs concernés :",
+"Zum Bestätige d Aazahl vo de betroffene Server iitippe:"
+],
+"  FEHLER: {0} (HTTP {1})": [
+"  ERROR: {0} (HTTP {1})",
+"  ERREUR : {0} (HTTP {1})",
+"  FÄHLER: {0} (HTTP {1})"
+],
+"Benutzer (vorhandenes Konto)": [
+"User (existing account)",
+"Utilisateur (compte existant)",
+"Benutzer (Konto git's scho)"
+],
+"Login/Erreichbarkeit": [
+"Login/reachability",
+"Connexion/accessibilité",
+"Login/Erreichbarkeit"
+],
+"User-Slot lesen": [
+"Read user slot",
+"Lecture de l'emplacement utilisateur",
+"User-Slot läse"
+],
+"  FEHLER: User-Slot {0} ist schon belegt (Benutzer {1}). Nichts überschrieben, bitte einen freien Slot wählen.": [
+"  ERROR: user slot {0} is already in use (user {1}). Nothing overwritten, please choose a free slot.",
+"  ERREUR : l'emplacement utilisateur {0} est déjà occupé (utilisateur {1}). Rien n'a été écrasé, choisir un emplacement libre.",
+"  FÄHLER: User-Slot {0} isch scho bsetzt (Benutzer {1}). Nüt überschribe, bitte en freie Slot wähle."
+],
+"DHCP abschalten": [
+"Disable DHCP",
+"Désactivation du DHCP",
+"DHCP abschalte"
+],
+"Statische IP": [
+"Static IP",
+"IP fixe",
+"Statischi IP"
+],
+"iLO-Neustart": [
+"iLO restart",
+"Redémarrage de l'iLO",
+"iLO-Neustart"
+],
+"  Hersteller: {0}, Anmeldung als {1}": [
+"  Vendor: {0}, logging in as {1}",
+"  Constructeur : {0}, connexion en tant que {1}",
+"  Hersteller: {0}, Aamäldig als {1}"
+],
+"Kontrolle der neuen Adressen (bis zu {0}s)...": [
+"Checking the new addresses (up to {0}s)...",
+"Contrôle des nouvelles adresses (jusqu'à {0} s)...",
+"Kontrolle vo de neue Adrässe (bis zu {0}s)..."
+],
+"  Trockenlauf: Attribute nicht wirklich gelesen, zeige den Ablauf ungeprüft": [
+"  Dry run: attributes not actually read, showing the sequence unchecked",
+"  Simulation : attributs non lus réellement, déroulement affiché sans vérification",
+"  Trocheluuf: Attribut nöd würkli gläse, zeige de Ablauf unprüeft"
+],
+"  nichts zu ändern, kein Neustart": [
+"  nothing to change, no restart",
+"  rien à modifier, pas de redémarrage",
+"  nüt z ändere, kein Neustart"
+],
+"BIOS-Attribute setzen": [
+"Set BIOS attributes",
+"Écriture des attributs BIOS",
+"BIOS-Attribut setze"
+],
+"  gesetzt: ": [
+"  set: ",
+"  défini : ",
+"  gsetzt: "
+],
+"  Hinweis: wird erst beim nächsten Neustart übernommen (kein Neustart ausgelöst)": [
+"  Note: takes effect at the next restart (no restart triggered)",
+"  Remarque : pris en compte au prochain redémarrage (aucun redémarrage lancé)",
+"  Hiiwiis: wird erscht bim nächschte Neustart übernoh (kein Neustart uusglöst)"
+],
+"  Hinweis: Betriebszustand unbekannt, kein Neustart ausgelöst. Bitte von Hand neu starten.": [
+"  Note: power state unknown, no restart triggered. Please restart by hand.",
+"  Remarque : état d'alimentation inconnu, aucun redémarrage lancé. Redémarrer à la main.",
+"  Hiiwiis: Betriebszuestand unbekannt, kein Neustart uusglöst. Bitte vo Hand neu starte."
+],
+"  Neustart ausgelöst ({0}); die Attribute greifen danach": [
+"  Restart triggered ({0}); the attributes apply afterwards",
+"  Redémarrage lancé ({0}) ; les attributs s'appliquent ensuite",
+"  Neustart uusglöst ({0}); d Attribut griifed dänn"
+],
+"  Hersteller: {0}": [
+"  Vendor: {0}",
+"  Constructeur : {0}",
+"  Hersteller: {0}"
+],
+"Angebot   {0}  an {1} {2}": [
+"Offer     {0}  to {1} {2}",
+"Offre     {0}  à {1} {2}",
+"Aagebot   {0}  a {1} {2}"
+],
+"Vergeben  {0}  an {1} {2}": [
+"Assigned  {0}  to {1} {2}",
+"Attribué  {0}  à {1} {2}",
+"Vergäh    {0}  a {1} {2}"
+],
+"DHCP-Server läuft auf {0}, Bereich {1} bis {2}": [
+"DHCP server running on {0}, range {1} to {2}",
+"Serveur DHCP actif sur {0}, plage {1} à {2}",
+"DHCP-Server lauft uf {0}, Beriich {1} bis {2}"
+],
+"Speichern": [
+"Save",
+"Enregistrer",
+"Speichere"
+],
+"Speichert die aktuellen Einstellungen in das gewählte Profil.\nOhne gewähltes Profil wird ein neues angelegt.": [
+"Saves the current settings to the selected profile.\nWithout a selected profile a new one is created.",
+"Enregistre les réglages actuels dans le profil choisi.\nSans profil choisi, un nouveau est créé.",
+"Speicheret di aktuelle Iistellige is gwählte Profil.\nOhni gwählts Profil wird es neus aagleit."
+],
+"Neu …": [
+"New …",
+"Nouveau …",
+"Neu …"
+],
+"Legt aus den aktuellen Einstellungen ein neues Profil an.": [
+"Creates a new profile from the current settings.",
+"Crée un nouveau profil à partir des réglages actuels.",
+"Leit us de aktuelle Iistellige es neus Profil aa."
+],
+"Umbenennen …": [
+"Rename …",
+"Renommer …",
+"Umbenänne …"
+],
+"Gibt dem gewählten Profil einen anderen Namen.": [
+"Gives the selected profile another name.",
+"Donne un autre nom au profil choisi.",
+"Git em gwählte Profil en andere Name."
+],
+"Löschen": [
+"Delete",
+"Supprimer",
+"Lösche"
+],
+"Löscht das gewählte Profil. Die Einstellungen in der Maske bleiben stehen.": [
+"Deletes the selected profile. The settings in the form stay as they are.",
+"Supprime le profil choisi. Les réglages du formulaire restent en place.",
+"Löscht s gwählte Profil. D Iistellige i de Maske bliibed stah."
+],
+"Profil „{0}“ geladen": [
+"Profile “{0}” loaded",
+"Profil « {0} » chargé",
+"Profil „{0}“ glade"
+],
+"Profil „{0}“ gespeichert (ohne Passwörter)": [
+"Profile “{0}” saved (without passwords)",
+"Profil « {0} » enregistré (sans mots de passe)",
+"Profil „{0}“ gspeicheret (ohni Passwörter)"
+],
+"Dieser Name ist reserviert.": [
+"This name is reserved.",
+"Ce nom est réservé.",
+"Dä Name isch reserviert."
+],
+"Kein Profil gewählt": [
+"No profile selected",
+"Aucun profil choisi",
+"Kei Profil gwählt"
+],
+"Das Profil „{0}“ gibt es schon.": [
+"The profile “{0}” already exists.",
+"Le profil « {0} » existe déjà.",
+"S Profil „{0}“ git's scho."
+],
+"Profil „{0}“ heißt jetzt „{1}“": [
+"Profile “{0}” is now called “{1}”",
+"Le profil « {0} » s'appelle maintenant « {1} »",
+"Profil „{0}“ heisst jetzt „{1}“"
+],
+"Profil löschen": [
+"Delete profile",
+"Supprimer le profil",
+"Profil lösche"
+],
+"Profil „{0}“ wirklich löschen?": [
+"Really delete profile “{0}”?",
+"Vraiment supprimer le profil « {0} » ?",
+"Profil „{0}“ würkli lösche?"
+],
+"Profil „{0}“ gelöscht": [
+"Profile “{0}” deleted",
+"Profil « {0} » supprimé",
+"Profil „{0}“ glöscht"
+],
+"<small>Leer lassen für: Dell root · HPE Administrator · Supermicro ADMIN · Lenovo USERID</small>": [
+"<small>Leave empty for: Dell root · HPE Administrator · Supermicro ADMIN · Lenovo USERID</small>",
+"<small>Laisser vide pour : Dell root · HPE Administrator · Supermicro ADMIN · Lenovo USERID</small>",
+"<small>Läär laa für: Dell root · HPE Administrator · Supermicro ADMIN · Lenovo USERID</small>"
+],
+"<small>Leer lassen für den Werksbenutzer {0}</small>": [
+"<small>Leave empty for the factory user {0}</small>",
+"<small>Laisser vide pour l'utilisateur d'usine {0}</small>",
+"<small>Läär laa für de Werksbenutzer {0}</small>"
+],
+"Es sind schon Einträge vorhanden.": [
+"There are already entries.",
+"Il y a déjà des entrées.",
+"Es hät scho Iiträg i de Lischte."
+],
+"Ersetzen": [
+"Replace",
+"Remplacer",
+"Ersetze"
+],
+"Anhängen": [
+"Append",
+"Ajouter",
+"Aahänke"
+],
+"Geladen: {0}": [
+"Loaded: {0}",
+"Chargé : {0}",
+"Glade: {0}"
+],
+"Gespeichert in {0}": [
+"Saved to {0}",
+"Enregistré dans {0}",
+"Gspeicheret i {0}"
+],
+"Diese Adresse ist die aktuelle IP von Zeile {0}": [
+"This address is the current IP of row {0}",
+"Cette adresse est l'IP actuelle de la ligne {0}",
+"Die Adrässe isch di aktuell IP vo Ziile {0}"
+],
+"fehlt": [
+"missing",
+"manquant",
+"fählt"
+],
+"Zeile {0}: kein Passwort (weder in der Zeile noch oben).": [
+"Row {0}: no password (neither in the row nor above).",
+"Ligne {0} : pas de mot de passe (ni dans la ligne ni en haut).",
+"Ziile {0}: kei Passwort (weder i de Ziile no obe)."
+],
+"Zeile {0}: Die neue IP ist eine Adresse dieses Rechners.": [
+"Row {0}: the new IP is an address of this computer.",
+"Ligne {0} : la nouvelle IP est une adresse de cet ordinateur.",
+"Ziile {0}: Di neu IP isch e Adrässe vo dem Rächner."
+],
+"Zeile {0}: Die neue IP liegt im Bereich des laufenden DHCP-Servers ({1} bis {2}). Dort könnte sie ein zweites Mal vergeben werden.": [
+"Row {0}: the new IP lies in the range of the running DHCP server ({1} to {2}). It could be handed out a second time there.",
+"Ligne {0} : la nouvelle IP est dans la plage du serveur DHCP actif ({1} à {2}). Elle pourrait y être attribuée une seconde fois.",
+"Ziile {0}: Di neu IP liit im Beriich vom laufende DHCP-Server ({1} bis {2}). Det chönnt sie es zweits Mal vergäh wärde."
+],
+"Lauf aktiv": [
+"Run active",
+"Exécution en cours",
+"Luuf aktiv"
+],
+"Es läuft noch eine Konfiguration. Bitte warten oder erst abbrechen.": [
+"A configuration is still running. Please wait or cancel it first.",
+"Une configuration est encore en cours. Patienter ou l'annuler d'abord.",
+"De Steward isch no am Schaffe. Bitte warte oder zerscht abbräche."
+],
+"Beenden": [
+"Quit",
+"Quitter",
+"Beände"
+],
+"Die Serverliste wurde nicht gespeichert.": [
+"The server list has not been saved.",
+"La liste des serveurs n'a pas été enregistrée.",
+"D Serverlischte isch nöd gspeicheret worde."
+],
+"Das Tool speichert nichts von selbst. Ohne Speichern ist die Liste nach dem Schließen weg.": [
+"The tool saves nothing on its own. Without saving, the list is gone after closing.",
+"L'outil n'enregistre rien de lui-même. Sans enregistrement, la liste est perdue à la fermeture.",
+"S Tool speicheret nüt vo sälber. Ohni Speichere isch d Lischte nach em Zuemache futsch."
+],
+"Speichern …": [
+"Save …",
+"Enregistrer …",
+"Speichere …"
+],
+"Verwerfen": [
+"Discard",
+"Abandonner",
+"Verwärfe"
+],
+"Attribut": [
+"Attribute",
+"Attribut",
+"Attribut"
+],
+"Aktueller Wert": [
+"Current value",
+"Valeur actuelle",
+"Aktuelle Wärt"
+],
+"Neuer Wert": [
+"New value",
+"Nouvelle valeur",
+"Neue Wärt"
+],
+"Bitte eine Adresse eintragen oder aus der Serverliste wählen.": [
+"Please enter an address or pick one from the server list.",
+"Saisir une adresse ou en choisir une dans la liste des serveurs.",
+"Bitte e Adrässe iiträge oder us de Serverlischte wähle."
+],
+"Speichert die aktuellen „Neuer Wert“-Felder in die gewählte Vorlage.\nOhne gewählte Vorlage wird eine neue angelegt.": [
+"Saves the current “New value” fields to the selected template.\nWithout a selected template a new one is created.",
+"Enregistre les champs « Nouvelle valeur » actuels dans le modèle choisi.\nSans modèle choisi, un nouveau est créé.",
+"Speicheret di aktuelle „Neue Wärt“-Fälder i di gwählti Vorlag.\nOhni gwählti Vorlag wird e neui aagleit."
+],
+"Legt aus den aktuellen Feldern eine neue Vorlage an.": [
+"Creates a new template from the current fields.",
+"Crée un nouveau modèle à partir des champs actuels.",
+"Leit us de aktuelle Fälder e neui Vorlag aa."
+],
+"Gibt der gewählten Vorlage einen anderen Namen.": [
+"Gives the selected template another name.",
+"Donne un autre nom au modèle choisi.",
+"Git de gwählte Vorlag en andere Name."
+],
+"Löscht die gewählte Vorlage.": [
+"Deletes the selected template.",
+"Supprime le modèle choisi.",
+"Löscht di gwählti Vorlag."
+],
+"Vorlage „{0}“ geladen": [
+"Template “{0}” loaded",
+"Modèle « {0} » chargé",
+"Vorlag „{0}“ glade"
+],
+"Vorlage „{0}“ gespeichert": [
+"Template “{0}” saved",
+"Modèle « {0} » enregistré",
+"Vorlag „{0}“ gspeicheret"
+],
+"Keine Vorlage gewählt": [
+"No template selected",
+"Aucun modèle choisi",
+"Kei Vorlag gwählt"
+],
+"Die Vorlage „{0}“ gibt es schon.": [
+"The template “{0}” already exists.",
+"Le modèle « {0} » existe déjà.",
+"D Vorlag „{0}“ git's scho."
+],
+"Vorlage „{0}“ heißt jetzt „{1}“": [
+"Template “{0}” is now called “{1}”",
+"Le modèle « {0} » s'appelle maintenant « {1} »",
+"Vorlag „{0}“ heisst jetzt „{1}“"
+],
+"UEFI-Vorlage löschen": [
+"Delete UEFI template",
+"Supprimer le modèle UEFI",
+"UEFI-Vorlag lösche"
+],
+"Vorlage „{0}“ wirklich löschen?": [
+"Really delete template “{0}”?",
+"Vraiment supprimer le modèle « {0} » ?",
+"Vorlag „{0}“ würkli lösche?"
+],
+"Vorlage „{0}“ gelöscht": [
+"Template “{0}” deleted",
+"Modèle « {0} » supprimé",
+"Vorlag „{0}“ glöscht"
+],
+"UEFI-Einstellungen": [
+"UEFI settings",
+"Réglages UEFI",
+"UEFI-Iistellige"
+],
+"Keine „Neuer Wert“-Felder ausgefüllt.": [
+"No “New value” fields filled in.",
+"Aucun champ « Nouvelle valeur » rempli.",
+"Kei „Neue Wärt“-Fälder uusgfüllt. Ohni Uuftrag macht de Steward nüt."
+],
+"Die Serverliste (Reiter 2) ist leer.": [
+"The server list (tab 2) is empty.",
+"La liste des serveurs (onglet 2) est vide.",
+"D Serverlischte (Riiter 2) isch läär."
+],
+"Falsche UEFI-Werte können dazu führen, dass ein Server nicht mehr startet.": [
+"Wrong UEFI values can stop a server from booting.",
+"De mauvaises valeurs UEFI peuvent empêcher un serveur de démarrer.",
+"Falschi UEFI-Wärt chönd dezue füehre, dass en Server nüme startet."
+],
+"Wird nach dem aktuellen Server abgebrochen …": [
+"Stopping after the current server …",
+"Arrêt après le serveur en cours …",
+"Nach em aktuelle Server isch Schluss …"
+],
+"Fertig ohne Fehler": [
+"Finished without errors",
+"Terminé sans erreur",
+"Fertig, alles tipptopp."
+],
+"Beendet mit Fehlern (Code {0})": [
+"Finished with errors (code {0})",
+"Terminé avec des erreurs (code {0})",
+"Fertig, aber nöd ganz suuber: Es hät Fähler gäh (Code {0})"
+],
+"bis": [
+"to",
+"à",
+"bis"
+],
+"<small><b>Nur an einem getrennten Staging-Switch starten</b>, nie im Produktivnetz.</small>": [
+"<small><b>Start only on a separate staging switch</b>, never in the production network.</small>",
+"<small><b>Démarrer uniquement sur un switch de staging séparé</b>, jamais dans le réseau de production.</small>",
+"<small><b>Nur a eme trännte Staging-Switch starte</b>, nie im Produktivnetz.</small>"
+],
+"Vergebene IP": [
+"Assigned IP",
+"IP attribuée",
+"Vergäbni IP"
+],
+"MAC-Adresse": [
+"MAC address",
+"Adresse MAC",
+"MAC-Adrässe"
+],
+"Gemeldeter Name": [
+"Reported name",
+"Nom annoncé",
+"Gmäldete Name"
+],
+"Die Karte „{0}“ hat keine IPv4-Adresse.\n\nIn den Adaptereinstellungen (ncpa.cpl) bei dieser Karte unter „Internetprotokoll, Version 4“ eine feste Adresse eintragen, z. B. 192.168.0.1 mit Maske 255.255.255.0, Gateway leer lassen.\n\nDanach hier auf ↻ klicken.": [
+"The card “{0}” has no IPv4 address.\n\nIn the adapter settings (ncpa.cpl), enter a static address for this card under “Internet Protocol Version 4”, e.g. 192.168.0.1 with mask 255.255.255.0, and leave the gateway empty.\n\nThen click ↻ here.",
+"La carte « {0} » n'a pas d'adresse IPv4.\n\nDans les paramètres de la carte (ncpa.cpl), saisir une adresse fixe sous « Protocole Internet version 4 », p. ex. 192.168.0.1 avec le masque 255.255.255.0, et laisser la passerelle vide.\n\nCliquer ensuite ici sur ↻.",
+"D Charte „{0}“ hät kei IPv4-Adrässe.\n\nI de Adapteriistellige (ncpa.cpl) bi dere Charte under „Internetprotokoll, Version 4“ e feschti Adrässe iiträge, z. B. 192.168.0.1 mit Maske 255.255.255.0, Gateway läär laa.\n\nDänn da uf ↻ klicke."
+],
+"DHCP-Server": [
+"DHCP server",
+"Serveur DHCP",
+"DHCP-Server"
+],
+"Über diese Karte läuft die Standardroute dieses Rechners (Internet bzw. Firmennetz). Das ist kein getrenntes Staging-Netz, deshalb wird hier kein DHCP-Server gestartet.\n\nFür das Staging die Karte mit fester Adresse und ohne Gateway einrichten.": [
+"This computer's default route (internet or company network) runs over this card. That is not a separate staging network, so no DHCP server is started here.\n\nFor staging, set the card up with a static address and without a gateway.",
+"La route par défaut de cet ordinateur (Internet ou réseau d'entreprise) passe par cette carte. Ce n'est pas un réseau de staging séparé ; aucun serveur DHCP n'est donc démarré ici.\n\nPour le staging, configurer la carte avec une adresse fixe et sans passerelle.",
+"Über die Charte lauft d Standardroute vo dem Rächner (Internet bzw. Firmenetz). Das isch kei trännts Staging-Netz, drum wird da kein DHCP-Server gstartet.\n\nFürs Staging d Charte mit feschter Adrässe und ohni Gateway iirichte."
+],
+"DHCP-Server nicht gestartet": [
+"DHCP server not started",
+"Serveur DHCP non démarré",
+"DHCP-Server nöd gstartet"
+],
+"DHCP-Server starten?": [
+"Start DHCP server?",
+"Démarrer le serveur DHCP ?",
+"DHCP-Server starte?"
+],
+"Auf {0} ({1}) werden Adressen von {2} bis {3} vergeben.": [
+"On {0} ({1}), addresses from {2} to {3} will be handed out.",
+"Sur {0} ({1}), des adresses de {2} à {3} seront attribuées.",
+"Uf {0} ({1}) wärded Adrässe vo {2} bis {3} vergäh."
+],
+"Keine neuen Geräte zum Übernehmen": [
+"No new devices to add",
+"Aucun nouvel appareil à reprendre",
+"Kei neui Grät ume"
+],
+"Eingabe prüfen": [
+"Check input",
+"Vérifier la saisie",
+"Iigab prüefe"
+],
+"Nichts zu tun": [
+"Nothing to do",
+"Rien à faire",
+"Nüt z tue"
+],
+"Alle Server der Liste sind schon umgestellt.\n\nNeue Zeilen eintragen.": [
+"All servers in the list have already been reconfigured.\n\nEnter new rows.",
+"Tous les serveurs de la liste sont déjà reconfigurés.\n\nSaisir de nouvelles lignes.",
+"Alli Server vo de Lischte sind scho umgstellt. De Steward hät Fiirabig.\n\nNeui Ziile iiträge."
+],
+"Die Zahl stimmt nicht. Es wurde nichts ausgeführt.": [
+"The number does not match. Nothing was executed.",
+"Le nombre ne correspond pas. Rien n'a été exécuté.",
+"D Zahl stimmt nöd. Sicher isch sicher: Es isch nüt uusgfüehrt worde."
+],
+"DHCP-Server gestoppt: Über diese Karte läuft jetzt die Standardroute, das ist kein getrenntes Staging-Netz mehr.": [
+"DHCP server stopped: the default route now runs over this card, so it is no longer a separate staging network.",
+"Serveur DHCP arrêté : la route par défaut passe désormais par cette carte, ce n'est plus un réseau de staging séparé.",
+"DHCP-Server gstoppt: Über die Charte lauft jetzt d Standardroute, das isch kei trännts Staging-Netz meh."
+],
+"Sprache": [
+"Language",
+"Langue",
+"Sproch"
+],
+"Die Sprache lässt sich nur wechseln, solange kein Lauf aktiv ist und der DHCP-Server gestoppt ist.": [
+"The language can only be changed while no run is active and the DHCP server is stopped.",
+"La langue ne peut être changée que si aucune exécution n'est en cours et que le serveur DHCP est arrêté.",
+"D Sproch laht sich nur wächsle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt isch."
+],
+"    Hinweis: bei HPE heißt der Werksbenutzer meist Administrator": [
+"    Note: on HPE the factory user is usually Administrator",
+"    Remarque : chez HPE, l'utilisateur d'usine est généralement Administrator",
+"    Hiiwiis: bi HPE heisst de Werksbenutzer meischtens Administrator"
+],
+"    Hinweis: bei Supermicro heißt der Werksbenutzer meist ADMIN": [
+"    Note: on Supermicro the factory user is usually ADMIN",
+"    Remarque : chez Supermicro, l'utilisateur d'usine est généralement ADMIN",
+"    Hiiwiis: bi Supermicro heisst de Werksbenutzer meischtens ADMIN"
+],
+"    Hinweis: bei Lenovo heißt der Werksbenutzer meist USERID": [
+"    Note: on Lenovo the factory user is usually USERID",
+"    Remarque : chez Lenovo, l'utilisateur d'usine est généralement USERID",
+"    Hiiwiis: bi Lenovo heisst de Werksbenutzer meischtens USERID"
+],
+"== Abgebrochen, übrige Server nicht bearbeitet": [
+"== Cancelled, remaining servers not processed",
+"== Annulé, serveurs restants non traités",
+"== Abbroche, übrigi Server nöd bearbeitet"
+],
+"Abbruch": [
+"cancelled",
+"annulé",
+"Abbruch"
+],
+"== {0}: kein Passwort (weder in der Zeile noch oben)": [
+"== {0}: no password (neither in the row nor above)",
+"== {0} : pas de mot de passe (ni dans la ligne ni en haut)",
+"== {0}: kei Passwort (weder i de Ziile no obe)"
+],
+"  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf": [
+"  Dry run: vendor not detectable ({0}), showing the Dell sequence",
+"  Simulation : constructeur non détectable ({0}), affichage du déroulement Dell",
+"  Trocheluuf: Hersteller nöd erchännbar ({0}), zeige de Dell-Ablauf"
+],
+"  FEHLER: nicht erreichbar": [
+"  ERROR: not reachable",
+"  ERREUR : injoignable",
+"  FÄHLER: nöd erreichbar"
+],
+"  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)": [
+"  ERROR: vendor not recognised (neither iDRAC, iLO, Supermicro nor XCC)",
+"  ERREUR : constructeur non reconnu (ni iDRAC, ni iLO, ni Supermicro, ni XCC)",
+"  FÄHLER: Hersteller nöd erchännt (weder iDRAC, iLO, Supermicro no XCC)"
+],
+"  FEHLER: Die neue IP {0} ist schon vergeben, dort antwortet bereits ein Gerät. Nichts geändert.": [
+"  ERROR: the new IP {0} is already taken, a device answers there. Nothing changed.",
+"  ERREUR : la nouvelle IP {0} est déjà prise, un appareil y répond. Rien n'a été modifié.",
+"  FÄHLER: Di neu IP {0} isch scho vergäh, det antwortet scho es Grät. Nüt gänderet."
+],
+"  FEHLT   {0}": [
+"  MISSING {0}",
+"  ABSENT  {0}",
+"  FÄHLT   {0}"
+],
+"BIOS-Attribute lesen": [
+"Read BIOS attributes",
+"Lecture des attributs BIOS",
+"BIOS-Attribut läse"
+],
+"  FEHLER: gesperrt, wird nie gesetzt (Passwort-, TPM- und Lösch-Attribute): ": [
+"  ERROR: locked, never set (password, TPM and erase attributes): ",
+"  ERREUR : verrouillé, jamais défini (attributs de mot de passe, TPM et effacement) : ",
+"  FÄHLER: gsperrt, wird nie gsetzt (Passwort-, TPM- und Lösch-Attribut): "
+],
+"  FEHLER: Wert passt nicht zum Attribut (Zahl bzw. Ein/Aus erwartet), nicht gesetzt: ": [
+"  ERROR: value does not fit the attribute (number or on/off expected), not set: ",
+"  ERREUR : la valeur ne convient pas à l'attribut (nombre ou activé/désactivé attendu), non défini : ",
+"  FÄHLER: Wärt passt nöd zum Attribut (Zahl bzw. Ii/Uus erwartet), nöd gsetzt: "
+],
+"  nicht auf diesem Gerät vorhanden, übersprungen: ": [
+"  not present on this device, skipped: ",
+"  absent de cet appareil, ignoré : ",
+"  uf dem Grät nöd vorhande, überspronge: "
+],
+"  schon so eingestellt: ": [
+"  already set this way: ",
+"  déjà réglé ainsi : ",
+"  scho so iigstellt: "
+],
+"== {0}: kein Passwort": [
+"== {0}: no password",
+"== {0} : pas de mot de passe",
+"== {0}: kei Passwort"
+],
+"Abgelehnt {0}  von {1}": [
+"Refused   {0}  from {1}",
+"Refusé    {0}  de {1}",
+"Abglehnt  {0}  vo {1}"
+],
+"  FEHLER: unerwarteter Abbruch: {0!r}": [
+"  ERROR: unexpected abort: {0!r}",
+"  ERREUR : arrêt inattendu : {0!r}",
+"  FÄHLER: unerwartete Abbruch: {0!r}"
+],
+"Gerät nicht erreichbar.": [
+"Device not reachable.",
+"Appareil injoignable.",
+"Grät nöd erreichbar."
+],
+"Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC).": [
+"Vendor not recognised (neither iDRAC, iLO, Supermicro nor XCC).",
+"Constructeur non reconnu (ni iDRAC, ni iLO, ni Supermicro, ni XCC).",
+"Hersteller nöd erchännt (weder iDRAC, iLO, Supermicro no XCC)."
+],
+"Unerwarteter Fehler: {0!r}": [
+"Unexpected error: {0!r}",
+"Erreur inattendue : {0!r}",
+"Unerwartete Fähler: {0!r}"
+],
+"Ein DHCP-Server aus einem früheren, abgebrochenen Lauf lief noch und wurde beendet.": [
+"A DHCP server from an earlier, aborted run was still running and has been stopped.",
+"Un serveur DHCP d'une exécution précédente interrompue tournait encore et a été arrêté.",
+"En DHCP-Server us eme früehnere, abbrochne Luuf isch no umegeischteret und isch beändet worde."
+],
+"Profile": [
+"Profiles",
+"Profils",
+"Profil"
+],
+"{0} nicht schreibbar:\n{1}": [
+"{0} cannot be written:\n{1}",
+"Impossible d'écrire {0} :\n{1}",
+"{0} laht sich nöd schriibe:\n{1}"
+],
+"Das Profil „{0}“ gibt es schon. Überschreiben?": [
+"The profile “{0}” already exists. Overwrite?",
+"Le profil « {0} » existe déjà. L'écraser ?",
+"S Profil „{0}“ git's scho. Überschriibe?"
+],
+"{0} Server": [
+"{0} servers",
+"{0} serveurs",
+"{0} Server"
+],
+" · <span style='color:#d9534f'>{0} mit Fehlern</span>": [
+" · <span style='color:#d9534f'>{0} with errors</span>",
+" · <span style='color:#d9534f'>{0} avec erreurs</span>",
+" · <span style='color:#d9534f'>{0} mit Fähler</span>"
+],
+"Datei nicht lesbar:\n{0}": [
+"File cannot be read:\n{0}",
+"Fichier illisible :\n{0}",
+"Datei nöd läsbar:\n{0}"
+],
+"Datei nicht schreibbar:\n{0}": [
+"File cannot be written:\n{0}",
+"Impossible d'écrire le fichier :\n{0}",
+"Datei nöd schriibbar:\n{0}"
+],
+" (mit Passwörtern im Klartext)": [
+" (with passwords in plain text)",
+" (avec mots de passe en clair)",
+" (mit Passwörter im Klartext)"
+],
+" (ohne Passwörter)": [
+" (without passwords)",
+" (sans mots de passe)",
+" (ohni Passwörter)"
+],
+"{0} kommt mehrfach vor (Zeilen {1})": [
+"{0} occurs more than once (rows {1})",
+"{0} apparaît plusieurs fois (lignes {1})",
+"{0} chunnt mehrfach vor (Ziile {1})"
+],
+"({0} weitere markierte Felder)": [
+"({0} more marked fields)",
+"({0} autres champs marqués)",
+"({0} wiiteri markierti Fälder)"
+],
+"Attribute konnten nicht gelesen werden.": [
+"Attributes could not be read.",
+"Les attributs n'ont pas pu être lus.",
+"D Attribut händ sich nöd la läse."
+],
+"UEFI-Vorlagen": [
+"UEFI templates",
+"Modèles UEFI",
+"UEFI-Vorlage"
+],
+"Die Vorlage „{0}“ gibt es schon. Überschreiben?": [
+"The template “{0}” already exists. Overwrite?",
+"Le modèle « {0} » existe déjà. L'écraser ?",
+"D Vorlag „{0}“ git's scho. Überschriibe?"
+],
+"… und {0} weitere": [
+"… and {0} more",
+"… et {0} autres",
+"… und {0} wiiteri"
+],
+"Danach wird jeder Server hart neu gestartet, wie mit der Reset-Taste. Ein laufendes Betriebssystem wird dabei nicht sauber heruntergefahren.": [
+"Afterwards every server is hard restarted, like pressing the reset button. A running operating system is not shut down cleanly.",
+"Ensuite, chaque serveur est redémarré de force, comme avec le bouton Reset. Un système d'exploitation en marche n'est pas arrêté proprement.",
+"Dänn wird jede Server hert neu gstartet, wie mit de Reset-Taschte. Es laufends Betriebssystem wird debii nöd suuber abegfahre."
+],
+"Es wird kein Neustart ausgelöst; die Änderung wirkt erst beim nächsten Neustart.": [
+"No restart is triggered; the change takes effect at the next restart.",
+"Aucun redémarrage n'est lancé ; la modification prend effet au prochain redémarrage.",
+"Es wird kein Neustart uusglöst; d Änderig würkt erscht bim nächschte Neustart."
+],
+"Scharf ausführen?": [
+"Run for real?",
+"Exécuter réellement ?",
+"Scharf uusfüehre?"
+],
+"Auf {0} Servern werden jetzt wirklich UEFI-Einstellungen geändert.": [
+"UEFI settings will now really be changed on {0} servers.",
+"Les réglages UEFI vont maintenant être réellement modifiés sur {0} serveurs.",
+"Uf {0} Server wärded jetzt würkli UEFI-Iistellige gänderet."
+],
+"{0}  –  keine IPv4-Adresse": [
+"{0}  –  no IPv4 address",
+"{0}  –  pas d'adresse IPv4",
+"{0}  –  kei IPv4-Adrässe"
+],
+"Liegt nicht im Netz der Karte ({0})": [
+"Not in the network of the card ({0})",
+"Hors du réseau de la carte ({0})",
+"Liit nöd im Netz vo de Charte ({0})"
+],
+"Die Karte {0} hat keine IPv4-Adresse. Feste Adresse setzen, z. B. im Terminal:\n\nnmcli con add type ethernet ifname {1} con-name staging ipv4.method manual ipv4.addresses 192.168.0.1/24\nnmcli con up staging\n\nDanach hier auf ↻ klicken.": [
+"The card {0} has no IPv4 address. Set a static address, e.g. in the terminal:\n\nnmcli con add type ethernet ifname {1} con-name staging ipv4.method manual ipv4.addresses 192.168.0.1/24\nnmcli con up staging\n\nThen click ↻ here.",
+"La carte {0} n'a pas d'adresse IPv4. Définir une adresse fixe, p. ex. dans le terminal :\n\nnmcli con add type ethernet ifname {1} con-name staging ipv4.method manual ipv4.addresses 192.168.0.1/24\nnmcli con up staging\n\nCliquer ensuite ici sur ↻.",
+"D Charte {0} hät kei IPv4-Adrässe. Feschti Adrässe setze, z. B. im Terminal:\n\nnmcli con add type ethernet ifname {1} con-name staging ipv4.method manual ipv4.addresses 192.168.0.1/24\nnmcli con up staging\n\nDänn da uf ↻ klicke."
+],
+"Diese Karte hat ihre eigene Adresse per DHCP bekommen. In diesem Netz läuft also schon ein DHCP-Server, ein zweiter würde dort alle Geräte stören. Deshalb wird hier keiner gestartet.\n\nFür das Staging der Karte eine feste Adresse geben.": [
+"This card received its own address via DHCP. So a DHCP server is already running in this network, and a second one would disrupt all devices there. That is why none is started here.\n\nFor staging, give the card a static address.",
+"Cette carte a reçu sa propre adresse par DHCP. Un serveur DHCP fonctionne donc déjà dans ce réseau, et un second y perturberait tous les appareils. C'est pourquoi aucun n'est démarré ici.\n\nPour le staging, donner une adresse fixe à la carte.",
+"Die Charte hät ihri eigeti Adrässe per DHCP übercho. I dem Netz lauft also scho en DHCP-Server, en zweite würd det alli Grät störe. Drum wird da kein gstartet.\n\nFürs Staging de Charte e feschti Adrässe gäh."
+],
+"<b style='color:#d9534f'>Beendet (Code {0})</b>: ": [
+"<b style='color:#d9534f'>Ended (code {0})</b>: ",
+"<b style='color:#d9534f'>Terminé (code {0})</b> : ",
+"<b style='color:#d9534f'>Beändet (Code {0})</b>: "
+],
+"⚠ Die aktuelle IP liegt in keinem Netz, an dem dieser Rechner direkt hängt. Für ein Staging-Gerät ist das ungewöhnlich. Ist es wirklich das richtige Gerät?": [
+"⚠ The current IP is not in any network this computer is directly connected to. That is unusual for a staging device. Is it really the right device?",
+"⚠ L'IP actuelle n'est dans aucun réseau auquel cet ordinateur est directement relié. C'est inhabituel pour un appareil en staging. Est-ce vraiment le bon appareil ?",
+"⚠ Di aktuell IP liit i keim Netz, wo dä Rächner diräkt draa hanget. Für es Staging-Grät isch das ungwöhnlich. Isch es würkli s richtige Grät?"
+],
+"{0} Server werden jetzt wirklich umgestellt (Benutzer, Hostname, feste IP).": [
+"{0} servers will now really be reconfigured (user, hostname, static IP).",
+"{0} serveurs vont maintenant être réellement reconfigurés (utilisateur, nom d'hôte, IP fixe).",
+"{0} Server wärded jetzt würkli umgstellt (Benutzer, Hostname, feschti IP)."
+],
+"— {0}, {1} Server": [
+"— {0}, {1} servers",
+"— {0}, {1} serveurs",
+"— {0}, {1} Server"
+],
+" (ohne Zugriffsarten angelegt: Web-Anmeldung bitte einmal prüfen)": [
+" (created without access types: please check the web login once)",
+" (créé sans types d'accès : vérifier une fois la connexion web)",
+" (ohni Zuegriffsarte aagleit: Web-Aamäldig bitte eimal prüefe)"
+],
+"Adressbereich erschöpft, keine Adresse mehr frei für ": [
+"Address range exhausted, no address left for ",
+"Plage d'adresses épuisée, plus d'adresse libre pour ",
+"Adrässberiich uufbruucht, kei Adrässe meh frei für "
+],
+"Port 67 lässt sich nicht öffnen: {0}": [
+"Port 67 cannot be opened: {0}",
+"Impossible d'ouvrir le port 67 : {0}",
+"Port 67 laht sich nöd uuftue: {0}"
+],
+" · <span style='color:#3fa45b'>{0} fertig</span>": [
+" · <span style='color:#3fa45b'>{0} done</span>",
+" · <span style='color:#3fa45b'>{0} terminés</span>",
+" · <span style='color:#3fa45b'>{0} fertig</span>"
+],
+"Gesperrt: Passwort-, TPM- und Lösch-Attribute ändert das Tool nie. Ein Fehler dort kann den Server aussperren oder Daten kosten.": [
+"Locked: the tool never changes password, TPM and erase attributes. A mistake there can lock you out of the server or cost data.",
+"Verrouillé : l'outil ne modifie jamais les attributs de mot de passe, TPM et effacement. Une erreur peut bloquer l'accès au serveur ou coûter des données.",
+"Gsperrt: Passwort-, TPM- und Lösch-Attribut änderet s Tool nie. En Fähler det cha de Server uussperre oder Date choschte."
+],
+"Netz- oder Broadcast-Adresse": [
+"Network or broadcast address",
+"Adresse de réseau ou de diffusion",
+"Netz- oder Broadcast-Adrässe"
+],
+"Auf dieser Karte antwortet bereits ein DHCP-Server ({0}). Ein zweiter würde dort alle Geräte stören, deshalb wird hier keiner gestartet.": [
+"A DHCP server already answers on this card ({0}). A second one would disrupt all devices there, so none is started here.",
+"Un serveur DHCP répond déjà sur cette carte ({0}). Un second y perturberait tous les appareils ; aucun n'est donc démarré ici.",
+"Uf dere Charte antwortet scho en DHCP-Server ({0}). En zweite würd det alli Grät störe, drum wird da kein gstartet."
+],
+"siehe Protokoll": [
+"see log",
+"voir le journal",
+"lueg im Protokoll"
+],
+", {0} fertige übersprungen": [
+", {0} done ones skipped",
+", {0} terminés ignorés",
+", {0} fertigi überspronge"
+],
+"  OK      {0}": [
+"  OK      {0}",
+"  OK      {0}",
+"  OK      {0}"
+],
+"Paket verworfen: {0}": [
+"Packet discarded: {0}",
+"Paquet rejeté : {0}",
+"Paket verworfe: {0}"
+],
+"Fertig umgestellt, wird beim nächsten Start übersprungen.\nSoll das Gerät noch einmal bearbeitet werden: Zeile markieren und „Erneut bearbeiten“ klicken.": [
+"Reconfigured; skipped at the next start.\nTo process the device again: select the row and click “Process again”.",
+"Reconfiguré ; ignoré au prochain démarrage.\nPour retraiter l'appareil : sélectionner la ligne et cliquer sur « Traiter à nouveau ».",
+"Fertig umgstellt, wird bim nächschte Start überspronge.\nSöll s Grät nomal bearbeitet wärde: Ziile markiere und „Nomal bearbeite“ klicke."
+],
+"dnsmasq ist nicht installiert:\n\nsudo pacman -S dnsmasq": [
+"dnsmasq is not installed:\n\nsudo pacman -S dnsmasq",
+"dnsmasq n'est pas installé :\n\nsudo pacman -S dnsmasq",
+"dnsmasq isch nöd installiert:\n\nsudo pacman -S dnsmasq"
+],
+"Pflichtfeld, noch leer.": [
+"Required field, still empty.",
+"Champ obligatoire, encore vide.",
+"Pflichtfäld, no läär."
+],
+"Adressbereich: ": [
+"Address range: ",
+"Plage d'adresses : ",
+"Adrässberiich: "
+],
+"pkexec (polkit) fehlt, damit kann der DHCP-Server nicht mit Root-Rechten starten.": [
+"pkexec (polkit) is missing, so the DHCP server cannot start with root rights.",
+"pkexec (polkit) est absent ; le serveur DHCP ne peut donc pas démarrer avec les droits root.",
+"pkexec (polkit) fählt, drum cha de DHCP-Server nöd mit Root-Rächt starte."
+],
+"z. B. 10.20.0.1": [
+"e.g. 10.20.0.1",
+"p. ex. 10.20.0.1",
+"z. B. 10.20.0.1"
+],
+"Passwort wiederholen": [
+"Repeat password",
+"Répéter le mot de passe",
+"Passwort nomal"
+],
+"Das Passwort zur Sicherheit ein zweites Mal eingeben.\nStimmen die beiden Eingaben nicht überein, startet kein Lauf.": [
+"Enter the password a second time to be safe.\nIf the two entries differ, no run starts.",
+"Saisir le mot de passe une seconde fois par sécurité.\nSi les deux saisies diffèrent, rien ne démarre.",
+"S Passwort zur Sicherheit es zweits Mal iitippe.\nStimmed di beide Iigabe nöd überii, startet kein Luuf."
+],
+"Neues Passwort: Die beiden Eingaben stimmen nicht überein.": [
+"New password: the two entries do not match.",
+"Nouveau mot de passe : les deux saisies ne correspondent pas.",
+"Neus Passwort: Di beide Iigabe stimmed nöd überii."
+],
+"Protokoll speichern …": [
+"Save log …",
+"Enregistrer le journal …",
+"Protokoll speichere …"
+],
+"Protokoll speichern": [
+"Save log",
+"Enregistrer le journal",
+"Protokoll speichere"
+],
+"Speichert das Protokoll als Textdatei, z. B. für die Dokumentation.\nPasswörter stehen nicht darin.": [
+"Saves the log as a text file, e.g. for documentation.\nIt contains no passwords.",
+"Enregistre le journal dans un fichier texte, p. ex. pour la documentation.\nIl ne contient aucun mot de passe.",
+"Speicheret s Protokoll als Textdatei, z. B. für d Dokumentation.\nPasswörter stönd keini dine."
+],
+"Das Protokoll ist noch leer.": [
+"The log is still empty.",
+"Le journal est encore vide.",
+"S Protokoll isch no läär."
+],
+"Text (*.log *.txt);;Alle Dateien (*)": [
+"Text (*.log *.txt);;All files (*)",
+"Texte (*.log *.txt);;Tous les fichiers (*)",
+"Text (*.log *.txt);;Alli Dateie (*)"
+],
+"Protokoll gespeichert in {0}": [
+"Log saved to {0}",
+"Journal enregistré dans {0}",
+"Protokoll gspeicheret i {0}"
+],
+"Zeigt, was vor dem Start noch auszufüllen ist. Die betroffenen Felder sind\ngelb (fehlt noch) oder rot (fehlerhaft) markiert.": [
+"Shows what still has to be filled in before starting. The fields concerned are\nmarked yellow (still missing) or red (wrong).",
+"Indique ce qu'il reste à remplir avant de démarrer. Les champs concernés sont\nmarqués en jaune (manquant) ou en rouge (erroné).",
+"Zeiget, was vor em Start no uuszfülle isch. Di betroffene Fälder sind\ngäl (fählt no) oder rot (fählerhaft) markiert."
+],
+"fehlt noch": [
+"still missing",
+"manquant",
+"fählt no"
+],
+"fehlerhaft": [
+"wrong",
+"erroné",
+"fählerhaft"
+],
+"fertig": [
+"done",
+"terminé",
+"fertig"
+],
+"Neuer Administrator: Benutzer": [
+"New administrator: user",
+"Nouvel administrateur : utilisateur",
+"Neue Administrator: Benutzer"
+],
+"Neuer Administrator: Passwort": [
+"New administrator: password",
+"Nouvel administrateur : mot de passe",
+"Neue Administrator: Passwort"
+],
+"mindestens ein Server in der Liste": [
+"at least one server in the list",
+"au moins un serveur dans la liste",
+"mindeschtens ein Server i de Lischte"
+],
+"{0} leere Pflichtfelder in der Serverliste": [
+"{0} empty required fields in the server list",
+"{0} champs obligatoires vides dans la liste des serveurs",
+"{0} lääri Pflichtfälder i de Serverlischte"
+],
+"{0} fehlerhafte Felder in der Serverliste": [
+"{0} wrong fields in the server list",
+"{0} champs erronés dans la liste des serveurs",
+"{0} fählerhafti Fälder i de Serverlischte"
+],
+"Es fehlt noch:": [
+"Still missing:",
+"Il manque encore :",
+"Es fählt no:"
+],
+"Alle Server der Liste sind fertig.": [
+"All servers in the list are done.",
+"Tous les serveurs de la liste sont terminés.",
+"Alli Server sind fertig. Ziit für es Kafi."
+],
+"Alles ausgefüllt. Jetzt den Trockenlauf starten.": [
+"Everything is filled in. Now start the dry run.",
+"Tout est rempli. Lancer maintenant la simulation.",
+"Alles uusgfüllt, suuber. Jetzt de Trocheluuf starte."
+],
+"Alles ausgefüllt. Der nächste Start stellt die Geräte wirklich um.": [
+"Everything is filled in. The next start really reconfigures the devices.",
+"Tout est rempli. Le prochain démarrage reconfigure réellement les appareils.",
+"Alles uusgfüllt. Jetzt gilt's ernscht: De nächscht Start stellt d Grät würkli um."
+],
+"Trockenlauf starten": [
+"Start dry run",
+"Lancer la simulation",
+"Trocheluuf starte"
+],
+"Scharf starten": [
+"Start live run",
+"Lancer l'exécution réelle",
+"Scharf starte"
+],
+"Trockenlauf für alle Server der Liste": [
+"Dry run for all servers in the list",
+"Simulation pour tous les serveurs de la liste",
+"Trocheluuf für alli Server vo de Lischte"
+],
+"Scharf auf allen Servern der Liste setzen": [
+"Set for real on all servers in the list",
+"Appliquer réellement à tous les serveurs de la liste",
+"Scharf uf allne Server vo de Lischte setze"
+],
+"  FEHLER: Die Verbindung brach ab, aber das Gerät antwortet weiter unter der alten Adresse. Netzwerk nicht umgestellt.": [
+"  ERROR: the connection dropped, but the device still answers on the old address. Network not changed.",
+"  ERREUR : la connexion a été coupée, mais l'appareil répond toujours à l'ancienne adresse. Réseau non modifié.",
+"  FÄHLER: D Verbindig isch abgrisse, aber s Grät antwortet wiiter under de alte Adrässe. Netzwerk nöd umgstellt."
+]
+}
+
+HELP = {
+"de": "<h2>BMC-Steward</h2>\n<p>Der BMC-Steward bedient jeden Server der Reihe nach: Er legt den neuen Administrator an, setzt den\nHostnamen und stellt den BMC auf eine feste Adresse um. Die Server müssen nicht alle auf einmal\neingetragen werden, sie können nach und nach dazukommen.</p>\n\n<h2>Schutz vor Fehlbedienung</h2>\n<p>Das Tool ist so gebaut, dass ein Fehlgriff möglichst nichts kaputt macht:</p>\n<ul>\n<li><b>Trockenlauf ist voreingestellt.</b> Solange der Haken gesetzt ist, wird nichts geändert.</li>\n<li><b>Jeder scharfe Lauf wird vorher gezeigt</b> (alte IP → neue IP, Hostname). In allen Abfragen ist\n    „Abbrechen“ vorausgewählt, Enter bricht also ab.</li>\n<li><b>Ungewöhnliche Fälle verlangen das Eintippen der Server-Anzahl</b>, z. B. wenn ein Gerät nicht im\n    eigenen Staging-Netz liegt, und immer bei UEFI-Änderungen.</li>\n<li><b>Adressen werden geprüft:</b> doppelte IPs oder Hostnamen, Gateway außerhalb des Netzes, eine\n    Adresse dieses Rechners, eine Adresse aus dem laufenden DHCP-Bereich und die aktuelle IP eines\n    anderen Geräts werden abgelehnt. Vor dem Umstellen prüft das Tool außerdem, ob unter der neuen IP\n    schon ein Gerät antwortet, und lässt das Gerät dann unverändert.</li>\n<li><b>Dell:</b> Ein schon belegter User-Slot wird nie überschrieben.</li>\n<li><b>Das neue Passwort wird zweimal eingegeben.</b> Stimmen die Eingaben nicht überein, startet kein\n    Lauf.</li>\n<li><b>Der Adresswechsel wird geprüft:</b> Reißt beim Umstellen nur die Verbindung ab, gilt ein Gerät\n    erst als fertig, wenn es unter der alten Adresse wirklich nicht mehr antwortet.</li>\n<li><b>DHCP-Server:</b> startet nicht auf einer Karte mit öffentlicher Adresse, mit der Standardroute\n    (Internet/Firmennetz), mit einer per DHCP bezogenen Adresse oder wenn dort schon ein DHCP-Server\n    antwortet. Er stoppt von selbst, wenn die Karte später zur Standardroute wird. Geräte, die ihre\n    Adresse von einem anderen Server haben, werden nie abgewiesen. Ein nach einem Absturz\n    übrig gebliebener DHCP-Server wird beim nächsten Start beendet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribute sind gesperrt. Werte, die nicht zum Typ passen,\n    werden nicht gesetzt. Ein Neustart ist nicht vorausgewählt.</li>\n<li><b>Passwörter</b> bleiben im Arbeitsspeicher und landen nur auf ausdrücklichen Wunsch in einer\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Reiter 1): Die Netzwerkkarte am getrennten Staging-Switch braucht eine feste\n    Adresse ohne Gateway. DHCP starten, die Geräte holen sich eine Adresse und erscheinen in der Liste,\n    von dort „In Serverliste übernehmen“. Unter Linux läuft dafür dnsmasq, unter Windows ein\n    eingebauter Server.</li>\n<li><b>Serverliste</b> (Reiter 2): neue IP, Subnetzmaske, Gateway und Hostname eintragen. Was noch fehlt,\n    ist <b>gelb</b> markiert, Fehlerhaftes <b>rot</b>, Fertiges <b>grün</b>. Über dem Start-Knopf steht in\n    einer Zeile, was vor dem Lauf noch auszufüllen ist; der Grund zu jedem Feld steht im Tooltip.</li>\n<li><b>Trockenlauf</b>: zeigt im Protokoll, was gesendet würde.</li>\n<li><b>Scharfer Lauf</b>: Haken bei „Trockenlauf“ entfernen. Der Start-Knopf wird rot und heißt dann\n    „Scharf starten“. Klicken und die Abfrage bestätigen.</li>\n<li><b>Kontrolle</b>: Am Ende prüft das Tool, ob jede neue Adresse mit dem neuen Benutzer antwortet. Das\n    klappt nur, wenn dieser Rechner das neue Netz erreicht; sonst steht dort „FEHLT“, obwohl die\n    Umstellung geklappt haben kann.</li>\n</ol>\n\n<h2>Server nacheinander konfigurieren</h2>\n<ul>\n<li>Man kann einen Server konfigurieren, Start drücken, den nächsten anschließen und wieder Start\n    drücken, beliebig oft. Der DHCP-Server läuft dabei weiter.</li>\n<li>Erfolgreich umgestellte Zeilen werden <b>grün</b> markiert, bleiben in der Liste stehen und werden\n    beim nächsten Start übersprungen. Fehlgeschlagene werden erneut versucht.</li>\n<li>Soll ein grünes Gerät noch einmal bearbeitet werden: Zeile markieren, „Erneut bearbeiten“ und die\n    „Aktuelle IP“ auf seine jetzige Adresse setzen.</li>\n<li>Der Trockenlauf markiert nie etwas als fertig.</li>\n<li>„Liste speichern“ schreibt die grüne Markierung mit in die Datei (Spalte „fertig“), nach\n    „Liste laden“ sind die Zeilen wieder grün. So lässt sich ein Rollout auch an einem anderen Tag\n    fortsetzen.</li>\n</ul>\n\n<h2>Profile</h2>\n<ul>\n<li>Ein Profil merkt sich die Einstellungen der Maske: Hersteller, Werksbenutzer, neuen Administrator,\n    User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen. Passwörter und die Serverliste\n    gehören nie dazu.</li>\n<li>Die Profile liegen in <code>bmc-profile.json</code> neben dem Tool; beim Start werden das zuletzt\n    genutzte Profil und die zuletzt gewählte Sprache geladen.</li>\n</ul>\n\n<h2>UEFI-Einstellungen (Reiter 3)</h2>\n<ul>\n<li>UEFI-Attribute unterscheiden sich je Modell. Das Tool liest deshalb die tatsächlich vorhandenen\n    Attribute von einem <b>Referenzgerät</b>, statt sie zu raten. Lesen ändert nichts.</li>\n<li><b>Ändern:</b> bei den gewünschten Zeilen „Neuer Wert“ ausfüllen, die Suche grenzt die Liste ein.\n    Leere Felder bleiben unverändert. Graue Zeilen (Passwörter, TPM, Löschfunktionen) sind gesperrt.</li>\n<li><b>Anwenden:</b> „Auf allen Servern der Liste setzen“ nutzt die Serverliste aus Reiter 2; grüne\n    Zeilen werden unter ihrer neuen IP angesprochen. Jedes Gerät bekommt nur Attribute, die es auch\n    hat. Werte, die schon stimmen, werden übersprungen.</li>\n<li><b>Neustart:</b> UEFI-Werte wirken erst nach einem Neustart. Mit dem Haken „Danach hart neu\n    starten“ wird ein laufender Server hart neu gestartet (wie mit der Reset-Taste), ein\n    ausgeschalteter eingeschaltet. Nur bei Servern ohne laufendes Betriebssystem verwenden.</li>\n<li><b>UEFI-Vorlagen</b> merken sich Hersteller und „Neuer Wert“-Felder und liegen getrennt in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Hersteller im Vergleich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Auszug)</td><td>individuell,\n    Anhänger am Gerät</td><td>individuell auf dem Aufkleber, alte Boards ADMIN</td><td>individuell,\n    Anhänger am Gerät</td></tr>\n<tr><td><b>Neuer Benutzer</b></td><td>in den User-Slot, nur wenn frei</td><td>neu angelegt</td>\n    <td>neu angelegt</td><td>neu angelegt</td></tr>\n<tr><td><b>Adresswechsel</b></td><td>sofort</td><td>nach iLO-Neustart (löst das Tool aus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunden</td><td>1 bis 3 Minuten</td><td>Sekunden</td>\n    <td>Sekunden</td></tr>\n</table>\n<p>Bleibt „Benutzer“ beim aktuellen Login leer, wird je Hersteller der Werksbenutzer verwendet; so gehen\nauch gemischte Listen. „Automatisch erkennen“ ermittelt den Hersteller pro Gerät, eine feste Wahl gilt\nfür alle Zeilen.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 ist root). Ist der Slot von einem anderen Benutzer belegt,\n    bricht das Tool für dieses Gerät ab und ändert nichts.</li>\n<li><b>Hostname:</b> gesetzt wird der DNS-Name des iDRAC, nicht der des Betriebssystems.</li>\n<li><b>Auslieferung:</b> je nach Bestellung DHCP oder feste Adresse 192.168.0.120. Mit fester Adresse\n    erscheint der iDRAC nicht in der DHCP-Liste; mehrere solche Geräte am selben Switch kollidieren,\n    dann einzeln anschließen.</li>\n<li><b>Generationen:</b> ausgelegt auf iDRAC9 (14. bis 16. Generation). iDRAC10 zuerst an einem Gerät\n    testen.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile in die Spalte „Passwort“ eintragen.</li>\n<li><b>Zuordnung:</b> in der DHCP-Liste meldet sich ein iLO meist als „ILO“ plus Seriennummer.</li>\n<li><b>Neustart:</b> Hostname und Adresse werden erst nach dem iLO-Neustart aktiv; der Server selbst\n    läuft weiter.</li>\n<li><b>Port:</b> konfiguriert wird der dedizierte iLO-Port. Neue Passwörter brauchen mindestens 8\n    Zeichen.</li>\n<li><b>Generationen:</b> iLO 5 und 6 (Gen10 bis Gen11). iLO 7 ist nicht geprüft.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Aufkleber, je Zeile eintragen.</li>\n<li><b>Zugriffsarten:</b> das Tool vergibt Web, IPMI und Konsole mit. Steht im Protokoll „ohne\n    Zugriffsarten angelegt“, die Web-Anmeldung einmal prüfen.</li>\n<li><b>Lizenz:</b> bei älteren Boards können Redfish-Funktionen eine Lizenz brauchen.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erkannt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile eintragen.</li>\n<li><b>Werksbenutzer:</b> USERID in Großbuchstaben.</li>\n<li><b>Port:</b> konfiguriert wird die Schnittstelle „NIC“, der dedizierte XCC-Port.</li>\n<li><b>Generationen:</b> XCC2/XCC3. XCC1 zuerst an einem Gerät testen.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>Das Tool setzt nur BMC-Adresse und BMC-Benutzer, nicht Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> der Cluster-Erstellung so umstellen. Bei einem laufenden Cluster das\n    Nutanix-Verfahren nutzen, weil der Cluster die BMC-Daten selbst verwendet.</li>\n</ul>\n\n<h2>Wenn etwas nicht klappt</h2>\n<ul>\n<li><b>DHCP startet nicht:</b> Die Meldung nennt den Grund. Meist hat die Karte ein Gateway oder ihre\n    Adresse per DHCP. Unter Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;karte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Keine Geräte in der DHCP-Liste:</b> Firewall (Linux mit ufw: UDP 67 freigeben; Windows: die\n    Firewall-Abfrage zulassen) oder der BMC steht nicht auf DHCP.</li>\n<li><b>Port 67 belegt (Windows):</b> meist Internetverbindungsfreigabe oder mobiler Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Feld „Benutzer“ leeren, Passwort der Zeile\n    prüfen.</li>\n<li><b>Hersteller nicht erkannt:</b> Das Gerät antwortet nicht per Redfish.</li>\n<li><b>Benutzer abgelehnt:</b> meist Passwortregeln. Die Meldung des BMC steht unter der\n    Fehlerzeile.</li>\n<li><b>„neue IP ist schon vergeben“:</b> Unter der Adresse antwortet bereits ein Gerät. Andere Adresse\n    wählen.</li>\n<li><b>Liste aus Excel oder einem anderen Tool:</b> Ohne Spalte „fertig“ sind alle Zeilen offen. Schon\n    umgestellte Geräte sind unter der alten Adresse nicht erreichbar, diese Zeilen entfernen oder\n    anpassen.</li>\n</ul>\n\n<h2>Daten und Grenzen</h2>\n<ul>\n<li>Das Tool speichert nichts von selbst. „Liste speichern“ fragt, ob Passwörter mit in die Datei\n    sollen (dann im Klartext). Eine solche Datei nach dem Rollout löschen.</li>\n<li>Die Abläufe für HPE, Supermicro, Lenovo und UEFI sowie der Windows-DHCP-Server sind bisher nur gegen\n    simulierte Gegenstellen geprüft. Vor einem großen Lauf immer zuerst ein einzelnes Gerät\n    konfigurieren.</li>\n<li>„Protokoll speichern“ schreibt das Protokoll des letzten Laufs in eine Textdatei, z. B. für die\n    Dokumentation. Passwörter stehen nicht darin.</li>\n<li>Die Sprache lässt sich oben rechts umstellen, solange kein Lauf aktiv ist und der DHCP-Server\n    gestoppt ist.</li>\n</ul>\n",
+"en": "<h2>BMC-Steward</h2>\n<p>BMC-Steward serves one server after another: it creates the new administrator, sets the hostname and\nswitches the BMC to a static address. You don't have to enter all servers at once; they can be added\none by one.</p>\n\n<h2>Protection against mistakes</h2>\n<p>The tool is built so that a slip does as little damage as possible:</p>\n<ul>\n<li><b>Dry run is the default.</b> As long as it is ticked, nothing is changed.</li>\n<li><b>Every live run is shown first</b> (old IP → new IP, hostname). “Cancel” is preselected in every\n    prompt, so pressing Enter cancels.</li>\n<li><b>Unusual cases require typing the number of servers</b>, e.g. when a device is not in the\n    computer's own staging network, and always for UEFI changes.</li>\n<li><b>Addresses are checked:</b> duplicate IPs or hostnames, a gateway outside the network, an address\n    of this computer, an address from the running DHCP range and the current IP of another device are\n    rejected. Before reconfiguring, the tool also checks whether a device already answers on the new IP\n    and, if so, leaves the device unchanged.</li>\n<li><b>Dell:</b> an occupied user slot is never overwritten.</li>\n<li><b>The new password is entered twice.</b> If the entries differ, no run starts.</li>\n<li><b>The address change is verified:</b> if only the connection drops during the change, a device\n    counts as done only once it really no longer answers on the old address.</li>\n<li><b>DHCP server:</b> does not start on a card with a public address, with the default route\n    (internet/company network), with an address obtained via DHCP, or when a DHCP server already\n    answers there. It stops by itself if the card later becomes the default route. Devices that got\n    their address from another server are never refused. A DHCP server left over after a crash is\n    stopped at the next start.</li>\n<li><b>UEFI:</b> password, TPM and erase attributes are locked. Values that don't match the type are\n    not set. A restart is not preselected.</li>\n<li><b>Passwords</b> stay in memory and only go into a file if you explicitly ask for it.</li>\n</ul>\n\n<h2>Procedure</h2>\n<ol>\n<li><b>DHCP server</b> (tab 1): the network card on the separate staging switch needs a static address\n    without a gateway. Start DHCP; the devices get an address and appear in the list. From there,\n    “Add to server list”. On Linux dnsmasq is used, on Windows a built-in server.</li>\n<li><b>Server list</b> (tab 2): enter new IP, subnet mask, gateway and hostname. Whatever is still\n    missing is marked <b>yellow</b>, wrong entries <b>red</b>, finished ones <b>green</b>. A line above the\n    Start button says what still has to be filled in; the tooltip of each field gives the reason.</li>\n<li><b>Dry run</b>: the log shows what would be sent.</li>\n<li><b>Live run</b>: untick “Dry run”. The Start button turns red and reads “Start live run”. Click it\n    and confirm the prompt.</li>\n<li><b>Check</b>: at the end the tool checks whether each new address answers with the new user. That\n    only works if this computer can reach the new network; otherwise it shows “MISSING” even though\n    the change may have worked.</li>\n</ol>\n\n<h2>Configuring servers one after another</h2>\n<ul>\n<li>You can configure one server, press Start, connect the next one and press Start again, as often as\n    you like. The DHCP server keeps running.</li>\n<li>Successfully reconfigured rows turn <b>green</b>, stay in the list and are skipped at the next\n    start. Failed ones are tried again.</li>\n<li>To process a green device again: select the row, click “Process again” and set “Current IP” to its\n    present address.</li>\n<li>A dry run never marks anything as done.</li>\n<li>“Save list” writes the green mark into the file as well (column “fertig”); after “Load list” the\n    rows are green again. This lets you continue a rollout on another day.</li>\n</ul>\n\n<h2>Profiles</h2>\n<ul>\n<li>A profile remembers the settings of the form: vendor, factory user, new administrator, user slot,\n    defaults for new rows and the DHCP settings. Passwords and the server list are never included.</li>\n<li>Profiles are stored in <code>bmc-profile.json</code> next to the tool; at start-up the last used\n    profile and the last chosen language are loaded.</li>\n</ul>\n\n<h2>UEFI settings (tab 3)</h2>\n<ul>\n<li>UEFI attributes differ per model. The tool therefore reads the attributes that actually exist from\n    a <b>reference device</b> instead of guessing. Reading changes nothing.</li>\n<li><b>Change:</b> fill in “New value” in the rows you want; the search narrows the list. Empty fields\n    stay unchanged. Grey rows (passwords, TPM, erase functions) are locked.</li>\n<li><b>Apply:</b> “Set on all servers in the list” uses the server list from tab 2; green rows are\n    addressed at their new IP. Each device only gets attributes it actually has. Values that are\n    already correct are skipped.</li>\n<li><b>Restart:</b> UEFI values only take effect after a restart. With “Then hard restart” ticked, a\n    running server is hard restarted (like pressing reset) and a powered-off one is switched on. Use\n    only for servers without a running operating system.</li>\n<li><b>UEFI templates</b> remember the vendor and the “New value” fields and are stored separately in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Vendors compared</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Factory user</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Factory password</b></td><td>calvin or individual (service tag sheet)</td><td>individual,\n    tag on the device</td><td>individual on the sticker, old boards ADMIN</td><td>individual, tag on\n    the device</td></tr>\n<tr><td><b>New user</b></td><td>into the user slot, only if free</td><td>created</td><td>created</td>\n    <td>created</td></tr>\n<tr><td><b>Address change</b></td><td>immediate</td><td>after iLO restart (triggered by the tool)</td>\n    <td>immediate</td><td>immediate</td></tr>\n<tr><td><b>Until reachable</b></td><td>seconds</td><td>1 to 3 minutes</td><td>seconds</td>\n    <td>seconds</td></tr>\n</table>\n<p>If “User” in the current login stays empty, the vendor's factory user is used, so mixed lists work.\n“Detect automatically” determines the vendor per device; a fixed choice applies to all rows.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User slot:</b> default 3 (slot 2 is root). If another user occupies the slot, the tool stops for\n    this device and changes nothing.</li>\n<li><b>Hostname:</b> the iDRAC DNS name is set, not the operating system's.</li>\n<li><b>As delivered:</b> DHCP or static 192.168.0.120, depending on the order. With a static address the\n    iDRAC does not appear in the DHCP list; several such devices on one switch collide, so connect\n    them one at a time.</li>\n<li><b>Generations:</b> designed for iDRAC9 (14th to 16th generation). Test iDRAC10 on one device\n    first.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row in the “Password” column.</li>\n<li><b>Identification:</b> in the DHCP list an iLO usually reports as “ILO” plus serial number.</li>\n<li><b>Restart:</b> hostname and address only become active after the iLO restart; the server itself\n    keeps running.</li>\n<li><b>Port:</b> the dedicated iLO port is configured. New passwords need at least 8 characters.</li>\n<li><b>Generations:</b> iLO 5 and 6 (Gen10 to Gen11). iLO 7 is untested.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Password per device:</b> on the sticker; enter it per row.</li>\n<li><b>Access types:</b> the tool also grants web, IPMI and console. If the log says “created without\n    access types”, check the web login once.</li>\n<li><b>Licence:</b> on older boards some Redfish functions may need a licence.</li>\n<li><b>Nutanix NX</b> is detected as Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row.</li>\n<li><b>Factory user:</b> USERID in capitals.</li>\n<li><b>Port:</b> the “NIC” interface, i.e. the dedicated XCC port, is configured.</li>\n<li><b>Generations:</b> XCC2/XCC3. Test XCC1 on one device first.</li>\n</ul>\n\n<h2>Nutanix nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>The tool only sets the BMC address and BMC user, not the hypervisor or CVM.</li>\n<li>Only change these <b>before</b> creating the cluster. On a running cluster use the Nutanix\n    procedure, because the cluster uses the BMC data itself.</li>\n</ul>\n\n<h2>Troubleshooting</h2>\n<ul>\n<li><b>DHCP does not start:</b> the message gives the reason. Usually the card has a gateway or got its\n    address via DHCP. On Linux, for example:\n    <code>nmcli con add type ethernet ifname &lt;card&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>No devices in the DHCP list:</b> firewall (Linux with ufw: allow UDP 67; Windows: allow the\n    firewall prompt) or the BMC is not set to DHCP.</li>\n<li><b>Port 67 in use (Windows):</b> usually Internet Connection Sharing or a mobile hotspot.</li>\n<li><b>HTTP 401:</b> wrong user or password. Clear “User”, check the row's password.</li>\n<li><b>Vendor not recognised:</b> the device does not answer via Redfish.</li>\n<li><b>User refused:</b> usually password rules. The BMC's message appears below the error line.</li>\n<li><b>“new IP is already taken”:</b> a device already answers on that address. Choose another one.</li>\n<li><b>List from Excel or another tool:</b> without the “fertig” column all rows are open. Devices\n    already reconfigured cannot be reached at their old address; remove or adjust those rows.</li>\n</ul>\n\n<h2>Data and limits</h2>\n<ul>\n<li>The tool saves nothing on its own. “Save list” asks whether passwords go into the file (then in plain\n    text). Delete such a file after the rollout.</li>\n<li>The HPE, Supermicro, Lenovo and UEFI procedures and the Windows DHCP server have so far only been\n    tested against simulated counterparts. Always configure a single device first before a large\n    run.</li>\n<li>“Save log” writes the log of the last run to a text file, e.g. for documentation. It contains no\n    passwords.</li>\n<li>The language can be changed at the top right while no run is active and the DHCP server is\n    stopped.</li>\n</ul>\n",
+"fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> (onglet 1) : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Sous Linux, dnsmasq est utilisé ;\n    sous Windows, un serveur intégré.</li>\n<li><b>Liste des serveurs</b> (onglet 2) : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Réglages UEFI (onglet 3)</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de l'onglet 2 ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> conçu pour iDRAC9 (14e à 16e génération). Tester d'abord iDRAC10 sur un seul\n    appareil.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11). iLO 7 n'est pas testé.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67 ; Windows :\n    accepter la demande du pare-feu) ou le BMC n'est pas en DHCP.</li>\n<li><b>Port 67 occupé (Windows) :</b> en général le partage de connexion Internet ou un point d'accès\n    mobile.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond pas en Redfish.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE, Supermicro, Lenovo et UEFI ainsi que le serveur DHCP Windows n'ont été testés\n    jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en haut à droite, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n",
+"gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Riiter 1): D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Under Linux lauft defür dnsmasq, under Windows en iibaute Server.</li>\n<li><b>Serverlischte</b> (Riiter 2): neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>UEFI-Iistellige (Riiter 3)</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us em Riiter 2; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> uusgleit uf iDRAC9 (14. bis 16. Generation). iDRAC10 zerscht a eim Grät\n    teste.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11). iLO 7 isch nöd prüeft.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh; Windows: d\n    Firewall-Abfrag zuelaa) oder de BMC staht nöd uf DHCP.</li>\n<li><b>Port 67 bsetzt (Windows):</b> meischtens Internetverbindigsfreigab oder mobile Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet nöd per Redfish.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE, Supermicro, Lenovo und UEFI und de Windows-DHCP-Server sind bis jetzt nur gäge\n    simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer obe rächts umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n"
+}
+
+
+set_language(load_lang())
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    MAIN = Window()
+    MAIN.show()
+    sys.exit(app.exec())
