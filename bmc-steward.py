@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.1"
+__version__ = "1.7.2"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -2487,7 +2487,7 @@ SCAN_HTML = """<!doctype html>
  .seg input{display:none}
  .seg label:has(input:checked){background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
  #wrap{position:relative;margin:0 auto;background:#000;border-radius:8px;overflow:hidden;touch-action:manipulation}
- #v{display:block;width:100%;height:100%}
+ #v{display:block;width:100%;height:100%;object-fit:cover}
  #box{position:absolute;border:2px solid #ffd54a;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none;box-sizing:border-box}
  button,input[type=text]{font:inherit;width:100%;padding:13px;margin-top:10px;border-radius:8px;border:1px solid #556;
   background:#2b3138;color:#eee;box-sizing:border-box}
@@ -2498,7 +2498,7 @@ SCAN_HTML = """<!doctype html>
  #msg{min-height:1.4em;margin-top:10px}
  #ctl{display:flex;gap:10px;align-items:center;margin-top:8px}
  #ctl input[type=range]{flex:1}
- #prev{display:none;max-width:100%;max-height:80px;margin-top:8px;border-radius:6px;border:1px solid #556}
+ #prev{display:none;width:100%;max-height:35vh;object-fit:contain;margin-top:8px;border-radius:6px;border:1px solid #556;background:#000}
  small{color:#9aa}
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
@@ -2535,13 +2535,17 @@ const L=de?{shot:"Aufnehmen",send:"In Passwort-Feld übernehmen",ph:"Passwort",b
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
 $("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;$("tip").textContent=L.tip;
 $("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
-const SIZE={s:[.5,.16],m:[.8,.3],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
+const SIZE={s:[.5,.2],m:[.85,.3],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
- const r=v.videoWidth/v.videoHeight,w=Math.min(innerWidth-24,innerHeight*.5*r);
- $("wrap").style.width=w+"px";$("wrap").style.height=(w/r)+"px";box();
+ const w=innerWidth-24,h=Math.min(innerHeight*.5,w/1.2);
+ $("wrap").style.width=w+"px";$("wrap").style.height=h+"px";box();
+}
+function geo(){
+ const v=$("v"),W=$("wrap").clientWidth,H=$("wrap").clientHeight,s=Math.max(W/v.videoWidth,H/v.videoHeight);
+ return{s:s,ox:(v.videoWidth*s-W)/2,oy:(v.videoHeight*s-H)/2,W:W,H:H};
 }
 function box(){
  const [w,h]=SIZE[pick("c")];cx=Math.min(1-w/2,Math.max(w/2,cx));cy=Math.min(1-h/2,Math.max(h/2,cy));
@@ -2565,8 +2569,11 @@ async function cam(){
 }
 $("shot").onclick=async()=>{
  const v=$("v");if(!v.videoWidth){say(L.nocam,"err");return}
- const [w,h]=SIZE[pick("c")],sw=Math.round(w*v.videoWidth),sh=Math.round(h*v.videoHeight),
-  sx=Math.round((cx-w/2)*v.videoWidth),sy=Math.round((cy-h/2)*v.videoHeight),k=Math.min(1,3200/Math.max(sw,sh)),c=document.createElement("canvas");
+ const [w,h]=SIZE[pick("c")],g=geo(),
+  sw=Math.round(w*g.W/g.s),sh=Math.round(h*g.H/g.s),
+  sx=Math.max(0,Math.min(v.videoWidth-sw,Math.round((g.ox+(cx-w/2)*g.W)/g.s))),
+  sy=Math.max(0,Math.min(v.videoHeight-sh,Math.round((g.oy+(cy-h/2)*g.H)/g.s))),
+  k=Math.min(1,3200/Math.max(sw,sh)),c=document.createElement("canvas");
  c.width=Math.max(1,Math.round(sw*k));c.height=Math.max(1,Math.round(sh*k));
  c.getContext("2d").drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
  say(L.busy);$("res").innerHTML="";
@@ -2611,11 +2618,15 @@ def plausible(text):
 
 
 def tesseract_run(exe, path, psm):
+    """Ein Tesseract-Durchlauf: (Kandidaten, Fehlertext). Der Fehlertext ist leer, wenn Tesseract sauber lief."""
     try:
         r = subprocess.run([exe, path, "stdout", "--psm", psm, "--dpi", "300"], capture_output=True, text=True,
                            timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except subprocess.TimeoutExpired:
+        return [], T("Tesseract brauchte zu lange.")
+    except (OSError, subprocess.SubprocessError) as e:
+        return [], str(e)
+    err = (r.stderr.strip().splitlines() or [""])[-1] if r.returncode else ""
     found = []
     for line in r.stdout.splitlines():
         line = " ".join(line.split())
@@ -2625,7 +2636,7 @@ def tesseract_run(exe, path, psm):
         joined = line.replace(" ", "")      # die Erkennung setzt gern ein Leerzeichen mitten ins Passwort
         if " " in line and len(joined) <= 64 and plausible(joined):
             found.append(joined)
-    return found
+    return found, err
 
 
 def scan_decode(jpeg, mode):
@@ -2661,7 +2672,7 @@ def scan_decode(jpeg, mode):
         if scale > 1:
             gray = gray.scaled(gray.width() * scale, gray.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
                                Qt.TransformationMode.SmoothTransformation)
-        out = []
+        out, errs = [], []
         for inverted, modes in ((False, ("7", "8", "6", "11")), (True, ("7", "6"))):
             if out:
                 break
@@ -2670,11 +2681,16 @@ def scan_decode(jpeg, mode):
             path = os.path.join(d, "ocr-inv.png" if inverted else "ocr.png")
             gray.save(path, "PNG")
             for psm in modes:
-                for t in tesseract_run(exe, path, psm):
+                found, err = tesseract_run(exe, path, psm)
+                if err and err not in errs:
+                    errs.append(err)
+                for t in found:
                     if t not in out and len(t) <= 200:
                         out.append(t)
                 if out:
                     break
+    if not out and errs:
+        return [], T("Tesseract meldet: {0} (Sprachdaten fehlen? sudo pacman -S tesseract-data-eng)").format(errs[0]), info
     # Passwörter haben keine Leerzeichen und viele verschiedene Zeichen; Rauschen wie „EEE TTT“ kommt nach hinten
     out.sort(key=lambda t: (" " in t, -len(set(t.replace(" ", "")))))
     return out[:12], "", info
@@ -5545,6 +5561,16 @@ class Window(ConsoleMixin, QWidget):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Tesseract brauchte zu lange.": [
+"Tesseract took too long.",
+"Tesseract a pris trop de temps.",
+"Tesseract hät z lang bruucht."
+],
+"Tesseract meldet: {0} (Sprachdaten fehlen? sudo pacman -S tesseract-data-eng)": [
+"Tesseract reports: {0} (language data missing? sudo pacman -S tesseract-data-eng)",
+"Tesseract signale : {0} (données de langue manquantes ? sudo pacman -S tesseract-data-eng)",
+"Tesseract meldet: {0} (Sprachdate fähled? sudo pacman -S tesseract-data-eng)"
+],
 "Das Bild konnte nicht gelesen werden.": [
 "The image could not be read.",
 "L'image n'a pas pu être lue.",
