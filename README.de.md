@@ -22,6 +22,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 - Server lassen sich einzeln nacheinander konfigurieren; fertige Zeilen werden grün und übersprungen
 - Optional UEFI/BIOS-Einstellungen, gelesen von einem echten Referenzgerät
 - Optionale Verwaltungsdienste für die ganze Liste: NTP, Syslog, LDAP/AD mit Gruppen-Rollen-Zuordnung, HTTPS-Zertifikat-Import
+- UEFI-Konsole (Reiter 5): zeigt das UEFI/BIOS eines Servers über den BMC, als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser; an echter Hardware noch ungetestet
 - Oberfläche in Deutsch, Englisch, Französisch und Schweizerdeutsch
 
 ## Schutz vor Fehlbedienung
@@ -41,6 +42,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 - Python 3.9 oder neuer
 - PyQt6
 - Nur Linux: `dnsmasq` und polkit (`pkexec`) für den DHCP-Server
+- Optional für die UEFI-Konsole: PyQt6-WebEngine (eingebettete Konsole), `pyte` + `ipmitool` + `sshpass` (Textkonsole, nur Linux)
 
 ## Installieren und starten
 
@@ -76,7 +78,7 @@ python bmc-steward.py
 4. Trockenlauf starten und das Protokoll lesen.
 5. Haken bei „Trockenlauf“ entfernen, scharf starten und bestätigen.
 
-Die eingebaute Hilfe (Reiter 4) erklärt jeden Schritt und die Unterschiede zwischen den Herstellern.
+Die eingebaute Hilfe (Reiter 6) erklärt jeden Schritt und die Unterschiede zwischen den Herstellern.
 
 ## CSV-Format
 

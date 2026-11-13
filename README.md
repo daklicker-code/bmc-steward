@@ -21,6 +21,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 - Servers can be configured one by one; finished rows turn green and are skipped
 - Optional UEFI/BIOS settings, read from a real reference device
 - Optional management services across the list: NTP, syslog, LDAP/AD with group-to-role mapping, HTTPS certificate import
+- UEFI console (tab 5): shows a server's UEFI/BIOS through the BMC, as embedded HTML5 console, text console (SOL/SSH) or in the default browser; untested on real hardware
 - Interface in German, English, French and Swiss German
 
 ## Built to forgive mistakes
@@ -39,6 +40,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 - Python 3.9 or newer
 - PyQt6
 - Linux only: `dnsmasq` and polkit (`pkexec`) for the DHCP server
+- Optional, for the UEFI console: PyQt6-WebEngine (embedded console), `pyte` + `ipmitool` + `sshpass` (text console, Linux only)
 
 ## Install and run
 
@@ -74,7 +76,7 @@ python bmc-steward.py
 4. Start a dry run and read the log.
 5. Untick "Dry run", start the live run and confirm.
 
-The built-in help (tab 4) explains every step and the differences between the vendors.
+The built-in help (tab 6) explains every step and the differences between the vendors.
 
 ## CSV format
 

@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -1499,7 +1499,812 @@ class DhcpThread(QThread):
 
 
 
-class Window(QWidget):
+# ======================================================================================================
+#  UEFI-Konsole: zeigt das UEFI/BIOS eines Servers über den BMC an, bedienbar wie am Original.
+#  Drei Wege: eingebettete HTML5-Konsole des BMC (Bild, Maus, Tastatur), Textkonsole über
+#  Serial-over-LAN bzw. SSH und Öffnen im Standardbrowser. Es wird nichts gespeichert.
+# ======================================================================================================
+try:                                    # optional; muss vor dem QApplication importiert werden
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    WEBENGINE = True
+except ImportError:
+    WEBENGINE = False
+try:
+    import pyte
+except ImportError:
+    pyte = None
+
+import codecs
+
+from PyQt6.QtCore import QEvent, QRect, QSocketNotifier, QUrl
+from PyQt6.QtWidgets import QStackedWidget
+from PyQt6.QtGui import QDesktopServices, QFont, QFontMetrics, QPainter
+
+# Pfad der HTML5-Konsole je Hersteller (nach der Anmeldung); Lenovo: Startseite, dort „Remote Console“
+CONSOLE_PATH = {"dell": "/console", "hpe": "/irc.html", "hpe_old": "/irc.html",
+                "smc": "/cgi/url_redirect.cgi?url_name=man_ikvm_html5_bootstrap", "lenovo": "/"}
+# Befehl, mit dem man sich per SSH auf die serielle Konsole des BMC schaltet
+SSH_SOL_CMD = {"dell": "console com2", "hpe": "vsp", "hpe_old": "vsp", "lenovo": "console 1"}
+TERM_SIZES = [("80 × 24", 80, 24), ("80 × 25", 80, 25), ("100 × 31", 100, 31), ("132 × 43", 132, 43)]
+
+AUTOLOGIN_JS = """
+(function (u, p) {
+  function vis(e) { return e && e.offsetParent !== null && !e.disabled; }
+  function setv(e, v) {
+    var d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    d.set.call(e, v);
+    e.dispatchEvent(new Event('input', {bubbles: true}));
+    e.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+  var all = [].slice.call(document.querySelectorAll('input'));
+  var pw = all.filter(function (e) { return e.type === 'password' && vis(e); })[0];
+  if (!pw) return 'wait';
+  var us = all.filter(function (e) { return vis(e) && /^(text|email|)$/.test(e.type) &&
+           (e.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING); });
+  var user = us[us.length - 1];
+  if (!user) return 'wait';
+  setv(user, u); setv(pw, p);
+  var scope = pw.form || document;
+  var btns = [].slice.call(scope.querySelectorAll('button, input[type=submit], input[type=button], a.btn'));
+  var go = btns.filter(function (b) { return vis(b) && b.type !== 'reset' &&
+           /log ?in|sign ?in|anmeld|submit|ok|connexion|login/i.test((b.innerText || b.value || b.id || '')); })[0] ||
+           btns.filter(vis)[0];
+  if (go) go.click(); else if (pw.form) pw.form.submit();
+  return 'done';
+})(%s, %s)
+"""
+
+
+def tls_blocks_chromium(mode):
+    """Chromium (QtWebEngine) spricht kein TLS 1.0/1.1; alte BMCs gehen dort nicht."""
+    return mode in ("old", "oldest")
+
+
+class ConsoleProbeThread(QThread):
+    """Ermittelt Hersteller und TLS-Stufe des BMC (nur Verbindungsaufbau und Redfish-Wurzel, ohne Anmeldung)."""
+    done = pyqtSignal(str, str)         # Hersteller, TLS-Stufe
+
+    def __init__(self, parent, ip, vendor):
+        super().__init__(parent)
+        self.ip, self.vendor = ip, vendor
+
+    def run(self):
+        try:
+            rc = RedfishClient(dry=False)
+            v = self.vendor or rc.vendor(self.ip)
+            self.done.emit(v, rc.tls_mode(self.ip, 10) or "")
+        except Exception:
+            self.done.emit("offline", "")
+
+
+class BootSetupThread(QThread):
+    """Setzt „beim nächsten Start ins UEFI-Setup“ und startet den Server neu (bzw. schaltet ihn ein)."""
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, parent, ip, user, pw, vendor):
+        super().__init__(parent)
+        self.ip, self.user, self.pw, self.vendor = ip, user, pw, vendor
+
+    def run(self):
+        try:
+            rc = RedfishClient(dry=False)
+            v = self.vendor or rc.vendor(self.ip)
+            if v not in ("dell", "hpe", "smc", "lenovo"):
+                self.done.emit(False, T("Dieser Hersteller bzw. diese Generation kann das nicht per Redfish. "
+                                        "Bitte im UEFI-Bild F2/F9/Entf selbst drücken."))
+                return
+            user = self.user or rc.DEFAULT_USER[v]
+            path = rc.sys_path(v)
+            code = rc.api(self.ip, user, self.pw, "PATCH", path,
+                          {"Boot": {"BootSourceOverrideTarget": "BiosSetup", "BootSourceOverrideEnabled": "Once"}})
+            if not rc.ok(code):
+                self.done.emit(False, "\n".join(rc.fail_lines(T("Start ins UEFI-Setup vormerken"), code)))
+                return
+            state = rc.power_state(self.ip, user, self.pw, v)
+            action = "On" if state == "Off" else "ForceRestart"
+            code = rc.api(self.ip, user, self.pw, "POST", f"{path}/Actions/ComputerSystem.Reset",
+                          {"ResetType": action})
+            if not rc.ok(code):
+                self.done.emit(False, "\n".join(rc.fail_lines(T("Neustart auslösen"), code)))
+                return
+            self.done.emit(True, T("Vorgemerkt, Server startet neu und landet im UEFI-Setup. "
+                                   "Das Bild erscheint nach etwa ein bis zwei Minuten."))
+        except Exception as e:
+            self.done.emit(False, T('Unerwarteter Fehler: {0!r}').format(e))
+
+
+# ---------------------------------------------------------------------------------------- Textkonsole
+KEYMAP_ENUM = {
+    Qt.Key.Key_Up: b"\x1b[A", Qt.Key.Key_Down: b"\x1b[B", Qt.Key.Key_Right: b"\x1b[C", Qt.Key.Key_Left: b"\x1b[D",
+    Qt.Key.Key_Home: b"\x1b[H", Qt.Key.Key_End: b"\x1b[F", Qt.Key.Key_PageUp: b"\x1b[5~",
+    Qt.Key.Key_PageDown: b"\x1b[6~", Qt.Key.Key_Insert: b"\x1b[2~", Qt.Key.Key_Delete: b"\x1b[3~",
+    Qt.Key.Key_Return: b"\r", Qt.Key.Key_Enter: b"\r", Qt.Key.Key_Backspace: b"\x08", Qt.Key.Key_Tab: b"\t",
+    Qt.Key.Key_Backtab: b"\x1b[Z", Qt.Key.Key_Escape: b"\x1b",
+    Qt.Key.Key_F1: b"\x1bOP", Qt.Key.Key_F2: b"\x1bOQ", Qt.Key.Key_F3: b"\x1bOR", Qt.Key.Key_F4: b"\x1bOS",
+    Qt.Key.Key_F5: b"\x1b[15~", Qt.Key.Key_F6: b"\x1b[17~", Qt.Key.Key_F7: b"\x1b[18~", Qt.Key.Key_F8: b"\x1b[19~",
+    Qt.Key.Key_F9: b"\x1b[20~", Qt.Key.Key_F10: b"\x1b[21~", Qt.Key.Key_F11: b"\x1b[23~",
+    Qt.Key.Key_F12: b"\x1b[24~",
+}
+KEYMAP = {k.value: v for k, v in KEYMAP_ENUM.items()}
+ANSI_COLORS = {"black": "#000000", "red": "#cd0000", "green": "#00cd00", "brown": "#cdcd00", "blue": "#3050ff",
+               "magenta": "#cd00cd", "cyan": "#00cdcd", "white": "#e5e5e5", "brightblack": "#7f7f7f",
+               "brightred": "#ff3030", "brightgreen": "#30ff30", "brightbrown": "#ffff30",
+               "brightblue": "#6080ff", "brightmagenta": "#ff30ff", "brightcyan": "#30ffff",
+               "brightwhite": "#ffffff"}
+
+
+class TermView(QWidget):
+    """Kleines Terminal (VT100/ANSI) auf Basis von pyte. Tasten gehen als Bytes an send(); Bild nur zur Anzeige."""
+    send = pyqtSignal(bytes)
+
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        font.setPointSize(11)
+        self.setFont(font)
+        self.fm = QFontMetrics(font)
+        self.cw, self.ch = self.fm.horizontalAdvance("M"), self.fm.height()
+        self.cp437 = False
+        self.dec = codecs.getincrementaldecoder("utf-8")("replace")
+        self.live = False
+        self.set_size(80, 24)
+
+    def set_size(self, cols, rows):
+        self.cols, self.rows = cols, rows
+        self.screen = pyte.Screen(cols, rows) if pyte else None
+        self.stream = pyte.Stream(self.screen) if pyte else None
+        self.setFixedSize(cols * self.cw + 2, rows * self.ch + 2)
+        self.update()
+
+    def set_encoding(self, cp437):
+        self.cp437 = cp437
+        self.dec = codecs.getincrementaldecoder("cp437" if cp437 else "utf-8")("replace")
+
+    def reset(self):
+        self.set_size(self.cols, self.rows)
+        self.set_encoding(self.cp437)
+
+    def feed(self, data):
+        if self.stream:
+            self.stream.feed(self.dec.decode(data))
+            self.update()
+
+    def _color(self, name, default):
+        if name == "default":
+            return default
+        if name in ANSI_COLORS:
+            return QColor(ANSI_COLORS[name])
+        if re.fullmatch(r"[0-9a-fA-F]{6}", name):
+            return QColor("#" + name)
+        return default
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        bg0, fg0 = QColor("#000000"), QColor("#c8c8c8")
+        p.fillRect(self.rect(), bg0)
+        if not self.screen:
+            return
+        p.setFont(self.font())
+        asc = self.fm.ascent()
+        cur = self.screen.cursor
+        for y in range(self.rows):
+            line = self.screen.buffer[y]
+            for x in range(self.cols):
+                c = line[x]
+                fg, bg = self._color(c.fg, fg0), self._color(c.bg, bg0)
+                if c.reverse:
+                    fg, bg = bg, fg
+                r = QRect(1 + x * self.cw, 1 + y * self.ch, self.cw, self.ch)
+                if bg != bg0:
+                    p.fillRect(r, bg)
+                if c.data.strip():
+                    f = QFont(self.font())
+                    f.setBold(bool(c.bold))
+                    f.setUnderline(bool(c.underscore))
+                    p.setFont(f)
+                    p.setPen(fg)
+                    p.drawText(r.x(), r.y() + asc, c.data)
+        if self.live and not cur.hidden and self.hasFocus():
+            p.fillRect(QRect(1 + cur.x * self.cw, 1 + cur.y * self.ch, self.cw, self.ch), QColor(200, 200, 200, 110))
+        if not self.hasFocus():
+            p.setPen(QColor(120, 120, 120))
+            p.drawRect(0, 0, self.width() - 1, self.height() - 1)
+
+    def focusNextPrevChild(self, _next):
+        return False                    # Tab gehört dem UEFI, nicht der Fokusreihenfolge
+
+    def focusInEvent(self, e):
+        self.update()
+        super().focusInEvent(e)
+
+    def focusOutEvent(self, e):
+        self.update()
+        super().focusOutEvent(e)
+
+    def mousePressEvent(self, e):
+        self.setFocus()
+
+    def event(self, e):
+        if e.type() == QEvent.Type.ShortcutOverride:
+            e.accept()                  # Strg+Buchstabe usw. nicht als Programmkürzel abfangen
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):
+        if not self.live:
+            return
+        key = e.key()
+        if key in KEYMAP:
+            self.send.emit(KEYMAP[key])
+            return
+        mods = e.modifiers()
+        text = e.text()
+        if mods & Qt.KeyboardModifier.ControlModifier and Qt.Key.Key_A.value <= key <= Qt.Key.Key_Z.value:
+            self.send.emit(bytes([key - Qt.Key.Key_A.value + 1]))
+        elif text and text.isprintable():
+            self.send.emit(text.encode("cp437", "replace") if self.cp437 else text.encode("utf-8"))
+
+
+class SerialSession:
+    """Startet ipmitool (SOL) oder ssh (über sshpass) in einem Pseudo-Terminal und füllt eine TermView."""
+
+    def __init__(self, view, on_end):
+        self.view, self.on_end = view, on_end
+        self.proc = self.master = self.notifier = self.timer = None
+        self.deact = None
+
+    @staticmethod
+    def missing(method, vendor):
+        """Fehlende Programme für das Verfahren; leer = alles da."""
+        need = ["ipmitool"] if method == "ipmitool" else ["ssh", "sshpass"]
+        return [n for n in need if not shutil.which(n)]
+
+    def start(self, method, ip, user, pw, vendor):
+        import fcntl
+        import pty
+        import termios
+        host = ip.strip("[]")
+        env = dict(os.environ, TERM="xterm", LANG="C.UTF-8")
+        if method == "ipmitool":
+            argv = ["ipmitool", "-I", "lanplus", "-H", host, "-U", user, "-E", "sol", "activate"]
+            env["IPMI_PASSWORD"] = pw                           # nicht in der Prozessliste sichtbar
+            self.deact = (["ipmitool", "-I", "lanplus", "-H", host, "-U", user, "-E", "sol", "deactivate"], env)
+        else:
+            argv = ["sshpass", "-e", "ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new",
+                    "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no",
+                    "-o", "ConnectTimeout=10"]
+            if vendor == "hpe_old":                             # iLO 3/4 sprechen nur alte SSH-Verfahren
+                argv += ["-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+                         "-o", "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1",
+                         "-o", "Ciphers=+aes128-cbc,aes256-cbc"]
+            argv += [f"{user}@{host}", SSH_SOL_CMD[vendor]]
+            env["SSHPASS"] = pw
+            self.deact = None
+        self.master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", self.view.rows, self.view.cols, 0, 0))
+        self.proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, env=env,
+                                     start_new_session=True, close_fds=True)
+        os.close(slave)
+        self.notifier = QSocketNotifier(self.master, QSocketNotifier.Type.Read)
+        self.notifier.activated.connect(self.readable)
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.poll)
+        self.timer.start(500)
+
+    def readable(self, *_):
+        try:
+            data = os.read(self.master, 65536)
+        except OSError:
+            data = b""
+        if data:
+            self.view.feed(data)
+        else:
+            self.poll()
+
+    def poll(self):
+        if self.proc and self.proc.poll() is not None:
+            self.stop(ended=True)
+
+    def write(self, data):
+        if self.master is not None:
+            try:
+                os.write(self.master, data)
+            except OSError:
+                pass
+
+    def stop(self, ended=False):
+        if self.timer:
+            self.timer.stop()
+        if self.notifier:
+            self.notifier.setEnabled(False)
+        if self.proc and self.proc.poll() is None:
+            if self.deact:                                       # SOL-Sitzung am BMC freigeben
+                try:
+                    subprocess.run(self.deact[0], env=self.deact[1], timeout=6, capture_output=True)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+                self.proc.wait(timeout=3)
+            except (OSError, subprocess.SubprocessError):
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        if self.master is not None:
+            try:
+                os.close(self.master)
+            except OSError:
+                pass
+        code = self.proc.returncode if self.proc else None
+        self.proc = self.master = self.notifier = self.timer = None
+        if ended:
+            self.on_end(code)
+
+
+# ---------------------------------------------------------------------------------------- Web-Konsole
+if WEBENGINE:
+    class BmcPage(QWebEnginePage):
+        """Akzeptiert das selbstsignierte Zertifikat nur des gewählten BMC und leitet Popups in eigene Reiter."""
+
+        def __init__(self, profile, host, popup, parent=None):
+            super().__init__(profile, parent)
+            self.host, self.popup = QUrl(f"https://{host}").host(), popup
+            self.certificateError.connect(self.cert)
+
+        def cert(self, error):
+            if error.url().host() == self.host:
+                error.acceptCertificate()
+            else:
+                error.rejectCertificate()
+
+        def createWindow(self, _type):
+            return self.popup()
+
+
+class ConsoleMixin:
+    """Reiter „UEFI-Konsole“ des Hauptfensters."""
+
+    def build_console(self):
+        self.con_vendor = QComboBox()
+        for text, key in VENDORS:
+            self.con_vendor.addItem(text, key)
+        self.con_ip = QComboBox()
+        self.con_ip.setEditable(True)
+        self.con_ip.setToolTip(T("Adresse des BMC. Vorschläge aus der Serverliste (Reiter 2), es geht aber jede\n"
+                               "erreichbare Adresse."))
+        self.con_ip.activated.connect(self.console_pick_ip)
+        refresh = QPushButton("↻")
+        refresh.setFixedWidth(36)
+        refresh.setToolTip(T("Adressen aus der Serverliste (Reiter 2) neu einlesen"))
+        refresh.clicked.connect(self.console_refresh_ips)
+        iprow = QHBoxLayout()
+        iprow.addWidget(self.con_ip, 1)
+        iprow.addWidget(refresh)
+        self.con_user = QLineEdit()
+        self.con_user.setPlaceholderText(T("automatisch je Hersteller"))
+        self.con_pass = self._pw()
+        self.con_mode = QComboBox()
+        self.con_mode.addItem(T("Bild: Web-Konsole des BMC (eingebettet)"), "web")
+        self.con_mode.addItem(T("Text: serielle Konsole (SOL/SSH)"), "serial")
+        self.con_mode.addItem(T("Bild: im Standardbrowser öffnen"), "browser")
+        self.con_mode.currentIndexChanged.connect(self.console_mode_changed)
+        self.con_method = QComboBox()
+        self.con_method.addItem(T("Automatisch"), "auto")
+        self.con_method.addItem("IPMI-SOL (ipmitool)", "ipmitool")
+        self.con_method.addItem("SSH (sshpass)", "ssh")
+        self.con_term = QComboBox()
+        self.con_term.addItem("UTF-8 / VT-UTF8", False)
+        self.con_term.addItem("ANSI (CP437)", True)
+        self.con_size = QComboBox()
+        for label, c, r in TERM_SIZES:
+            self.con_size.addItem(label, (c, r))
+        self.con_size.currentIndexChanged.connect(self.console_size_changed)
+
+        box = QGroupBox(T("Verbindung"))
+        f = QFormLayout(box)
+        self.tip_row(f, T("Hersteller"), self.con_vendor,
+                     T("Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ ermittelt den Hersteller\n"
+                       "dieses einen Geräts selbst."))
+        f.addRow(T("Adresse"), iprow)
+        self.tip_row(f, T("Benutzer"), self.con_user,
+                     T("Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet."))
+        self.tip_row(f, T("Passwort"), self._with_eye(self.con_pass),
+                     T("Wird nur für diese Verbindung verwendet und nirgends gespeichert."))
+        self.tip_row(f, T("Anzeige"), self.con_mode,
+                     T("Bild: echtes Konsolenbild mit Maus und Tastatur wie am Original (HTML5-Konsole des BMC).\n"
+                       "Text: serielle Umleitung; geht nur, wenn im UEFI „Console Redirection“ aktiv ist.\n"
+                       "Browser: öffnet die BMC-Seite im Standardbrowser, ohne Auto-Anmeldung."))
+        self.con_serial_box = QWidget()
+        sf = QFormLayout(self.con_serial_box)
+        sf.setContentsMargins(0, 0, 0, 0)
+        self.tip_row(sf, T("Verfahren"), self.con_method,
+                     T("Automatisch: Supermicro über ipmitool, Dell/HPE/Lenovo über SSH (sshpass), sonst ipmitool.\n"
+                       "IPMI über LAN muss im BMC aktiviert sein (bei Dell ab Werk aus)."))
+        self.tip_row(sf, T("Terminaltyp"), self.con_term,
+                     T("Muss zur Einstellung „Terminal Type“ im UEFI passen: VT100/VT-UTF8 → UTF-8,\n"
+                       "ANSI → CP437 (Rahmenzeichen)."))
+        self.tip_row(sf, T("Größe"), self.con_size,
+                     T("Zeichen × Zeilen; muss zur Einstellung im UEFI passen (meist 80 × 24 oder 80 × 25)."))
+        f.addRow(self.con_serial_box)
+
+        self.con_connect = QPushButton(T("Verbinden"))
+        self.con_connect.setMinimumHeight(30)
+        self.con_connect.clicked.connect(self.console_connect)
+        self.con_disconnect = QPushButton(T("Trennen"))
+        self.con_disconnect.setEnabled(False)
+        self.con_disconnect.clicked.connect(self.console_disconnect)
+        self.con_start = QPushButton(T("Konsole starten"))
+        self.con_start.setEnabled(False)
+        self.con_start.setToolTip(T("Springt nach der Anmeldung zur Konsolen-Seite des BMC."))
+        self.con_start.clicked.connect(self.console_goto)
+        self.con_setup = QPushButton(T("Ins UEFI-Setup booten …"))
+        self.con_setup.setToolTip(T("Merkt „beim nächsten Start ins UEFI-Setup“ vor und startet den Server hart neu\n"
+                                    "(per Redfish). Nur mit Rückfrage."))
+        self.con_setup.clicked.connect(self.console_boot_setup)
+        self.con_status = QLabel()
+        self.con_status.setWordWrap(True)
+        btns = QHBoxLayout()
+        btns.addWidget(self.con_connect)
+        btns.addWidget(self.con_disconnect)
+        btns.addWidget(self.con_start)
+        btns.addStretch()
+        btns.addWidget(self.con_setup)
+
+        # Tastenleiste für die Textkonsole (F-Tasten fangen Desktop und Fenstermanager manchmal ab)
+        self.con_keys = QWidget()
+        kl = QHBoxLayout(self.con_keys)
+        kl.setContentsMargins(0, 0, 0, 0)
+        kl.addWidget(QLabel(T("Tasten:")))
+        for label, seq in [("Esc", b"\x1b"), ("F1", b"\x1bOP"), ("F2", b"\x1bOQ"), ("F9", b"\x1b[20~"),
+                           ("F10", b"\x1b[21~"), ("F11", b"\x1b[23~"), ("F12", b"\x1b[24~"),
+                           ("Entf", b"\x1b[3~"), ("Esc+1", b"\x1b1"), ("Esc+2", b"\x1b2"), ("Esc+0", b"\x1b0")]:
+            b = QPushButton(label)
+            b.setFixedWidth(52)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.clicked.connect(lambda _=False, s=seq: self.console_send(s))
+            kl.addWidget(b)
+        kl.addStretch()
+        self.con_keys.setToolTip(T("Sendet die Taste an den Server. „Esc+1“ usw. ersetzen F1 usw. auf Konsolen,\n"
+                                   "die nur Escape-Folgen verstehen."))
+
+        self.con_stack = QStackedWidget()
+        self.con_web_tabs = None
+        if WEBENGINE:
+            self.con_profile = QWebEngineProfile(self)          # ohne Namen: nichts wird auf Platte gelegt
+            self.con_profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
+            self.con_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+            self.con_web_tabs = QTabWidget()
+            self.con_web_tabs.setTabsClosable(True)
+            self.con_web_tabs.tabCloseRequested.connect(self.console_close_tab)
+            self.con_stack.addWidget(self.con_web_tabs)
+        else:
+            self.con_stack.addWidget(self.console_note(T(
+                "Die eingebettete Web-Konsole braucht QtWebEngine. Installation auf dem Rechner mit diesem Tool:")
+                + ("\n    pip install PyQt6-WebEngine" if WINDOWS else
+                   "\n    sudo pacman -S python-pyqt6-webengine      (Arch/CachyOS)\n"
+                   "    pip install PyQt6-WebEngine                (sonst)")))
+        self.term = TermView()
+        self.term.send.connect(self.console_send)
+        self.term_scroll = QScrollArea()
+        self.term_scroll.setWidget(self.term)
+        self.term_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.term_scroll.setWidgetResizable(False)
+        self.con_stack.addWidget(self.term_scroll)
+        self.con_stack.addWidget(self.console_note(T(
+            "„Verbinden“ öffnet die Anmeldeseite des BMC im Standardbrowser. Die Anmeldung erfolgt dort von Hand;\n"
+            "die HTML5-Konsole wird im BMC über „Remote Console“ bzw. „Virtual Console“ gestartet.")))
+        self.con_copy = QPushButton(T("Passwort kopieren (30 s)"))
+        self.con_copy.clicked.connect(self.console_copy_pw)
+
+        warn = QLabel(T("Achtung: Tasten gehen direkt an den Server. Dieser Reiter ändert von sich aus nichts, "
+                        "alles Weitere geschieht in der UEFI-Oberfläche selbst."))
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #c9302c;")
+        lay = QVBoxLayout()
+        lay.addWidget(box)
+        lay.addLayout(btns)
+        lay.addWidget(self.con_status)
+        lay.addWidget(warn)
+        lay.addWidget(self.con_keys)
+        lay.addWidget(self.con_copy)
+        lay.addWidget(self.con_stack, 1)
+        page = QWidget()
+        page.setLayout(lay)
+
+        self.con_probe = self.con_boot = None
+        self.con_serial = SerialSession(self.term, self.console_serial_ended)
+        self.con_login = None            # Zustand der Auto-Anmeldung der eingebetteten Konsole
+        self.con_timer = QTimer(self)
+        self.con_timer.timeout.connect(self.console_login_tick)
+        self.console_mode_changed()
+        self.console_refresh_ips()
+        return page
+
+    @staticmethod
+    def console_note(text):
+        lab = QLabel(text)
+        lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return lab
+
+    # ---------- Bedienung der Maske ----------
+    def console_refresh_ips(self):
+        keep = self.con_ip.currentText()
+        self.con_ip.clear()
+        self.con_pws = {}
+        for ip, pw in self.reachable_rows():
+            self.con_ip.addItem(ip)
+            self.con_pws[ip] = pw
+        if keep:
+            self.con_ip.setEditText(keep)
+
+    def console_pick_ip(self, *_):
+        """Übernimmt das Passwort der Zeile aus Reiter 2 (nur im Feld, gespeichert wird nichts)."""
+        pw = self.con_pws.get(self.con_ip.currentText(), "") or self.cur_pass.text()
+        if pw:
+            self.con_pass.setText(pw)
+
+    def console_mode_changed(self, *_):
+        mode = self.con_mode.currentData()
+        self.con_stack.setCurrentIndex({"web": 0, "serial": 1, "browser": 2}[mode])
+        self.con_serial_box.setVisible(mode == "serial")
+        self.con_keys.setVisible(mode == "serial")
+        self.con_copy.setVisible(mode == "browser")
+        self.con_start.setVisible(mode == "web")
+
+    def console_size_changed(self, *_):
+        if not self.con_serial.proc:
+            c, r = self.con_size.currentData()
+            self.term.set_size(c, r)
+
+    def console_active(self):
+        return bool(self.con_serial.proc) or bool(self.con_probe and self.con_probe.isRunning()) \
+            or bool(self.con_boot and self.con_boot.isRunning()) or bool(self.con_web_tabs and self.con_web_tabs.count())
+
+    def console_set_status(self, text, err=False):
+        self.con_status.setText(text)
+        self.con_status.setStyleSheet("color: #c9302c;" if err else "")
+
+    def console_busy(self, busy):
+        self.con_connect.setEnabled(not busy)
+        self.con_disconnect.setEnabled(busy)
+        for w in (self.con_vendor, self.con_ip, self.con_user, self.con_pass, self.con_mode, self.con_method,
+                  self.con_term, self.con_size, self.con_setup):
+            w.setEnabled(not busy)
+
+    def console_creds(self):
+        ip = self.con_ip.currentText().strip()
+        if not ip:
+            self.console_set_status(T("Bitte eine Adresse eintragen."), True)
+            return None
+        return ip, self.con_user.text().strip(), self.con_pass.text(), self.con_vendor.currentData() or ""
+
+    def console_copy_pw(self):
+        pw = self.con_pass.text()
+        if not pw:
+            return
+        cb = QApplication.clipboard()
+        cb.setText(pw)
+        QTimer.singleShot(30000, lambda: cb.clear() if cb.text() == pw else None)
+        self.console_set_status(T("Passwort liegt 30 Sekunden in der Zwischenablage."))
+
+    # ---------- Verbinden ----------
+    def console_connect(self):
+        creds = self.console_creds()
+        if not creds:
+            return
+        ip, _user, _pw, vendor = creds
+        self.console_busy(True)
+        self.console_set_status(T("Prüfe {0} …").format(ip))
+        self.con_probe = ConsoleProbeThread(self, ip, vendor)
+        self.con_probe.done.connect(self.console_probed)
+        self.con_probe.start()
+
+    def console_probed(self, vendor, tls):
+        ip, user, pw, _ = self.console_creds() or ("", "", "", "")
+        mode = self.con_mode.currentData()
+        if vendor == "offline":
+            self.console_fail(T("Gerät nicht erreichbar."))
+            return
+        if vendor not in RedfishClient.NAME:
+            self.console_fail(T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)."))
+            return
+        user = user or RedfishClient.DEFAULT_USER[vendor]
+        if mode == "web":
+            self.console_open_web(ip, user, pw, vendor, tls)
+        elif mode == "serial":
+            self.console_open_serial(ip, user, pw, vendor)
+        else:
+            url = f"https://{ip}/"
+            QDesktopServices.openUrl(QUrl(url))
+            self.console_busy(False)
+            self.console_set_status(T("Im Browser geöffnet: {0}").format(url))
+
+    def console_fail(self, text):
+        self.console_busy(False)
+        self.console_set_status(text, True)
+
+    # ---------- Eingebettete Web-Konsole ----------
+    def console_open_web(self, ip, user, pw, vendor, tls):
+        if not WEBENGINE:
+            self.console_fail(T("QtWebEngine fehlt, siehe Hinweis unten. Alternativ „Text“ oder „Standardbrowser“ wählen."))
+            return
+        if tls_blocks_chromium(tls):
+            self.console_fail(T("Dieser BMC kann nur TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). "
+                                "Die eingebettete Konsole geht damit nicht, bitte „Text“ wählen."))
+            return
+        self.console_close_all_tabs()
+        view = self.console_new_view(ip)
+        self.con_web_tabs.addTab(view, f"{ip}")
+        self.con_web_tabs.tabBar().setTabButton(0, self.con_web_tabs.tabBar().ButtonPosition.RightSide, None)
+        view.setUrl(QUrl(f"https://{ip}/"))
+        self.con_login = {"user": user, "pw": pw, "vendor": vendor, "ip": ip, "tries": 0, "state": "wait",
+                          "view": view}
+        self.con_start.setEnabled(True)
+        self.con_timer.start(1000)
+        self.console_set_status(T("Verbunden mit {0}. Anmeldung läuft; danach öffnet sich die Konsole.").format(ip))
+
+    def console_new_view(self, ip):
+        view = QWebEngineView()
+        page = BmcPage(self.con_profile, ip, self.console_popup, view)
+        view.setPage(page)
+        s = page.settings()
+        s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
+        s.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        page.fullScreenRequested.connect(lambda r: r.accept())
+        return view
+
+    def console_popup(self):
+        """Der BMC öffnet die Konsole oft in einem neuen Fenster: stattdessen als weiterer Reiter."""
+        ip = self.con_login["ip"] if self.con_login else ""
+        view = self.console_new_view(ip)
+        i = self.con_web_tabs.addTab(view, T("Konsole"))
+        self.con_web_tabs.setCurrentIndex(i)
+        return view.page()
+
+    def console_close_tab(self, i):
+        if i == 0:
+            return
+        w = self.con_web_tabs.widget(i)
+        self.con_web_tabs.removeTab(i)
+        w.deleteLater()
+
+    def console_close_all_tabs(self):
+        self.con_timer.stop()
+        self.con_login = None
+        if self.con_web_tabs:
+            while self.con_web_tabs.count():
+                w = self.con_web_tabs.widget(0)
+                self.con_web_tabs.removeTab(0)
+                w.deleteLater()
+
+    def console_login_tick(self):
+        """Füllt die Anmeldeseite aus, sobald sie da ist (die Seiten der BMCs bauen sich nach dem Laden auf)."""
+        st = self.con_login
+        if not st or st["state"] != "wait":
+            if st and st["state"] == "done":
+                st["after"] = st.get("after", 0) + 1
+                if st["after"] == 5:                    # Anmeldung hatte Zeit: zur Konsole weiterspringen
+                    self.console_goto()
+                    self.con_timer.stop()
+            return
+        st["tries"] += 1
+        if st["tries"] > 25:
+            self.con_timer.stop()
+            self.console_set_status(T("Anmeldeseite nicht erkannt. Bitte im Fenster von Hand anmelden."), True)
+            return
+        js = AUTOLOGIN_JS % (json.dumps(st["user"]), json.dumps(st["pw"]))
+        st["view"].page().runJavaScript(js, lambda res, s=st: self.console_login_result(s, res))
+
+    def console_login_result(self, st, res):
+        if res == "done" and st["state"] == "wait":
+            st["state"] = "done"
+
+    def console_goto(self):
+        st = self.con_login
+        if not st:
+            return
+        path = CONSOLE_PATH.get(st["vendor"], "/")
+        self.con_web_tabs.setCurrentIndex(0)
+        st["view"].setUrl(QUrl(f"https://{st['ip']}{path}"))
+
+    # ---------- Textkonsole ----------
+    def console_open_serial(self, ip, user, pw, vendor):
+        if WINDOWS:
+            self.console_fail(T("Die Textkonsole läuft nur unter Linux."))
+            return
+        if not pyte:
+            self.console_fail(T("Für die Textkonsole fehlt „pyte“: sudo pacman -S python-pyte  (Arch/CachyOS) "
+                                "bzw. pip install pyte"))
+            return
+        method = self.con_method.currentData()
+        if method == "auto":
+            method = "ipmitool" if vendor == "smc" or vendor not in SSH_SOL_CMD or not shutil.which("sshpass") \
+                else "ssh"
+        lacking = SerialSession.missing(method, vendor)
+        if lacking:
+            self.console_fail(T("Es fehlt: {0}. Installation: sudo pacman -S {1}  (Arch/CachyOS)").format(
+                ", ".join(lacking), " ".join(lacking)))
+            return
+        if method == "ssh" and vendor not in SSH_SOL_CMD:
+            self.console_fail(T("Für diesen Hersteller gibt es kein SSH-Verfahren, bitte IPMI-SOL wählen."))
+            return
+        c, r = self.con_size.currentData()
+        self.term.set_size(c, r)
+        self.term.set_encoding(self.con_term.currentData())
+        self.term.reset()
+        try:
+            self.con_serial.start(method, ip, user, pw, vendor)
+        except OSError as e:
+            self.console_fail(T('Start fehlgeschlagen: {0}').format(e))
+            return
+        self.term.live = True
+        self.term.setFocus()
+        self.console_set_status(T("Textkonsole verbunden ({0}). In das schwarze Feld klicken, dann tippen. "
+                                  "Bleibt es schwarz, ist im UEFI die „Console Redirection“ aus oder die Größe falsch.")
+                                .format("ipmitool" if method == "ipmitool" else "SSH"))
+
+    def console_send(self, data):
+        if self.con_serial.proc:
+            self.con_serial.write(data)
+            self.term.setFocus()
+
+    def console_serial_ended(self, code):
+        self.term.live = False
+        self.term.update()
+        self.console_busy(False)
+        self.console_set_status(T("Textkonsole beendet (Code {0}).").format(code), bool(code))
+
+    # ---------- Trennen / Aufräumen ----------
+    def console_disconnect(self):
+        if self.con_serial.proc:
+            self.con_serial.stop()
+            self.term.live = False
+            self.term.update()
+        self.console_close_all_tabs()
+        self.con_start.setEnabled(False)
+        self.console_busy(False)
+        self.console_set_status(T("Getrennt."))
+
+    # ---------- Ins UEFI-Setup booten ----------
+    def console_boot_setup(self):
+        creds = self.console_creds()
+        if not creds:
+            return
+        ip, user, pw, vendor = creds
+        box = QMessageBox(QMessageBox.Icon.Warning, T("Ins UEFI-Setup booten"),
+                          T("Server {0} wird jetzt HART neu gestartet.").format(ip), parent=self)
+        box.setInformativeText(T("Ein laufendes Betriebssystem wird ohne Herunterfahren beendet (wie die "
+                                 "Reset-Taste), nicht gespeicherte Daten gehen verloren. Nur für Server ohne "
+                                 "laufenden Betrieb verwenden."))
+        go = box.addButton(T("Hart neu starten"), QMessageBox.ButtonRole.DestructiveRole)
+        no = box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(no)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+        self.console_busy(True)
+        self.con_disconnect.setEnabled(False)
+        self.console_set_status(T("Sende an {0} …").format(ip))
+        self.con_boot = BootSetupThread(self, ip, user, pw, vendor)
+        self.con_boot.done.connect(self.console_booted)
+        self.con_boot.start()
+
+    def console_booted(self, ok, text):
+        self.console_busy(False)
+        self.console_set_status(text, not ok)
+
+    def console_shutdown(self):
+        """Beim Beenden: Sitzungen sauber schließen."""
+        self.con_serial.stop()
+        self.console_close_all_tabs()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)     # Seiten vor dem Profil freigeben
+
+
+class Window(ConsoleMixin, QWidget):
     def __init__(self, state=None):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
@@ -1695,10 +2500,11 @@ class Window(QWidget):
         self.tabs.addTab(page, T("2 · Server konfigurieren"))
         self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
         self.tabs.addTab(self.build_services(), T("4 · Dienste"))
+        self.tabs.addTab(self.build_console(), T("5 · UEFI-Konsole"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[LANG] + ABOUT)
-        self.tabs.addTab(help_view, T("5 · Hilfe"))
+        self.tabs.addTab(help_view, T("6 · Hilfe"))
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)
@@ -2274,6 +3080,7 @@ class Window(QWidget):
                 event.ignore()
                 return
         self.stop_dhcp()
+        self.console_shutdown()
         event.accept()
 
     # ---------- UEFI/BIOS-Einstellungen ----------
@@ -3571,7 +4378,8 @@ class Window(QWidget):
         code = self.lang.currentData()
         if code == LANG:
             return
-        if self.running() or self.dhcp_running() or (self.bios_reader and self.bios_reader.isRunning()):
+        if self.running() or self.dhcp_running() or (self.bios_reader and self.bios_reader.isRunning()) \
+                or self.console_active():
             self.lang.setCurrentIndex(self.lang.findData(LANG))
             QMessageBox.information(self, T("Sprache"), T("Die Sprache lässt sich nur wechseln, solange kein Lauf "
                                     "aktiv ist und der DHCP-Server gestoppt ist."))
@@ -5906,7 +6714,63 @@ TR = {
 "Role must be Administrator, Operator or ReadOnly (group {0}).",
 "Le rôle doit être Administrator, Operator ou ReadOnly (groupe {0}).",
 "D Rolle mues Administrator, Operator oder ReadOnly si (Gruppe {0})."
-]
+],
+"Adresse des BMC. Vorschläge aus der Serverliste (Reiter 2), es geht aber jede\nerreichbare Adresse.": ["Address of the BMC. Suggestions come from the server list (tab 2), but any\nreachable address works.", "Adresse du BMC. Suggestions issues de la liste des serveurs (onglet 2), mais toute\nadresse joignable convient.", "Adrässe vom BMC. Vorschläg chömed us de Serverlischte (Reiter 2), aber jedi\nerreichbari Adrässe goht."],
+"Bild: Web-Konsole des BMC (eingebettet)": ["Picture: BMC web console (embedded)", "Image : console web du BMC (intégrée)", "Bild: Web-Konsole vom BMC (iibettet)"],
+"Text: serielle Konsole (SOL/SSH)": ["Text: serial console (SOL/SSH)", "Texte : console série (SOL/SSH)", "Text: serielli Konsole (SOL/SSH)"],
+"Bild: im Standardbrowser öffnen": ["Picture: open in default browser", "Image : ouvrir dans le navigateur par défaut", "Bild: im Standardbrowser uftue"],
+"Automatisch": ["Automatic", "Automatique", "Automatisch"],
+"Verbindung": ["Connection", "Connexion", "Verbindig"],
+"Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ ermittelt den Hersteller\ndieses einen Geräts selbst.": ["A fixed choice skips detection. \"Detect automatically\" determines the vendor\nof this one device itself.", "Un choix fixe saute la détection. « Détecter automatiquement » détermine le fabricant\nde cet appareil lui-même.", "E feschti Wahl überspringt d Erkennig. „Automatisch erkenne“ findet de Hersteller\nvo däm einte Grät sälber use."],
+"Wird nur für diese Verbindung verwendet und nirgends gespeichert.": ["Used only for this connection and never stored.", "Utilisé uniquement pour cette connexion et jamais enregistré.", "Wird nume für die Verbindig bruucht und nienemer gspeicheret."],
+"Anzeige": ["Display", "Affichage", "Aazeig"],
+"Bild: echtes Konsolenbild mit Maus und Tastatur wie am Original (HTML5-Konsole des BMC).\nText: serielle Umleitung; geht nur, wenn im UEFI „Console Redirection“ aktiv ist.\nBrowser: öffnet die BMC-Seite im Standardbrowser, ohne Auto-Anmeldung.": ["Picture: real console image with mouse and keyboard like on the original (HTML5 console of the BMC).\nText: serial redirection; works only if \"Console Redirection\" is enabled in the UEFI.\nBrowser: opens the BMC page in the default browser, without automatic login.", "Image : vraie image de la console avec souris et clavier comme sur l'original (console HTML5 du BMC).\nTexte : redirection série ; ne fonctionne que si « Console Redirection » est activé dans l'UEFI.\nNavigateur : ouvre la page du BMC dans le navigateur par défaut, sans connexion automatique.", "Bild: ächts Konsolebild mit Muus und Tastatur wie am Original (HTML5-Konsole vom BMC).\nText: serielli Umleitig; goht nume, wenn im UEFI „Console Redirection“ aktiv isch.\nBrowser: macht d BMC-Siite im Standardbrowser uf, ohni Auto-Aamäldig."],
+"Verfahren": ["Method", "Méthode", "Verfahre"],
+"Automatisch: Supermicro über ipmitool, Dell/HPE/Lenovo über SSH (sshpass), sonst ipmitool.\nIPMI über LAN muss im BMC aktiviert sein (bei Dell ab Werk aus).": ["Automatic: Supermicro via ipmitool, Dell/HPE/Lenovo via SSH (sshpass), otherwise ipmitool.\nIPMI over LAN must be enabled in the BMC (off by default on Dell).", "Automatique : Supermicro via ipmitool, Dell/HPE/Lenovo via SSH (sshpass), sinon ipmitool.\nIPMI sur LAN doit être activé dans le BMC (désactivé par défaut chez Dell).", "Automatisch: Supermicro über ipmitool, Dell/HPE/Lenovo über SSH (sshpass), susch ipmitool.\nIPMI über LAN muess im BMC aktiviert sii (bi Dell ab Werk uus)."],
+"Terminaltyp": ["Terminal type", "Type de terminal", "Terminaltyp"],
+"Muss zur Einstellung „Terminal Type“ im UEFI passen: VT100/VT-UTF8 → UTF-8,\nANSI → CP437 (Rahmenzeichen).": ["Must match the \"Terminal Type\" setting in the UEFI: VT100/VT-UTF8 → UTF-8,\nANSI → CP437 (box characters).", "Doit correspondre au réglage « Terminal Type » de l'UEFI : VT100/VT-UTF8 → UTF-8,\nANSI → CP437 (caractères de cadre).", "Muess zur Iistellig „Terminal Type“ im UEFI passe: VT100/VT-UTF8 → UTF-8,\nANSI → CP437 (Rahmezeiche)."],
+"Größe": ["Size", "Taille", "Grössi"],
+"Zeichen × Zeilen; muss zur Einstellung im UEFI passen (meist 80 × 24 oder 80 × 25).": ["Characters × lines; must match the UEFI setting (usually 80 × 24 or 80 × 25).", "Caractères × lignes ; doit correspondre au réglage de l'UEFI (souvent 80 × 24 ou 80 × 25).", "Zeiche × Zile; muess zur Iistellig im UEFI passe (meischtens 80 × 24 oder 80 × 25)."],
+"Verbinden": ["Connect", "Connecter", "Verbinde"],
+"Trennen": ["Disconnect", "Déconnecter", "Trenne"],
+"Konsole starten": ["Start console", "Lancer la console", "Konsole starte"],
+"Springt nach der Anmeldung zur Konsolen-Seite des BMC.": ["Jumps to the console page of the BMC after login.", "Passe à la page de console du BMC après la connexion.", "Springt nach de Aamäldig zur Konsole-Siite vom BMC."],
+"Ins UEFI-Setup booten …": ["Boot into UEFI setup …", "Démarrer dans la configuration UEFI …", "Is UEFI-Setup boote …"],
+"Merkt „beim nächsten Start ins UEFI-Setup“ vor und startet den Server hart neu\n(per Redfish). Nur mit Rückfrage.": ["Sets \"enter UEFI setup on next boot\" and hard-restarts the server\n(via Redfish). Only after confirmation.", "Prépare « démarrer dans la configuration UEFI au prochain démarrage » et redémarre le serveur\nde force (via Redfish). Seulement après confirmation.", "Merkt sich „bim nöchschte Start is UEFI-Setup“ und startet de Server hert neu\n(per Redfish). Nume mit Rückfrag."],
+"Sendet die Taste an den Server. „Esc+1“ usw. ersetzen F1 usw. auf Konsolen,\ndie nur Escape-Folgen verstehen.": ["Sends the key to the server. \"Esc+1\" etc. replace F1 etc. on consoles\nthat only understand escape sequences.", "Envoie la touche au serveur. « Esc+1 » etc. remplacent F1 etc. sur les consoles\nqui ne comprennent que les séquences d'échappement.", "Schickt d Taschte an Server. „Esc+1“ usw. ersetzed F1 usw. uf Konsole,\ndie nume Escape-Folge verstönd."],
+"Passwort kopieren (30 s)": ["Copy password (30 s)", "Copier le mot de passe (30 s)", "Passwort kopiere (30 s)"],
+"Achtung: Tasten gehen direkt an den Server. Dieser Reiter ändert von sich aus nichts, alles Weitere geschieht in der UEFI-Oberfläche selbst.": ["Caution: keys go directly to the server. This tab changes nothing by itself; everything else happens in the UEFI interface itself.", "Attention : les touches vont directement au serveur. Cet onglet ne modifie rien de lui-même ; tout le reste se passe dans l'interface UEFI.", "Achtung: D Taschte gönd diräkt zum Server. Dä Reiter ändered vo sich us nüt, alles anderi gschiet i de UEFI-Oberflächi sälber."],
+"Passwort liegt 30 Sekunden in der Zwischenablage.": ["The password stays in the clipboard for 30 seconds.", "Le mot de passe reste 30 secondes dans le presse-papiers.", "S Passwort liit 30 Sekunde i de Zwüscheablag."],
+"Konsole": ["Console", "Console", "Konsole"],
+"Getrennt.": ["Disconnected.", "Déconnecté.", "Trennt."],
+"Ins UEFI-Setup booten": ["Boot into UEFI setup", "Démarrer dans la configuration UEFI", "Is UEFI-Setup boote"],
+"Ein laufendes Betriebssystem wird ohne Herunterfahren beendet (wie die Reset-Taste), nicht gespeicherte Daten gehen verloren. Nur für Server ohne laufenden Betrieb verwenden.": ["A running operating system is terminated without shutting down (like the reset button); unsaved data is lost. Use only for servers that are not in operation.", "Un système d'exploitation en cours est arrêté sans extinction propre (comme le bouton reset) ; les données non enregistrées sont perdues. À utiliser uniquement sur des serveurs hors production.", "Es lauffends Betriebssystem wird ohni Abefahre beändet (wie d Reset-Taschte), nöd gspeicheret Date gönd verlore. Nume für Server ohni lauffende Betrieb bruuche."],
+"Hart neu starten": ["Hard restart", "Redémarrer de force", "Hert neu starte"],
+"Vorgemerkt, Server startet neu und landet im UEFI-Setup. Das Bild erscheint nach etwa ein bis zwei Minuten.": ["Scheduled; the server restarts and lands in UEFI setup. The picture appears after about one to two minutes.", "Préparé ; le serveur redémarre et arrive dans la configuration UEFI. L'image apparaît après une à deux minutes environ.", "Vorgmerkt, de Server startet neu und landet im UEFI-Setup. S Bild chunnt nach öppe ein bis zwei Minute."],
+"Tasten:": ["Keys:", "Touches :", "Taschte:"],
+"„Verbinden“ öffnet die Anmeldeseite des BMC im Standardbrowser. Die Anmeldung erfolgt dort von Hand;\ndie HTML5-Konsole wird im BMC über „Remote Console“ bzw. „Virtual Console“ gestartet.": ["\"Connect\" opens the BMC login page in the default browser. You log in there by hand;\nthe HTML5 console is started in the BMC via \"Remote Console\" or \"Virtual Console\".", "« Connecter » ouvre la page de connexion du BMC dans le navigateur par défaut. La connexion se fait à la main ;\nla console HTML5 se lance dans le BMC via « Remote Console » ou « Virtual Console ».", "„Verbinde“ macht d Aamäldsiite vom BMC im Standardbrowser uf. D Aamäldig machsch det vo Hand;\nd HTML5-Konsole wird im BMC über „Remote Console“ bzw. „Virtual Console“ gstartet."],
+"Bitte eine Adresse eintragen.": ["Please enter an address.", "Veuillez saisir une adresse.", "Bitte e Adrässe iitrage."],
+"QtWebEngine fehlt, siehe Hinweis unten. Alternativ „Text“ oder „Standardbrowser“ wählen.": ["QtWebEngine is missing, see the note below. Alternatively choose \"Text\" or \"default browser\".", "QtWebEngine est absent, voir l'indication ci-dessous. Sinon choisir « Texte » ou « navigateur par défaut ».", "QtWebEngine fählt, lueg dr Hiiwiis unde. Alternativ „Text“ oder „Standardbrowser“ wähle."],
+"Dieser BMC kann nur TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). Die eingebettete Konsole geht damit nicht, bitte „Text“ wählen.": ["This BMC only speaks TLS 1.0/1.1 (e.g. iLO 3/4, iDRAC7/8 with old firmware). The embedded console cannot connect; please choose \"Text\".", "Ce BMC ne gère que TLS 1.0/1.1 (p. ex. iLO 3/4, iDRAC7/8 avec ancien firmware). La console intégrée ne fonctionne pas ; veuillez choisir « Texte ».", "Dä BMC cha nume TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). D iibettet Konsole goht demit nöd, bitte „Text“ wähle."],
+"Anmeldeseite nicht erkannt. Bitte im Fenster von Hand anmelden.": ["Login page not recognised. Please log in by hand in the window.", "Page de connexion non reconnue. Veuillez vous connecter à la main dans la fenêtre.", "Aamäldsiite nöd erkannt. Bitte im Fenschter vo Hand aamälde."],
+"Die Textkonsole läuft nur unter Linux.": ["The text console runs on Linux only.", "La console texte ne fonctionne que sous Linux.", "D Textkonsole laufft nume under Linux."],
+"Für die Textkonsole fehlt „pyte“: sudo pacman -S python-pyte  (Arch/CachyOS) bzw. pip install pyte": ["The text console needs \"pyte\": sudo pacman -S python-pyte  (Arch/CachyOS) or pip install pyte", "La console texte nécessite « pyte » : sudo pacman -S python-pyte  (Arch/CachyOS) ou pip install pyte", "Für d Textkonsole fählt „pyte“: sudo pacman -S python-pyte  (Arch/CachyOS) bzw. pip install pyte"],
+"Für diesen Hersteller gibt es kein SSH-Verfahren, bitte IPMI-SOL wählen.": ["There is no SSH method for this vendor, please choose IPMI-SOL.", "Il n'y a pas de méthode SSH pour ce fabricant, veuillez choisir IPMI-SOL.", "Für dä Hersteller gits kei SSH-Verfahre, bitte IPMI-SOL wähle."],
+"Dieser Hersteller bzw. diese Generation kann das nicht per Redfish. Bitte im UEFI-Bild F2/F9/Entf selbst drücken.": ["This vendor or generation cannot do this via Redfish. Please press F2/F9/Del yourself in the console picture.", "Ce fabricant ou cette génération ne le permet pas via Redfish. Veuillez appuyer vous-même sur F2/F9/Suppr dans l'image de la console.", "Dä Hersteller bzw. die Generation cha das nöd per Redfish. Bitte im Konsolebild sälber F2/F9/Entf drücke."],
+"Prüfe {0} …": ["Checking {0} …", "Vérification de {0} …", "Prüef {0} …"],
+"Verbunden mit {0}. Anmeldung läuft; danach öffnet sich die Konsole.": ["Connected to {0}. Logging in; the console opens afterwards.", "Connecté à {0}. Connexion en cours ; la console s'ouvre ensuite.", "Verbunde mit {0}. D Aamäldig lauft; danach goht d Konsole uf."],
+"Textkonsole verbunden ({0}). In das schwarze Feld klicken, dann tippen. Bleibt es schwarz, ist im UEFI die „Console Redirection“ aus oder die Größe falsch.": ["Text console connected ({0}). Click into the black area, then type. If it stays black, \"Console Redirection\" is off in the UEFI or the size is wrong.", "Console texte connectée ({0}). Cliquer dans la zone noire, puis taper. Si elle reste noire, « Console Redirection » est désactivé dans l'UEFI ou la taille est incorrecte.", "Textkonsole verbunde ({0}). is schwarz Fäld klicke, denn tippe. Bliibt s schwarz, isch im UEFI d „Console Redirection“ uus oder d Grössi falsch."],
+"Textkonsole beendet (Code {0}).": ["Text console ended (code {0}).", "Console texte terminée (code {0}).", "Textkonsole beändet (Code {0})."],
+"Server {0} wird jetzt HART neu gestartet.": ["Server {0} will now be HARD restarted.", "Le serveur {0} va maintenant être redémarré DE FORCE.", "De Server {0} wird jetzt HERT neu gstartet."],
+"Sende an {0} …": ["Sending to {0} …", "Envoi à {0} …", "Schicke a {0} …"],
+"Die eingebettete Web-Konsole braucht QtWebEngine. Installation auf dem Rechner mit diesem Tool:": ["The embedded web console needs QtWebEngine. Installation on the computer running this tool:", "La console web intégrée nécessite QtWebEngine. Installation sur l'ordinateur qui exécute cet outil :", "D iibettet Web-Konsole bruucht QtWebEngine. Installation uf em Rechner mit däm Tool:"],
+"Es fehlt: {0}. Installation: sudo pacman -S {1}  (Arch/CachyOS)": ["Missing: {0}. Installation: sudo pacman -S {1}  (Arch/CachyOS)", "Manquant : {0}. Installation : sudo pacman -S {1}  (Arch/CachyOS)", "Es fählt: {0}. Installation: sudo pacman -S {1}  (Arch/CachyOS)"],
+"Start ins UEFI-Setup vormerken": ["Schedule boot into UEFI setup", "Préparer le démarrage dans la configuration UEFI", "Start is UEFI-Setup vormerke"],
+"Neustart auslösen": ["Trigger restart", "Déclencher le redémarrage", "Neustart uslöse"],
+"Im Browser geöffnet: {0}": ["Opened in browser: {0}", "Ouvert dans le navigateur : {0}", "Im Browser ufgmacht: {0}"],
+"Start fehlgeschlagen: {0}": ["Start failed: {0}", "Échec du démarrage : {0}", "Start fehlgschlage: {0}"],
+"5 · UEFI-Konsole": ["5 · UEFI console", "5 · Console UEFI", "5 · UEFI-Konsole"],
+"6 · Hilfe": ["6 · Help", "6 · Aide", "6 · Hilf"]
 }
 
 HELP = {
@@ -5915,6 +6779,11 @@ HELP = {
 "fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> (onglet 1) : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Sous Linux, dnsmasq est utilisé ;\n    sous Windows, un serveur intégré.</li>\n<li><b>Liste des serveurs</b> (onglet 2) : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Réglages UEFI (onglet 3)</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de l'onglet 2 ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services : NTP, syslog, LDAP, certificat (onglet 4)</h2>\n<p>L'onglet 4 configure des services de gestion communs sur tous les serveurs de la liste. Seules les\nsections cochées sont appliquées ; les serveurs verts (terminés) sont joints à leur nouvelle adresse.\nLa connexion utilise l'utilisateur d'usine et l'administrateur d'usine reste en place. La simulation\nest activée par défaut et montre seulement ce qui serait envoyé ; les mots de passe et le contenu du\ncertificat n'apparaissent pas dans le journal.</p>\n<ul>\n<li><b>NTP :</b> un ou deux serveurs de temps. Le fuseau horaire n'est défini que sur Dell ; sur HPE,\n    Supermicro et Lenovo, le choisir dans l'interface.</li>\n<li><b>Syslog :</b> Dell et HPE uniquement. Il n'existe pas de voie uniforme sur Supermicro et Lenovo,\n    la section y est ignorée.</li>\n<li><b>LDAP / Active Directory :</b> serveur, base DN, un compte de bind facultatif, attribut\n    utilisateur et de groupe. Sous « Groupes → rôle », les groupes LDAP sont associés aux rôles\n    Administrator, Operator ou ReadOnly. Fonctionne sur les quatre constructeurs via la voie Redfish\n    standard.</li>\n<li><b>Certificat HTTPS :</b> importe un certificat PEM signé par une CA. C'est expérimental et propre\n    au constructeur. Sur HPE, la clé correspondante doit provenir d'une CSR générée sur l'iLO, sinon\n    l'import échoue. Le BMC peut redémarrer pendant l'import.</li>\n</ul>\n<p>Pour chaque service, un constructeur qui ne le connaît pas est ignoré, rien n'est deviné. iLO 3/4\n(via RIBCL) ne sont pas gérés ici. Les procédures n'ont jusqu'ici été testées que contre des\néquipements simulés ; toujours configurer un seul appareil d'abord avant une grande série.</p>\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> iDRAC9 (14e à 16e génération) et iDRAC7/8 (12e et 13e génération). iDRAC7/8\n    exigent au moins le firmware 2.50.50.50 ; l'outil détecte un firmware plus ancien, le signale et ne\n    modifie rien. Tester d'abord iDRAC10 sur un seul appareil. iDRAC6 n'est pas pris en charge.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11) via Redfish. iLO 7 n'est pas testé. Pour iLO 3 et 4,\n    voir la section suivante.</li>\n</ul>\n\n<h2>HPE iLO 3 et iLO 4 (serveurs plus anciens)</h2>\n<ul>\n<li><b>Appareils :</b> iLO 3 équipe les serveurs G7, iLO 4 les Gen8 et Gen9. L'outil les reconnaît de\n    lui-même ; si le constructeur est choisi à la main, prendre « HPE iLO 3/4 ».</li>\n<li><b>Autre voie :</b> iLO 3 ne connaît pas Redfish. Pour iLO 3 et iLO 4, l'outil utilise donc\n    l'interface XML RIBCL, présente d'origine sur les deux. En simulation, les commandes XML figurent\n    dans le journal, les mots de passe y sont remplacés par ***.</li>\n<li><b>Redémarrage :</b> une fois l'adresse et le nom d'hôte définis, l'iLO redémarre de lui-même ; le\n    serveur continue de tourner. Il faut 1 à 3 minutes avant qu'il réponde à la nouvelle adresse.</li>\n<li><b>Chiffrement ancien :</b> iLO 3 ne gère que TLS 1.0/1.1. L'outil bascule de lui-même, appareil par\n    appareil, sur l'ancien chiffrement et l'indique dans le journal. Ces appareils ont leur place dans\n    un réseau d'administration isolé.</li>\n<li><b>Limites :</b> nom d'hôte de 49 caractères au plus. Les réglages UEFI (onglet 3) ne fonctionnent pas\n    avec iLO 3. iLO 2 et versions antérieures ne sont pas pris en charge.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67 ; Windows :\n    accepter la demande du pare-feu) ou le BMC n'est pas en DHCP.</li>\n<li><b>Port 67 occupé (Windows) :</b> en général le partage de connexion Internet ou un point d'accès\n    mobile.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond ni en Redfish ni comme iLO 3/4. iDRAC6, iLO 2\n    et les firmwares très anciens ne sont pas pris en charge. Un iLO 3/4 dont les informations\n    d'appareil ont été désactivées reste accessible en choisissant « HPE iLO 3/4 » à la main.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE (iLO 3/4 compris), iDRAC7/8 anciens, Supermicro, Lenovo et UEFI ainsi que le\n    serveur DHCP Windows n'ont été testés jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en haut à droite, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n",
 "gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Riiter 1): D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Under Linux lauft defür dnsmasq, under Windows en iibaute Server.</li>\n<li><b>Serverlischte</b> (Riiter 2): neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>UEFI-Iistellige (Riiter 3)</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us em Riiter 2; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienscht: NTP, Syslog, LDAP, Zertifikat (Riiter 4)</h2>\n<p>Riiter 4 richtet uf allne Server vo de Lischte gmeinsami Verwaltigsdienscht ii. Nur aaghaaggti\nAbschnitt wärded aagwändet; grüeni (fertigi) Server wärded under ihrer neue Adrässe aagsproche.\nAagmäldet wird mit em Wärksbenutzer, de Wärks-Administrator bliibt bestah. De Trocheluuf isch\nvoriigstellt und zeigt nur, was gschickt wür; Passwörter und de Zertifikatsinhalt stönd debii nöd im\nProtokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwee Ziitserver. D Ziitzone wird nur bi Dell gsetzt; bi HPE, Supermicro und\n    Lenovo bitte i de Oberflächi wähle.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bi Supermicro und Lenovo gits kei einheitliche Wäg, de Abschnitt\n    wird dört übersprunge.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional es Bind-Konto, Benutzer- und\n    Gruppe-Attribut. Under „Gruppe → Rolle“ wärded LDAP-Gruppe de Rolle Administrator, Operator oder\n    ReadOnly zuegordnet. Gaht bi allne vier Hersteller über de Standard-Redfish-Wäg.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert es vonere CA signiets PEM-Zertifikat. Das isch experimentell und\n    je Hersteller andersch. Bi HPE mues de passend Schlüssel us ere uf em iLO erzüügte CSR cho, susch\n    schiitert de Import. Bim Import cha de BMC neu starte.</li>\n</ul>\n<p>Für jede Dienscht gilt: En Hersteller, wo ne nöd kännt, wird übersprunge, nöd grate. iLO 3/4 (über\nRIBCL) wärded da nöd bedient. D Abläuf sind bis jetz nur gäge simulierti Gägestelle prüeft; vor eme\ngrosse Luuf immer zerscht eis einzelns Grät.</p>\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    bruuched mindeschtens Firmware 2.50.50.50; älteri erchännt s Tool, mäldet's und änderet nüt.\n    iDRAC10 zerscht a eim Grät teste. iDRAC6 wird nöd understützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 isch nöd prüeft. Für iLO 3 und\n    4 lueg im nächschte Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (di ältere Semeschter)</h2>\n<ul>\n<li><b>Grät:</b> iLO 3 steckt i G7-Server, iLO 4 i Gen8 und Gen9. S Tool erchännt si vo sälber; wär de\n    Hersteller fescht wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>En andere Wäg:</b> iLO 3 kännt kei Redfish. S Tool bruucht drum für iLO 3 und iLO 4 d\n    XML-Schnittstell RIBCL, wo beidi ab Wärk debii händ. Im Trocheluuf stönd d XML-Befähl im Protokoll,\n    Passwörter sind dört dur *** ersetzt.</li>\n<li><b>Neustart:</b> Nach em Setze vo Adrässe und Hostname startet s iLO vo sälber neu; de Server lauft\n    wiiter. Bis es under de neue Adrässe antwortet, gaht's 1 bis 3 Minute.</li>\n<li><b>Alti Verschlüsselig:</b> iLO 3 cha nume TLS 1.0/1.1. S Tool schaltet defür pro Grät vo sälber uf\n    di alt Verschlüsselig um und schriibt en Hiiwiis is Protokoll. Söttigi Grät ghöred in es\n    abgschottets Verwaltigsnetz.</li>\n<li><b>Gränze:</b> Hostname höchschtens 49 Zeiche. UEFI-Iistellige (Riiter 3) gönd bi iLO 3 nöd. iLO 2\n    und älter wärded nöd understützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh; Windows: d\n    Firewall-Abfrag zuelaa) oder de BMC staht nöd uf DHCP.</li>\n<li><b>Port 67 bsetzt (Windows):</b> meischtens Internetverbindigsfreigab oder mobile Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet weder per Redfish no als iLO 3/4. iDRAC6, iLO 2 und\n    uralti Firmware wärded nöd understützt. Es iLO 3/4, wo d Grätuuskunft abgschaltet isch, laat sich\n    über di feschti Wahl „HPE iLO 3/4“ glich aaspräche.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE (au iLO 3/4), älteri iDRAC7/8, Supermicro, Lenovo und UEFI und de\n    Windows-DHCP-Server sind bis jetzt nur gäge simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer obe rächts umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n"
 }
+
+HELP["de"] = HELP["de"] + "<h3>UEFI-Konsole (Reiter 5)</h3>\n<p>Zeigt das UEFI/BIOS eines Servers über den BMC an. Drei Wege: <b>Bild</b> (eingebettete HTML5-Konsole des BMC, Maus und Tastatur wie am Original, Anmeldung automatisch), <b>Text</b> (serielle Konsole über IPMI-SOL oder SSH, nur Linux, braucht <code>pyte</code>, <code>ipmitool</code> und <code>sshpass</code>) und <b>Standardbrowser</b>. „Ins UEFI-Setup booten“ merkt per Redfish den Start ins Setup vor und startet den Server hart neu. Der Reiter speichert nichts. Alte BMCs mit nur TLS 1.0/1.1 gehen nur per Textkonsole.</p>\n"
+HELP["en"] = HELP["en"] + "<h3>UEFI console (tab 5)</h3>\n<p>Shows a server's UEFI/BIOS through the BMC. Three ways: <b>Picture</b> (embedded HTML5 console of the BMC, mouse and keyboard like the original, automatic login), <b>Text</b> (serial console via IPMI-SOL or SSH, Linux only, needs <code>pyte</code>, <code>ipmitool</code> and <code>sshpass</code>) and <b>default browser</b>. \"Boot into UEFI setup\" schedules the next boot into setup via Redfish and hard-restarts the server. This tab stores nothing. Old BMCs with TLS 1.0/1.1 only work via the text console.</p>\n"
+HELP["fr"] = HELP["fr"] + "<h3>Console UEFI (onglet 5)</h3>\n<p>Affiche l'UEFI/BIOS d'un serveur via le BMC. Trois voies : <b>Image</b> (console HTML5 intégrée du BMC, souris et clavier comme sur l'original, connexion automatique), <b>Texte</b> (console série via IPMI-SOL ou SSH, Linux uniquement, nécessite <code>pyte</code>, <code>ipmitool</code> et <code>sshpass</code>) et <b>navigateur par défaut</b>. « Démarrer dans la configuration UEFI » prépare via Redfish le prochain démarrage dans la configuration et redémarre le serveur de force. Cet onglet n'enregistre rien. Les anciens BMC avec TLS 1.0/1.1 seulement ne fonctionnent qu'en console texte.</p>\n"
+HELP["gsw"] = HELP["gsw"] + "<h3>UEFI-Konsole (Reiter 5)</h3>\n<p>Zeigt s UEFI/BIOS vomene Server über de BMC aa. Drü Wääg: <b>Bild</b> (iibettet HTML5-Konsole vom BMC, Muus und Tastatur wie am Original, Aamäldig automatisch), <b>Text</b> (serielli Konsole über IPMI-SOL oder SSH, nume Linux, bruucht <code>pyte</code>, <code>ipmitool</code> und <code>sshpass</code>) und <b>Standardbrowser</b>. „Is UEFI-Setup boote“ merkt per Redfish de Start is Setup vor und startet de Server hert neu. De Reiter speicheret nüt. Alti BMCs mit nume TLS 1.0/1.1 gönd nume über d Textkonsole.</p>\n"
 
 
 set_language(load_lang())
