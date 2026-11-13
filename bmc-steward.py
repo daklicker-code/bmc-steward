@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.4"
+__version__ = "1.7.5"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -2992,6 +2992,7 @@ class ScannerDialog(QDialog):
         self.bridge.value.connect(self.on_value)
         self.setWindowTitle(T("Handy-Scanner (Passwort)"))
         self.setMinimumWidth(480)
+        self.setMinimumHeight(560)
         self.way = QComboBox()
         for key, text in self.WAYS:
             self.way.addItem(T(text), key)
@@ -3226,15 +3227,18 @@ class ScannerDialog(QDialog):
             pix = qr_pixmap(f"WIFI:T:WPA;S:{esc(ssid)};P:{esc(wifi_pw)};;")
             if pix:
                 self.qr_wifi.setPixmap(pix)
+                self.qr_wifi.setMinimumSize(pix.size())
             self.wifi_info.setText(T("1. Mit dem WLAN verbinden: {0}, Passwort {1}").format(ssid, wifi_pw))
         self.state.setText(T("Läuft. Link am Handy öffnen (QR-Code scannen), die Zertifikatswarnung einmal bestätigen, "
                              "Kamera erlauben. Bei aktiver Firewall den Port {0} freigeben (ufw: sudo ufw allow {0}/tcp).").format(server.port))
         pix = qr_pixmap(link)
         if pix:
             self.qr.setPixmap(pix)
+            self.qr.setMinimumSize(pix.size())
         else:
             self.qr.setText(T("(Für einen QR-Code: sudo pacman -S qrencode)"))
         self.say(T("Scanner gestartet auf {0}").format(link.rsplit("/", 2)[0]))
+        self.adjustSize()
 
     def stop_server(self):
         if self.server:
@@ -3248,6 +3252,9 @@ class ScannerDialog(QDialog):
             w.setEnabled(True)
         for w in (self.qr, self.qr_wifi, self.url, self.wifi_info):
             w.clear()
+        self.qr.setMinimumSize(0, 0)
+        self.qr_wifi.setMinimumSize(0, 0)
+        self.adjustSize()
         self.state.setText(T("Gestoppt"))
         self.fill_ifaces()
 
