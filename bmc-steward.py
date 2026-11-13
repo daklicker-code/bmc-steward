@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.8"
+__version__ = "1.7.9"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -2482,70 +2482,71 @@ SCAN_HTML = """<!doctype html>
 <meta name="referrer" content="no-referrer">
 <title>BMC-Steward Scanner</title>
 <style>
- body{font:17px system-ui,sans-serif;margin:0;padding:12px;background:#1d2126;color:#eee}
- h1{font-size:19px;margin:0 0 10px}
- .seg{display:flex;gap:8px;margin-bottom:8px}
- .seg label{flex:1;text-align:center;padding:9px 4px;border:1px solid #556;border-radius:8px;font-size:15px}
+ html,body{height:100%}
+ body{font:16px system-ui,sans-serif;margin:0;padding:8px;background:#1d2126;color:#eee;box-sizing:border-box;
+  height:100vh;height:100dvh;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+ .seg{display:flex;gap:6px;flex:none}
+ .seg label{flex:1;text-align:center;padding:7px 4px;border:1px solid #556;border-radius:8px;font-size:15px}
  .seg input{display:none}
  .seg label:has(input:checked){background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
- #wrap{position:relative;margin:0 auto;background:#000;border-radius:8px;overflow:hidden;touch-action:manipulation}
+ #area{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;background:#000;border-radius:8px;overflow:hidden}
+ #wrap{position:relative;background:#000;overflow:hidden;touch-action:manipulation}
  #v{display:block;width:100%;height:100%;object-fit:cover}
  #box{position:absolute;border:2px solid #ffd54a;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none;box-sizing:border-box}
- button,input[type=text]{font:inherit;width:100%;padding:13px;margin-top:10px;border-radius:8px;border:1px solid #556;
-  background:#2b3138;color:#eee;box-sizing:border-box}
- button.main{background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
- button.ok{background:#3fa45b;border-color:#3fa45b;font-weight:bold}
- button.small{width:auto;margin:0;padding:8px 12px}
- #res button{margin-top:6px;text-align:left;font-family:ui-monospace,monospace}
- #msg{min-height:1.4em;margin-top:10px}
- #ctl{display:flex;gap:10px;align-items:center;margin-top:8px}
+ button,input[type=text]{font:inherit;padding:10px;border-radius:8px;border:1px solid #556;background:#2b3138;color:#eee;box-sizing:border-box}
+ button.main{width:100%;flex:none;background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
+ button.ok{background:#3fa45b;border-color:#3fa45b;font-weight:bold;white-space:nowrap}
+ button.small{padding:6px 12px}
+ #res{flex:none;display:flex;gap:6px;overflow-x:auto}
+ #res:empty{display:none}
+ #res button{white-space:nowrap;font-family:ui-monospace,monospace;padding:6px 10px}
+ #msg{flex:none;min-height:1.3em;font-size:14px;line-height:1.3;max-height:2.7em;overflow:hidden}
+ #ctl{flex:none;display:flex;gap:8px;align-items:center}
+ #ctl:empty{display:none}
  #ctl input[type=range]{flex:1}
- #prev{display:none;width:100%;max-height:35vh;object-fit:contain;margin-top:8px;border-radius:6px;border:1px solid #556;background:#000}
- small{color:#9aa}
+ #row{flex:none;display:flex;gap:6px}
+ #val{flex:1;min-width:0}
+ #prev{display:none;position:absolute;left:6px;right:6px;bottom:6px;max-height:30%;max-width:calc(100% - 12px);margin:0 auto;object-fit:contain;
+  border-radius:6px;border:1px solid #556;background:#000}
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
-<h1>BMC-Steward · Scanner</h1>
 <div class="seg">
  <label><input type="radio" name="m" value="barcode" checked><span id="t_bc">Barcode</span></label>
  <label><input type="radio" name="m" value="ocr"><span id="t_ocr">Text (OCR)</span></label>
 </div>
-<div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div>
-<div class="seg" style="margin-top:8px">
+<div id="area"><div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div><img id="prev" alt=""></div>
+<div class="seg">
  <label><input type="radio" name="c" value="s"><span id="c_s">Klein</span></label>
  <label><input type="radio" name="c" value="m"><span id="c_m">Mittel</span></label>
  <label><input type="radio" name="c" value="f" checked><span id="c_f">Ganz</span></label>
 </div>
-<small id="tip"></small>
 <div id="ctl"><input type="range" id="zoom" style="display:none"><button class="small" id="torch" style="display:none">💡</button></div>
 <button class="main" id="shot">Aufnehmen</button>
-<img id="prev" alt="">
 <div id="res"></div>
-<input type="text" id="val" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
- placeholder="Passwort">
-<button class="ok" id="send">In Passwort-Feld übernehmen</button>
+<div id="row"><input type="text" id="val" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+ placeholder="Passwort"><button class="ok" id="send">Übernehmen</button></div>
 <div id="msg"></div>
 <script>
 const de=(navigator.language||"de").startsWith("de");
-const L=de?{shot:"Aufnehmen",send:"In Passwort-Feld übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt. ",
+const L=de?{shot:"Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt. ",
  tip:"Tipp: Aufkleber antippen, Ausschnitt „Klein“ oder „Mittel“ wählen, bei Bedarf zoomen. Der gelbe Rahmen wird gelesen.",
  sent:"✓ Eingetragen in Zeile ",nosend:"Kein passendes Feld frei im Tool.",nocam:"Kamera nicht verfügbar. Bitte die Seite über HTTPS öffnen und die Kamera erlauben.",
  empty:"Erst aufnehmen oder Wert eintippen.",fail:"Fehler: ",s:"Klein",m:"Mittel",f:"Ganz"}
- :{shot:"Capture",send:"Send to password field",ph:"Password",busy:"Reading …",none:"Nothing recognised. ",
+ :{shot:"Capture",send:"Use",ph:"Password",busy:"Reading …",none:"Nothing recognised. ",
  tip:"Tip: tap the label, choose crop “Small” or “Medium”, zoom if needed. The yellow frame is read.",
  sent:"✓ Entered in row ",nosend:"No free field in the tool.",nocam:"Camera not available. Open the page via HTTPS and allow the camera.",
  empty:"Capture first or type a value.",fail:"Error: ",s:"Small",m:"Medium",f:"Full"};
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
-$("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;$("tip").textContent=L.tip;
-$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
+$("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
+say(L.tip);$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
 const SIZE={s:[.5,.2],m:[.85,.3],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
 function fit(){return pick("m")!=="ocr"}
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
- let w=innerWidth-24,h;
- if(fit()){h=w*v.videoHeight/v.videoWidth;const mx=innerHeight*.85;if(h>mx){h=mx;w=h*v.videoWidth/v.videoHeight}}
- else h=Math.min(innerHeight*.6,w/1.2);
+ const AW=$("area").clientWidth,AH=$("area").clientHeight;let w=AW,h=AH;
+ if(fit()){const k=Math.min(AW/v.videoWidth,AH/v.videoHeight);w=Math.round(v.videoWidth*k);h=Math.round(v.videoHeight*k)}
  $("v").style.objectFit=fit()?"contain":"cover";
  $("wrap").style.width=w+"px";$("wrap").style.height=h+"px";box();
 }
@@ -2561,7 +2562,7 @@ document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
 document.querySelectorAll("input[name=m]").forEach(e=>e.onchange=()=>{
  document.querySelector("input[name=c][value="+(pick("m")==="ocr"?"m":"f")+"]").checked=true;cx=cy=.5;layout()});
 $("wrap").onclick=e=>{const r=$("wrap").getBoundingClientRect();cx=(e.clientX-r.left)/r.width;cy=(e.clientY-r.top)/r.height;box()};
-addEventListener("resize",layout);$("v").addEventListener("loadedmetadata",layout);
+addEventListener("resize",layout);if(window.ResizeObserver)new ResizeObserver(layout).observe($("area"));$("prev").onclick=()=>{$("prev").style.display="none"};$("v").addEventListener("loadedmetadata",layout);
 async function cam(){
  try{
   const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:3840},height:{ideal:2160}},audio:false});
