@@ -12,10 +12,12 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.3"
+__version__ = "1.7.4"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
+import zipfile
+from collections import Counter, deque
 import errno
 import glob
 import html
@@ -43,7 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from PyQt6.QtCore import QLocale, QObject, QProcess, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QT_VERSION_STR, QBuffer, QByteArray, QIODevice, QLocale, QObject, QProcess, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPixmap
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
@@ -2542,7 +2544,7 @@ function fit(){return pick("m")!=="ocr"}
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
  let w=innerWidth-24,h;
- if(fit()){h=w*v.videoHeight/v.videoWidth;const mx=innerHeight*.7;if(h>mx){h=mx;w=h*v.videoWidth/v.videoHeight}}
+ if(fit()){h=w*v.videoHeight/v.videoWidth;const mx=innerHeight*.85;if(h>mx){h=mx;w=h*v.videoWidth/v.videoHeight}}
  else h=Math.min(innerHeight*.6,w/1.2);
  $("v").style.objectFit=fit()?"contain":"cover";
  $("wrap").style.width=w+"px";$("wrap").style.height=h+"px";box();
@@ -2584,7 +2586,7 @@ $("shot").onclick=async()=>{
  c.toBlob(async b=>{
   if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$("prev").src=prevUrl;$("prev").style.display="block";
   try{
-   const r=await fetch(base+"decode?mode="+pick("m"),{method:"POST",body:b}),j=await r.json();
+   const r=await fetch(base+"decode?mode="+pick("m"),{method:"POST",body:b,headers:{"X-Client":JSON.stringify({win:[innerWidth,innerHeight],video:[v.videoWidth,v.videoHeight],wrap:[Math.round($("wrap").clientWidth),Math.round($("wrap").clientHeight)],crop:[sx,sy,sw,sh],out:[c.width,c.height],size:pick("c"),zoom:$("zoom")?$("zoom").value:null})}}),j=await r.json();
    if(j.error){say(j.error,"err");return}
    if(!j.texts.length){say(L.none+(j.info||""),"err");return}
    say("");
@@ -2643,7 +2645,70 @@ def tesseract_run(exe, path, psm):
     return found, err
 
 
-def scan_decode(jpeg, mode):
+def binarize(gray):
+    """Streifen und Moiré (Foto vom Bildschirm) glätten, dann nach Otsu in Schwarz/Weiss wandeln."""
+    w, h = gray.width(), gray.height()
+    small = gray.scaled(max(1, w // 3), max(1, h // 3), Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+    blur = small.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    blur = blur.convertToFormat(QImage.Format.Format_Grayscale8)
+    stride, rows = blur.bytesPerLine(), []
+    ptr = blur.constBits()
+    ptr.setsize(stride * h)
+    raw = bytes(ptr)
+    for y in range(h):
+        rows.append(raw[y * stride:y * stride + w])
+    data = b"".join(rows)
+    hist = [0] * 256
+    cnt = Counter(data)
+    for v, n in cnt.items():
+        hist[v] = n
+    total, sum_all = len(data), sum(v * n for v, n in cnt.items())
+    wb = sb = 0
+    best, thr = -1.0, 128
+    for t in range(256):
+        wb += hist[t]
+        if not wb:
+            continue
+        wf = total - wb
+        if not wf:
+            break
+        sb += t * hist[t]
+        mb, mf = sb / wb, (sum_all - sb) / wf
+        between = wb * wf * (mb - mf) ** 2
+        if between > best:
+            best, thr = between, t
+    table = bytes(0 if i <= thr else 255 for i in range(256))
+    out = QImage(data.translate(table), w, h, w, QImage.Format.Format_Grayscale8)
+    return out.copy(), thr
+
+
+class ScanDebug:
+    """Sammelt beim Debug-Modus, was beim Lesen passiert ist (Schritte, Kandidaten, zwischengespeicherte Bilder)."""
+
+    def __init__(self, show_text, keep_images):
+        self.show_text, self.keep_images = show_text, keep_images
+        self.lines, self.images = [], []
+
+    def add(self, text):
+        self.lines.append(text)
+
+    def cands(self, found):
+        if not found:
+            return "0"
+        return f"{len(found)}: " + (" | ".join(found[:6]) if self.show_text else
+                                    ", ".join(f"{len(t)} Zeichen" for t in found[:6]))
+
+    def image(self, name, img):
+        if self.keep_images:
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            img.save(buf, "PNG")
+            self.images.append((name, bytes(ba)))
+
+
+def scan_decode(jpeg, mode, dbg=None):
     """Liest Text aus einem Bild: (Liste möglicher Werte, Fehlertext, Info). Das Bild liegt nur kurz in einem
     privaten Temp-Ordner und wird gleich danach gelöscht. Texterkennung: Graustufen, kleine Ausschnitte
     werden vergrößert, dann Zeile/Wort/Block-Modi nacheinander, zuletzt invertiert (helle Schrift)."""
@@ -2655,6 +2720,10 @@ def scan_decode(jpeg, mode):
     if img.isNull():
         return [], T("Das Bild konnte nicht gelesen werden."), ""
     info = T("Bild {0}×{1} px.").format(img.width(), img.height())
+    if dbg:
+        dbg.add(f"Eingang: Modus {mode}, {len(jpeg)} Bytes, {img.width()}x{img.height()} px")
+        if dbg.keep_images:
+            dbg.images.append(("eingang.jpg", bytes(jpeg)))
     with tempfile.TemporaryDirectory(prefix="bmc-scan-") as d:
         if mode == "barcode":
             path = os.path.join(d, "frame.jpg")
@@ -2663,40 +2732,77 @@ def scan_decode(jpeg, mode):
             try:
                 r = subprocess.run([exe, "--quiet", "--raw", path], capture_output=True, text=True, timeout=30)
             except (OSError, subprocess.SubprocessError) as e:
+                if dbg:
+                    dbg.add(f"zbarimg Fehler: {e}")
                 return [], T("Erkennung fehlgeschlagen: {0}").format(e), info
+            if dbg:
+                dbg.add(f"zbarimg Rückgabe {r.returncode}, stderr: {r.stderr.strip()[-200:]!r}")
             out = []
             for line in r.stdout.splitlines():
                 line = " ".join(line.split())
                 if line and line not in out and len(line) <= 200:
                     out.append(line)
             return out[:12], "", info
-        gray = img.convertToFormat(QImage.Format.Format_Grayscale8)
-        longest = max(gray.width(), gray.height())
+        gray0 = img.convertToFormat(QImage.Format.Format_Grayscale8)
+        longest = max(gray0.width(), gray0.height())
         scale = 1 if longest >= 1800 else 2 if longest >= 900 else 3
-        if scale > 1:
-            gray = gray.scaled(gray.width() * scale, gray.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
+
+        def grow(g):
+            if scale == 1:
+                return g
+            return g.scaled(g.width() * scale, g.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation)
+
+        def soft(k):
+            """Weichzeichnen über Verkleinern/Vergrößern: nimmt Streifen und Moiré (Foto vom Bildschirm) weg."""
+            w, h = gray0.width(), gray0.height()
+            sm = gray0.scaled(max(1, w // k), max(1, h // k), Qt.AspectRatioMode.IgnoreAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+            return grow(sm.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation).convertToFormat(
+                                      QImage.Format.Format_Grayscale8))
+
+        gray = grow(gray0)
+        votes = Counter()
         out, errs = [], []
-        for inverted, modes in ((False, ("7", "8", "6", "11")), (True, ("7", "6"))):
-            if out:
+        bw, thr = binarize(gray)
+        if dbg:
+            dbg.add(f"Vorbereitung: Graustufen {gray.width()}x{gray.height()} (Faktor {scale}), Otsu-Schwelle {thr}")
+        # Weichgezeichnete Fassungen zuerst: zeilenweise Erkennung, mehrere Varianten stimmen über das Ergebnis ab
+        steps = (("weich2", soft(2), False, ("7",)), ("weich3", soft(3), False, ("7",)),
+                 ("weich4", soft(4), False, ("7",)),
+                 ("grau", gray, False, ("7", "8", "6", "11")), ("sw", bw, False, ("7", "8", "6")),
+                 ("grau-invers", gray, True, ("7", "6")), ("sw-invers", bw, True, ("7", "6")))
+        for name, base, inverted, modes in steps:
+            if out and not name.startswith("weich"):
                 break
+            im = base.copy()
             if inverted:
-                gray.invertPixels()
-            path = os.path.join(d, "ocr-inv.png" if inverted else "ocr.png")
-            gray.save(path, "PNG")
+                im.invertPixels()
+            path = os.path.join(d, name + ".png")
+            im.save(path, "PNG")
+            if dbg:
+                dbg.image(name + ".png", im)
             for psm in modes:
                 found, err = tesseract_run(exe, path, psm)
+                if dbg:
+                    dbg.add(f"tesseract {name} psm {psm}: Kandidaten {dbg.cands(found)}" + (f", Fehler: {err}" if err else ""))
                 if err and err not in errs:
                     errs.append(err)
                 for t in found:
-                    if t not in out and len(t) <= 200:
-                        out.append(t)
+                    if len(t) <= 200:
+                        votes[t] += 1
+                        if t not in out:
+                            out.append(t)
                 if out:
                     break
     if not out and errs:
         return [], T("Tesseract meldet: {0} (Sprachdaten fehlen? sudo pacman -S tesseract-data-eng)").format(errs[0]), info
     # Passwörter haben keine Leerzeichen und viele verschiedene Zeichen; Rauschen wie „EEE TTT“ kommt nach hinten
-    out.sort(key=lambda t: (" " in t, -len(set(t.replace(" ", "")))))
+    out.sort(key=lambda t: (" " in t, -votes[t], -len(set(t.replace(" ", "")))))
+    if dbg:
+        dbg.add("Rangfolge: " + (" | ".join(f"{t if dbg.show_text else str(len(t)) + ' Zeichen'} ({votes[t]}x)"
+                                             for t in out[:6]) or "leer"))
     return out[:12], "", info
 
 
@@ -2711,6 +2817,12 @@ class ScanServer:
         self.tmp = None
         self.httpd = None
         self.limit = threading.Semaphore(2)
+        self.events = deque(maxlen=400)      # Ablauf-Protokoll für den Log-Export (ohne Passwörter)
+        self.debug = False                   # Debug-Modus: erkannte Texte und Bilder mitschreiben
+        self.images = deque(maxlen=12)       # nur im Debug-Modus: (Name, Bytes) der letzten Aufnahmen
+
+    def note(self, text):
+        self.events.append(time.strftime("%H:%M:%S ") + text)
 
     def url(self):
         return f"https://{self.ip}:{self.port}/{self.token}/"
@@ -2759,6 +2871,8 @@ class ScanServer:
 
             def do_GET(self):
                 rest, _ = self.route()
+                srv.note(f"GET {'/' if rest == '/' else '?'} von {self.client_address[0]} "
+                         f"({self.headers.get('User-Agent', '')[:120]})")
                 if rest == "/":
                     self.reply(200, SCAN_HTML, "text/html")
                 else:
@@ -2776,8 +2890,18 @@ class ScanServer:
                 body = self.rfile.read(size)
                 if rest == "/decode":
                     mode = "ocr" if "mode=ocr" in query else "barcode"
+                    dbg = ScanDebug(srv.debug, srv.debug)
+                    t0 = time.time()
                     with srv.limit:
-                        texts, err, info = scan_decode(body, mode)
+                        texts, err, info = scan_decode(body, mode, dbg)
+                    srv.note(f"POST decode Modus {mode}, {size} Bytes, Handy: {self.headers.get('X-Client', '-')[:300]}")
+                    for line in dbg.lines:
+                        srv.note("    " + line)
+                    shown = " | ".join(texts[:6]) if srv.debug else f"{len(texts)} Treffer"
+                    srv.note(f"    Ergebnis ({time.time() - t0:.1f} s): {shown}" + (f", Fehler: {err}" if err else ""))
+                    if srv.debug:
+                        stamp = time.strftime("%H%M%S")
+                        srv.images.extend((f"{stamp}-{n}", b) for n, b in dbg.images)
                     del body
                     self.reply(200, json.dumps({"texts": texts, "error": err, "info": info}))
                     return
@@ -2789,6 +2913,7 @@ class ScanServer:
                     self.reply(400, json.dumps({"ok": False}))
                     return
                 holder = {"row": 0, "done": threading.Event()}
+                srv.note(f"POST set, {len(value)} Zeichen" + (f": {value}" if srv.debug else ""))
                 srv.bridge.value.emit(value, holder)
                 holder["done"].wait(5)
                 self.reply(200, json.dumps({"ok": bool(holder["row"]), "row": holder["row"]}))
@@ -2915,11 +3040,24 @@ class ScannerDialog(QDialog):
         row2.addWidget(self.iface, 1)
         row2.addWidget(self.refresh)
         row2.addWidget(self.toggle)
+        self.debug = QCheckBox(T("Debug-Modus (Texte und Bilder mitschreiben)"))
+        self.debug.setToolTip(T("Aus: Das Protokoll enthält nur den Ablauf, keine erkannten Texte, keine Bilder.\n"
+                                "An: Zusätzlich stehen erkannte Texte (also auch das Passwort im Klartext) und die "
+                                "Zwischenbilder der Erkennung im Export. Nur zur Fehlersuche einschalten und den "
+                                "Export danach löschen."))
+        self.debug.toggled.connect(self.set_debug)
+        self.export_btn = QPushButton(T("Log exportieren …"))
+        self.export_btn.clicked.connect(self.export_log)
+        self.events, self.images = deque(maxlen=400), deque(maxlen=12)
+        row3 = QHBoxLayout()
+        row3.addWidget(self.debug, 1)
+        row3.addWidget(self.export_btn)
         lay = QVBoxLayout(self)
         for w in (intro,):
             lay.addWidget(w)
         lay.addLayout(row1)
         lay.addLayout(row2)
+        lay.addLayout(row3)
         for w in (self.qr_wifi, self.wifi_info, self.qr, self.url, self.state, hint, self.log):
             lay.addWidget(w)
         self.way.currentIndexChanged.connect(self.fill_ifaces)
@@ -2928,6 +3066,47 @@ class ScannerDialog(QDialog):
 
     def say(self, text):
         self.log.append(html.escape(text))
+        self.events.append(time.strftime("%H:%M:%S ") + "[Fenster] " + text)
+
+    def set_debug(self, on):
+        if self.server:
+            self.server.debug = on
+        self.events.append(time.strftime("%H:%M:%S ") + f"[Fenster] Debug-Modus {'an' if on else 'aus'}")
+
+    def export_log(self):
+        """Protokoll (und im Debug-Modus die Zwischenbilder) als ZIP speichern."""
+        if self.server:
+            self.events.extend(e for e in self.server.events if e not in self.events)
+            self.images.extend(i for i in self.server.images if i not in self.images)
+        import platform
+        head = [f"BMC-Steward {__version__}", f"System: {platform.platform()}",
+                f"Python {platform.python_version()}, Qt {QT_VERSION_STR}",
+                f"Debug-Modus: {'an' if self.debug.isChecked() else 'aus'}",
+                "Hilfsprogramme: " + ", ".join(f"{k}={'ja' if v else 'nein'}" for k, v in scan_tools().items())]
+        for exe, arg in (("tesseract", "--version"), ("zbarimg", "--version")):
+            path = shutil.which(exe)
+            if path:
+                try:
+                    out = subprocess.run([path, arg], capture_output=True, text=True, timeout=10)
+                    head.append(f"{exe}: " + ((out.stdout or out.stderr).splitlines() or [""])[0])
+                except (OSError, subprocess.SubprocessError):
+                    pass
+        if self.server:
+            head.append(f"Server: {self.server.ip}:{self.server.port}")
+        path, _ = QFileDialog.getSaveFileName(self, T("Log exportieren"),
+                                              str(Path.home() / f"bmc-steward-scanlog-{time.strftime('%Y%m%d-%H%M%S')}.zip"),
+                                              T("ZIP (*.zip)"))
+        if not path:
+            return
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("log.txt", "\n".join(head + ["", *self.events]) + "\n")
+                for name, data in self.images:
+                    z.writestr("bilder/" + name, data)
+        except OSError as e:
+            QMessageBox.warning(self, T("Log exportieren"), str(e))
+            return
+        self.say(T("Log exportiert: {0}").format(path))
 
     def current_way(self):
         return self.way.currentData()
@@ -3035,6 +3214,7 @@ class ScannerDialog(QDialog):
             self.stop_hotspot()
             QMessageBox.warning(self, T("Handy-Scanner"), T("Start fehlgeschlagen: {0}").format(e))
             return
+        server.debug = self.debug.isChecked()
         self.server = server
         self.toggle.setText(T("Beenden"))
         for w in (self.way, self.iface, self.refresh):
@@ -3058,6 +3238,8 @@ class ScannerDialog(QDialog):
 
     def stop_server(self):
         if self.server:
+            self.events.extend(e for e in self.server.events if e not in self.events)
+            self.images.extend(i for i in self.server.images if i not in self.images)
             self.server.stop()
             self.server = None
         self.stop_hotspot()
