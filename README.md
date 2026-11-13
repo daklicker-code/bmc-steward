@@ -6,7 +6,9 @@ BMC-Steward is a small desktop tool for the first-time setup of server managemen
 one server after another: it creates a new administrator account, sets the hostname and switches the BMC
 from its factory/DHCP address to a static one.
 
-Supported: **Dell iDRAC**, **HPE iLO**, **Supermicro** and **Lenovo XCC**, all via Redfish.
+Supported: **Dell iDRAC**, **HPE iLO**, **Supermicro** and **Lenovo XCC** via Redfish. Older HPE servers
+with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell servers with
+**iDRAC7/8** through Redfish (firmware 2.50.50.50 or newer).
 
 ![BMC-Steward screenshot](docs/screenshot.png)
 
@@ -87,11 +89,17 @@ The password column may be left out. Semicolons work too, so an Excel export can
 | Vendor | Designed for | Status |
 |---|---|---|
 | Dell | iDRAC9 (14th to 16th generation) | first target platform (R6625) |
+| Dell | iDRAC7/8 (12th/13th generation), firmware 2.50.50.50+ | tested against simulated BMCs only |
 | HPE | iLO 5 and 6 | tested against simulated BMCs only |
+| HPE | iLO 3 (G7) and iLO 4 (Gen8/Gen9), via RIBCL | tested against simulated BMCs only |
 | Supermicro | X12/X13 | tested against simulated BMCs only |
 | Lenovo | XCC2/XCC3 | tested against simulated BMCs only |
 
 The UEFI settings and the Windows DHCP server have also only been tested against simulations.
+
+Not supported: iDRAC6, iLO 2 and older, and iDRAC7/8 firmware before 2.50.50.50 (the tool detects it,
+says so and changes nothing). iLO 3 only speaks TLS 1.0/1.1; the tool falls back to the old encryption
+for such devices automatically and notes it in the log.
 **Always try a single device first before a large rollout.**
 
 ## Security notes
