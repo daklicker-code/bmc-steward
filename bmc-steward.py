@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.6"
+__version__ = "1.7.7"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -2612,6 +2612,7 @@ class ScanBridge(QObject):
     """Bringt einen Wert vom Server-Thread in den Hauptthread (die Oberfläche)."""
     value = pyqtSignal(str, object)
     connected = pyqtSignal()        # das Handy hat die Seite geladen
+    started = pyqtSignal(object)    # Start fertig: (server|None, Fehlertext, ssid, wlan-passwort)
 
 
 def scan_tools():
@@ -3027,7 +3028,7 @@ class ScanServer:
             self.tmp = None
 
 
-SCAN_WAIT_SECONDS = 18      # so lange dauert der Verbindungsaufbau des Handys etwa
+SCAN_WAIT_SECONDS = 18      # so lange dauert der Start (Verbindungsaufbau) etwa
 WAIT_STEPS = 100
 HOTSPOT_CON = "BMC-Steward-Hotspot"
 USB_TETHER_DRIVERS = ("rndis_host", "cdc_ether", "cdc_ncm", "cdc_eem", "ipheth")
@@ -3080,9 +3081,12 @@ class ScannerDialog(QDialog):
         self.bridge = ScanBridge()
         self.bridge.value.connect(self.on_value)
         self.bridge.connected.connect(self.on_phone_connected)
+        self.bridge.started.connect(self.on_started)
+        self.starting = False
+        self.cancel_start = False
         self.wait_bar = QProgressBar()
         self.wait_bar.setRange(0, WAIT_STEPS)
-        self.wait_bar.setFormat(T("Warte auf das Handy … %p %"))
+        self.wait_bar.setFormat(T("Starte … %p %"))
         self.wait_bar.hide()
         self.wait_timer = QTimer(self)
         self.wait_timer.timeout.connect(self.wait_tick)
@@ -3168,16 +3172,13 @@ class ScannerDialog(QDialog):
 
     def wait_start(self):
         self.wait_bar.setValue(0)
-        self.wait_bar.setFormat(T("Warte auf das Handy … %p %"))
+        self.wait_bar.setFormat(T("Starte … %p %"))
         self.wait_bar.show()
         self.wait_timer.start(1000 * SCAN_WAIT_SECONDS // WAIT_STEPS)
 
     def wait_tick(self):
-        v = self.wait_bar.value() + 1
-        self.wait_bar.setValue(v)
-        if v >= WAIT_STEPS:
-            self.wait_timer.stop()
-            self.wait_bar.setFormat(T("Noch kein Handy verbunden – Link/Firewall prüfen"))
+        # bei 99 % warten, bis der Start wirklich fertig ist
+        self.wait_bar.setValue(min(self.wait_bar.value() + 1, WAIT_STEPS - 1))
 
     def wait_stop(self, text=None):
         self.wait_timer.stop()
@@ -3188,8 +3189,7 @@ class ScannerDialog(QDialog):
             self.wait_bar.hide()
 
     def on_phone_connected(self):
-        if self.wait_timer.isActive():
-            self.wait_stop(T("Handy verbunden"))
+        self.say(T("Handy verbunden"))
 
     def set_debug(self, on):
         if self.server:
@@ -3308,7 +3308,9 @@ class ScannerDialog(QDialog):
         if self.server:
             self.stop_server()
             return
-        way, ip, ssid, wifi_pw = self.current_way(), self.iface.currentData() or "", "", ""
+        if self.starting:
+            return
+        way, ip = self.current_way(), self.iface.currentData() or ""
         if way == "hotspot":
             if not ip:
                 QMessageBox.warning(self, T("Handy-Scanner"), T("Kein WLAN-Adapter gefunden."))
@@ -3319,29 +3321,56 @@ class ScannerDialog(QDialog):
                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                     QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
                 return
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                ssid, wifi_pw, ip = self.start_hotspot(ip)
-            finally:
-                QApplication.restoreOverrideCursor()
-            if ssid is None:
-                QMessageBox.warning(self, T("Handy-Scanner"), T("Hotspot fehlgeschlagen: {0}").format(wifi_pw))
-                return
-        if not ip:
+        elif not ip:
             QMessageBox.warning(self, T("Handy-Scanner"), T("Dieser Rechner hat keine passende Netzwerkadresse."))
             return
-        server = ScanServer(ip, self.bridge)
+        self.starting = True
+        self.toggle.setEnabled(False)
+        for w in (self.way, self.iface, self.refresh):
+            w.setEnabled(False)
+        self.wait_start()               # Ladebalken läuft ab dem Klick bis der QR-Code da ist
+        threading.Thread(target=self.start_worker, args=(way, ip), daemon=True).start()
+
+    def start_worker(self, way, ip):
+        """Hotspot und Server starten (blockiert, deshalb nicht im Fenster-Thread); Ergebnis per Signal."""
+        ssid = wifi_pw = ""
         try:
+            if way == "hotspot":
+                ssid, wifi_pw, ip = self.start_hotspot(ip)
+                if ssid is None:
+                    self.bridge.started.emit((None, T("Hotspot fehlgeschlagen: {0}").format(wifi_pw), "", ""))
+                    return
+                if not ip:
+                    self.stop_hotspot()
+                    self.bridge.started.emit((None, T("Dieser Rechner hat keine passende Netzwerkadresse."), "", ""))
+                    return
+            server = ScanServer(ip, self.bridge)
             server.start()
+            self.bridge.started.emit((server, "", ssid, wifi_pw))
         except (OSError, RuntimeError, subprocess.SubprocessError) as e:
             self.stop_hotspot()
-            QMessageBox.warning(self, T("Handy-Scanner"), T("Start fehlgeschlagen: {0}").format(e))
+            self.bridge.started.emit((None, T("Start fehlgeschlagen: {0}").format(e), "", ""))
+
+    def on_started(self, result):
+        server, err, ssid, wifi_pw = result
+        self.starting = False
+        self.toggle.setEnabled(True)
+        if self.cancel_start:           # Fenster wurde während des Starts geschlossen
+            self.cancel_start = False
+            if server is not None:
+                server.stop()
+            self.stop_server()
+            return
+        if server is None:
+            self.wait_stop()
+            for w in (self.way, self.iface, self.refresh):
+                w.setEnabled(True)
+            self.fill_ifaces()
+            QMessageBox.warning(self, T("Handy-Scanner"), err)
             return
         server.debug = self.debug.isChecked()
         self.server = server
         self.toggle.setText(T("Beenden"))
-        for w in (self.way, self.iface, self.refresh):
-            w.setEnabled(False)
         link = server.url()
         self.url.setText(f"<b>{html.escape(link)}</b>")
         if ssid:
@@ -3360,10 +3389,13 @@ class ScannerDialog(QDialog):
         else:
             self.qr.setText(T("(Für einen QR-Code: sudo pacman -S qrencode)"))
         self.say(T("Scanner gestartet auf {0}").format(link.rsplit("/", 2)[0]))
-        self.wait_start()
+        self.wait_stop(T("Bereit – QR-Code mit dem Handy scannen"))
         self.adjustSize()
 
     def stop_server(self):
+        if self.starting:
+            self.cancel_start = True
+            return
         if self.server:
             self.events.extend(e for e in self.server.events if e not in self.events)
             self.images.extend(i for i in self.server.images if i not in self.images)
