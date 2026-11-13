@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -667,6 +667,31 @@ class Engine(RedfishClient):
         self.fail(T("Netzwerk und Hostname"), code)
         return False
 
+    def identity(self, ip):
+        """Modell und Seriennummer des Servers (nur lesen, mit dem neuen Benutzer). Leer, wenn nicht lesbar;
+        ein Fehler hier stört den Lauf nie."""
+        try:
+            if not self.ok(self.api(ip, self.new_user, self.new_pass, "GET", "/redfish/v1/Systems", timeout=10)) \
+                    or not isinstance(self.body, dict):
+                return ""
+            members = self.body.get("Members") or []
+            path = members[0].get("@odata.id") if members and isinstance(members[0], dict) else None
+            if not path or not self.ok(self.api(ip, self.new_user, self.new_pass, "GET", path, timeout=10)) \
+                    or not isinstance(self.body, dict):
+                return ""
+            b = self.body
+            model = " ".join(str(b.get("Model") or "").split())
+            serial = " ".join(str(b.get("SerialNumber") or "").split())
+            tag = " ".join(str(b.get("SKU") or "").split()) if b.get("SKU") != b.get("SerialNumber") else ""
+            parts = [model] if model else []
+            if serial:
+                parts.append(T("Seriennummer {0}").format(serial))
+            if tag and tag != serial:
+                parts.append(T("Service-Tag/SKU {0}").format(tag))
+            return " · ".join(parts)
+        except Exception:
+            return ""
+
     def check_login(self, ip, path):
         """Kontrolle am Ende: Anmeldung mit dem neuen Benutzer unter der neuen Adresse."""
         if path == "ribcl":
@@ -764,7 +789,7 @@ class Engine(RedfishClient):
 
     def run(self):
         """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
-        done, failed = [], []
+        done, failed, inventory = [], [], []
         for cur_ip, row_pw, new_ip, mask, gw, host in self.rows:
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
@@ -817,7 +842,10 @@ class Engine(RedfishClient):
                 still = []
                 for ip, path in pending:
                     if self.check_login(ip, path):
-                        self.log(T('  OK      {0}').format(ip), "ok")
+                        info = self.identity(ip) if path != "ribcl" else ""
+                        self.log(T('  OK      {0}').format(ip) + (f"   {info}" if info else ""), "ok")
+                        if info:
+                            inventory.append(f"{ip}   {info}")
                     else:
                         still.append((ip, path))
                 pending = still
@@ -828,6 +856,11 @@ class Engine(RedfishClient):
                 self.log(T('  FEHLT   {0}').format(ip), "err")
                 failed.append(ip)
 
+        if inventory:
+            self.log("")
+            self.log(T("Inventar (neue IP, Modell, Seriennummer):"), "head")
+            for line in inventory:
+                self.log("  " + line)
         self.log("")
         summary = T('Fertig: {0} konfiguriert, {1} Fehler').format(len(done), len(failed))
         self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
@@ -3629,6 +3662,21 @@ class Window(QWidget):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Seriennummer {0}": [
+"serial number {0}",
+"numéro de série {0}",
+"Serienummere {0}"
+],
+"Service-Tag/SKU {0}": [
+"service tag/SKU {0}",
+"service tag/SKU {0}",
+"Service-Tag/SKU {0}"
+],
+"Inventar (neue IP, Modell, Seriennummer):": [
+"Inventory (new IP, model, serial number):",
+"Inventaire (nouvelle IP, modèle, numéro de série) :",
+"Inventar (neui IP, Modäll, Serienummere):"
+],
 "(kein Profil)": [
 "(no profile)",
 "(aucun profil)",
