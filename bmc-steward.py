@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -44,7 +44,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from PyQt6.QtCore import QLocale, QObject, QProcess, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPixmap
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -2482,26 +2482,41 @@ SCAN_HTML = """<!doctype html>
 <style>
  body{font:17px system-ui,sans-serif;margin:0;padding:12px;background:#1d2126;color:#eee}
  h1{font-size:19px;margin:0 0 10px}
- .seg{display:flex;gap:8px;margin-bottom:10px}
- .seg label{flex:1;text-align:center;padding:10px;border:1px solid #556;border-radius:8px}
+ .seg{display:flex;gap:8px;margin-bottom:8px}
+ .seg label{flex:1;text-align:center;padding:9px 4px;border:1px solid #556;border-radius:8px;font-size:15px}
  .seg input{display:none}
  .seg label:has(input:checked){background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
- video{width:100%;max-height:45vh;background:#000;border-radius:8px;object-fit:cover}
+ #wrap{position:relative;margin:0 auto;background:#000;border-radius:8px;overflow:hidden;touch-action:manipulation}
+ #v{display:block;width:100%;height:100%}
+ #box{position:absolute;border:2px solid #ffd54a;box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none;box-sizing:border-box}
  button,input[type=text]{font:inherit;width:100%;padding:13px;margin-top:10px;border-radius:8px;border:1px solid #556;
   background:#2b3138;color:#eee;box-sizing:border-box}
  button.main{background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
  button.ok{background:#3fa45b;border-color:#3fa45b;font-weight:bold}
+ button.small{width:auto;margin:0;padding:8px 12px}
  #res button{margin-top:6px;text-align:left;font-family:ui-monospace,monospace}
  #msg{min-height:1.4em;margin-top:10px}
+ #ctl{display:flex;gap:10px;align-items:center;margin-top:8px}
+ #ctl input[type=range]{flex:1}
+ #prev{display:none;max-width:100%;max-height:80px;margin-top:8px;border-radius:6px;border:1px solid #556}
+ small{color:#9aa}
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
-<h1 id="h">BMC-Steward · Scanner</h1>
+<h1>BMC-Steward · Scanner</h1>
 <div class="seg">
  <label><input type="radio" name="m" value="barcode" checked><span id="t_bc">Barcode</span></label>
  <label><input type="radio" name="m" value="ocr"><span id="t_ocr">Text (OCR)</span></label>
 </div>
-<video id="v" playsinline muted autoplay></video>
+<div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div>
+<div class="seg" style="margin-top:8px">
+ <label><input type="radio" name="c" value="s"><span id="c_s">Klein</span></label>
+ <label><input type="radio" name="c" value="m"><span id="c_m">Mittel</span></label>
+ <label><input type="radio" name="c" value="f" checked><span id="c_f">Ganz</span></label>
+</div>
+<small id="tip"></small>
+<div id="ctl"><input type="range" id="zoom" style="display:none"><button class="small" id="torch" style="display:none">💡</button></div>
 <button class="main" id="shot">Aufnehmen</button>
+<img id="prev" alt="">
 <div id="res"></div>
 <input type="text" id="val" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
  placeholder="Passwort">
@@ -2509,42 +2524,68 @@ SCAN_HTML = """<!doctype html>
 <div id="msg"></div>
 <script>
 const de=(navigator.language||"de").startsWith("de");
-const L=de?{shot:"Aufnehmen",send:"In Passwort-Feld übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt, bitte näher ran oder anders halten.",
+const L=de?{shot:"Aufnehmen",send:"In Passwort-Feld übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt. ",
+ tip:"Tipp: Aufkleber antippen, Ausschnitt „Klein“ oder „Mittel“ wählen, bei Bedarf zoomen. Der gelbe Rahmen wird gelesen.",
  sent:"✓ Eingetragen in Zeile ",nosend:"Kein passendes Feld frei im Tool.",nocam:"Kamera nicht verfügbar. Bitte die Seite über HTTPS öffnen und die Kamera erlauben.",
- empty:"Erst aufnehmen oder Wert eintippen.",fail:"Fehler: "}
- :{shot:"Capture",send:"Send to password field",ph:"Password",busy:"Reading …",none:"Nothing recognised, move closer or hold differently.",
+ empty:"Erst aufnehmen oder Wert eintippen.",fail:"Fehler: ",s:"Klein",m:"Mittel",f:"Ganz"}
+ :{shot:"Capture",send:"Send to password field",ph:"Password",busy:"Reading …",none:"Nothing recognised. ",
+ tip:"Tip: tap the label, choose crop “Small” or “Medium”, zoom if needed. The yellow frame is read.",
  sent:"✓ Entered in row ",nosend:"No free field in the tool.",nocam:"Camera not available. Open the page via HTTPS and allow the camera.",
- empty:"Capture first or type a value.",fail:"Error: "};
+ empty:"Capture first or type a value.",fail:"Error: ",s:"Small",m:"Medium",f:"Full"};
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
-$("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
+$("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;$("tip").textContent=L.tip;
+$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
+const SIZE={s:[.5,.16],m:[.8,.3],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
+function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
+function layout(){
+ const v=$("v");if(!v.videoWidth)return;
+ const r=v.videoWidth/v.videoHeight,w=Math.min(innerWidth-24,innerHeight*.5*r);
+ $("wrap").style.width=w+"px";$("wrap").style.height=(w/r)+"px";box();
+}
+function box(){
+ const [w,h]=SIZE[pick("c")];cx=Math.min(1-w/2,Math.max(w/2,cx));cy=Math.min(1-h/2,Math.max(h/2,cy));
+ const b=$("box").style;b.left=(cx-w/2)*100+"%";b.top=(cy-h/2)*100+"%";b.width=w*100+"%";b.height=h*100+"%";
+}
+document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
+document.querySelectorAll("input[name=m]").forEach(e=>e.onchange=()=>{
+ document.querySelector("input[name=c][value="+(pick("m")==="ocr"?"m":"f")+"]").checked=true;cx=cy=.5;box()});
+$("wrap").onclick=e=>{const r=$("wrap").getBoundingClientRect();cx=(e.clientX-r.left)/r.width;cy=(e.clientY-r.top)/r.height;box()};
+addEventListener("resize",layout);$("v").addEventListener("loadedmetadata",layout);
 async function cam(){
  try{
-  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
-  $("v").srcObject=s;
+  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:3840},height:{ideal:2160}},audio:false});
+  $("v").srcObject=s;track=s.getVideoTracks()[0];
+  const c=(track.getCapabilities&&track.getCapabilities())||{};
+  if(c.focusMode&&c.focusMode.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{});
+  if(c.zoom){const z=$("zoom");z.min=c.zoom.min;z.max=c.zoom.max;z.step=c.zoom.step||.1;z.value=c.zoom.min;z.style.display="";
+   z.oninput=()=>track.applyConstraints({advanced:[{zoom:+z.value}]}).catch(()=>{})}
+  if(c.torch){let on=false;const t=$("torch");t.style.display="";t.onclick=()=>{on=!on;track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{})}}
  }catch(e){say(L.nocam,"err")}
 }
-function mode(){return document.querySelector("input[name=m]:checked").value}
 $("shot").onclick=async()=>{
  const v=$("v");if(!v.videoWidth){say(L.nocam,"err");return}
- const k=Math.min(1,1800/Math.max(v.videoWidth,v.videoHeight)),c=document.createElement("canvas");
- c.width=Math.round(v.videoWidth*k);c.height=Math.round(v.videoHeight*k);c.getContext("2d").drawImage(v,0,0,c.width,c.height);
+ const [w,h]=SIZE[pick("c")],sw=Math.round(w*v.videoWidth),sh=Math.round(h*v.videoHeight),
+  sx=Math.round((cx-w/2)*v.videoWidth),sy=Math.round((cy-h/2)*v.videoHeight),k=Math.min(1,3200/Math.max(sw,sh)),c=document.createElement("canvas");
+ c.width=Math.max(1,Math.round(sw*k));c.height=Math.max(1,Math.round(sh*k));
+ c.getContext("2d").drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
  say(L.busy);$("res").innerHTML="";
  c.toBlob(async b=>{
+  if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$("prev").src=prevUrl;$("prev").style.display="block";
   try{
-   const r=await fetch(base+"decode?mode="+mode(),{method:"POST",body:b}),j=await r.json();
+   const r=await fetch(base+"decode?mode="+pick("m"),{method:"POST",body:b}),j=await r.json();
    if(j.error){say(j.error,"err");return}
-   if(!j.texts.length){say(L.none,"err");return}
+   if(!j.texts.length){say(L.none+(j.info||""),"err");return}
    say("");
    j.texts.forEach((t,i)=>{const e=document.createElement("button");e.textContent=t;e.onclick=()=>{$("val").value=t};$("res").appendChild(e);if(!i)$("val").value=t});
   }catch(e){say(L.fail+e,"err")}
- },"image/jpeg",0.92);
+ },"image/jpeg",0.95);
 };
 $("send").onclick=async()=>{
  const t=$("val").value.trim();if(!t){say(L.empty,"err");return}
  try{
   const r=await fetch(base+"set",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:t})}),j=await r.json();
-  if(j.ok){$("val").value="";$("res").innerHTML="";say(L.sent+j.row,"good")}else say(L.nosend,"err");
+  if(j.ok){$("val").value="";$("res").innerHTML="";$("prev").style.display="none";if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null}say(L.sent+j.row,"good")}else say(L.nosend,"err");
  }catch(e){say(L.fail+e,"err")}
 };
 cam();
@@ -2564,33 +2605,79 @@ def scan_tools():
     return {name: bool(shutil.which(name)) for name in ("openssl", "zbarimg", "tesseract", "qrencode")}
 
 
-def scan_decode(jpeg, mode):
-    """Liest Text aus einem Bild: (Liste möglicher Werte, Fehlertext). Das Bild liegt nur kurz in einem
-    privaten Temp-Ordner und wird gleich danach gelöscht."""
-    exe = shutil.which("zbarimg" if mode == "barcode" else "tesseract")
-    if not exe:
-        return [], (T("zbarimg fehlt am PC. Unter CachyOS: sudo pacman -S zbar") if mode == "barcode"
-                    else T("tesseract fehlt am PC. Unter CachyOS: sudo pacman -S tesseract tesseract-data-eng"))
-    with tempfile.TemporaryDirectory(prefix="bmc-scan-") as d:
-        path = os.path.join(d, "frame.jpg")
-        with open(path, "wb") as f:
-            f.write(jpeg)
-        cmd = [exe, "--quiet", "--raw", path] if mode == "barcode" else [exe, path, "stdout", "--psm", "11"]
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError) as e:
-            return [], T("Erkennung fehlgeschlagen: {0}").format(e)
+def plausible(text):
+    """Taugt ein erkannter Text als Passwort/Seriennummer-Kandidat (genug Buchstaben/Ziffern, kein Rauschen)?"""
+    return len(text) >= 4 and sum(c.isalnum() for c in text) >= 0.7 * len(text)
+
+
+def tesseract_run(exe, path, psm):
+    try:
+        r = subprocess.run([exe, path, "stdout", "--psm", psm, "--dpi", "300"], capture_output=True, text=True,
+                           timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
     found = []
     for line in r.stdout.splitlines():
         line = " ".join(line.split())
-        if line:
+        if plausible(line):
             found.append(line)
-            found.extend(w for w in line.split(" ") if len(w) >= 4)
-    out = []
-    for t in found:
-        if t not in out and len(t) <= 200:
-            out.append(t)
-    return out[:12], ""
+        found.extend(w for w in line.split(" ") if plausible(w) and w != line)
+        joined = line.replace(" ", "")      # die Erkennung setzt gern ein Leerzeichen mitten ins Passwort
+        if " " in line and len(joined) <= 64 and plausible(joined):
+            found.append(joined)
+    return found
+
+
+def scan_decode(jpeg, mode):
+    """Liest Text aus einem Bild: (Liste möglicher Werte, Fehlertext, Info). Das Bild liegt nur kurz in einem
+    privaten Temp-Ordner und wird gleich danach gelöscht. Texterkennung: Graustufen, kleine Ausschnitte
+    werden vergrößert, dann Zeile/Wort/Block-Modi nacheinander, zuletzt invertiert (helle Schrift)."""
+    exe = shutil.which("zbarimg" if mode == "barcode" else "tesseract")
+    if not exe:
+        return [], (T("zbarimg fehlt am PC. Unter CachyOS: sudo pacman -S zbar") if mode == "barcode"
+                    else T("tesseract fehlt am PC. Unter CachyOS: sudo pacman -S tesseract tesseract-data-eng")), ""
+    img = QImage.fromData(jpeg)
+    if img.isNull():
+        return [], T("Das Bild konnte nicht gelesen werden."), ""
+    info = T("Bild {0}×{1} px.").format(img.width(), img.height())
+    with tempfile.TemporaryDirectory(prefix="bmc-scan-") as d:
+        if mode == "barcode":
+            path = os.path.join(d, "frame.jpg")
+            with open(path, "wb") as f:
+                f.write(jpeg)
+            try:
+                r = subprocess.run([exe, "--quiet", "--raw", path], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as e:
+                return [], T("Erkennung fehlgeschlagen: {0}").format(e), info
+            out = []
+            for line in r.stdout.splitlines():
+                line = " ".join(line.split())
+                if line and line not in out and len(line) <= 200:
+                    out.append(line)
+            return out[:12], "", info
+        gray = img.convertToFormat(QImage.Format.Format_Grayscale8)
+        longest = max(gray.width(), gray.height())
+        scale = 1 if longest >= 1800 else 2 if longest >= 900 else 3
+        if scale > 1:
+            gray = gray.scaled(gray.width() * scale, gray.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        out = []
+        for inverted, modes in ((False, ("7", "8", "6", "11")), (True, ("7", "6"))):
+            if out:
+                break
+            if inverted:
+                gray.invertPixels()
+            path = os.path.join(d, "ocr-inv.png" if inverted else "ocr.png")
+            gray.save(path, "PNG")
+            for psm in modes:
+                for t in tesseract_run(exe, path, psm):
+                    if t not in out and len(t) <= 200:
+                        out.append(t)
+                if out:
+                    break
+    # Passwörter haben keine Leerzeichen und viele verschiedene Zeichen; Rauschen wie „EEE TTT“ kommt nach hinten
+    out.sort(key=lambda t: (" " in t, -len(set(t.replace(" ", "")))))
+    return out[:12], "", info
 
 
 class ScanServer:
@@ -2670,9 +2757,9 @@ class ScanServer:
                 if rest == "/decode":
                     mode = "ocr" if "mode=ocr" in query else "barcode"
                     with srv.limit:
-                        texts, err = scan_decode(body, mode)
+                        texts, err, info = scan_decode(body, mode)
                     del body
-                    self.reply(200, json.dumps({"texts": texts, "error": err}))
+                    self.reply(200, json.dumps({"texts": texts, "error": err, "info": info}))
                     return
                 try:
                     value = str(json.loads(body).get("value", "")).strip()
@@ -5458,6 +5545,16 @@ class Window(ConsoleMixin, QWidget):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Das Bild konnte nicht gelesen werden.": [
+"The image could not be read.",
+"L'image n'a pas pu être lue.",
+"S Bild het nöd chöne gläse wärde."
+],
+"Bild {0}×{1} px.": [
+"Image {0}×{1} px.",
+"Image {0}×{1} px.",
+"Bild {0}×{1} px."
+],
 "Verbindungsweg": [
 "Connection method",
 "Mode de connexion",
