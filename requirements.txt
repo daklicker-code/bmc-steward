@@ -1,1 +1,2 @@
+# BMC-Steward: benoetigt zusaetzlich Python 3.9+ (unter Linux fuer den DHCP-Reiter dnsmasq)
 PyQt6>=6.4

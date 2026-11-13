@@ -6,3 +6,5 @@ servers.csv
 *.log
 __pycache__/
 *.pyc
+bmc-profile.json
+bmc-bios-profile.json
