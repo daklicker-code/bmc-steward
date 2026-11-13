@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -46,7 +46,8 @@ from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-    QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
+    QScrollArea, QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout,
+    QWidget,
 )
 from PyQt6.QtCore import Qt
 
@@ -250,6 +251,23 @@ def xq(value):
     return '"' + escape(str(value), {'"': "&quot;"}) + '"'
 
 
+SECRET_KEYS = ("password",)                       # im Trockenlauf-Protokoll als *** zeigen
+CERT_KEYS = ("sslcertificatefile", "certificate", "certificatestring")   # langen Zertifikatstext kürzen
+
+
+def scrub(data):
+    """JSON für das Trockenlauf-Protokoll, Passwörter maskiert und Zertifikatsinhalte gekürzt (auch
+    tief verschachtelt, z. B. das Bind-Passwort bei LDAP)."""
+    def walk(o):
+        if isinstance(o, dict):
+            return {k: ("***" if k.lower() in SECRET_KEYS else "<cert>" if k.lower() in CERT_KEYS else walk(v))
+                    for k, v in o.items()}
+        if isinstance(o, list):
+            return [walk(v) for v in o]
+        return o
+    return "" if data is None else json.dumps(walk(data), separators=(",", ":"), ensure_ascii=False)
+
+
 
 class RedfishClient:
     """Gemeinsamer Unterbau: HTTP/Redfish-Zugriff und Hersteller-Erkennung, ohne eigenen Ablauf."""
@@ -300,11 +318,7 @@ class RedfishClient:
         """Sendet eine Anfrage, gibt den HTTP-Code zurück (0 = keine Verbindung); Antwort in self.body."""
         self.body = None
         if self.dry:
-            shown = ""
-            if data is not None:
-                shown = json.dumps({k: ("***" if k == "Password" else v) for k, v in data.items()},
-                                   separators=(",", ":"), ensure_ascii=False)
-            self.log(f"  DRYRUN {method} https://{ip}{path} {shown}")
+            self.log(f"  DRYRUN {method} https://{ip}{path} {scrub(data)}")
             return 200
         mode = self.tls_mode(ip, min(timeout, 10))
         if mode is None:
@@ -1031,6 +1045,156 @@ class BiosEngine(RedfishClient):
         return any(b in low for b in cls.BLOCKED)
 
 
+class ServicesEngine(RedfishClient):
+    """Richtet Verwaltungsdienste auf allen Servern der Liste ein: NTP, Syslog, LDAP (mit
+    Gruppen-Zuordnung) und das HTTPS-Zertifikat. Jeder Dienst ist einzeln an- oder abschaltbar;
+    nur gewaehlte Dienste werden angewendet. Ein Dienst, den ein Hersteller nicht kennt, wird
+    uebersprungen, nicht geraten. Protokollzeilen gehen an log()."""
+
+    ROLES = ("Administrator", "Operator", "ReadOnly")
+    LABEL = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": "HTTPS-Zertifikat"}
+
+    def __init__(self, rows, cur_user, services, dry=True, log=print, stopped=lambda: False, vendor=None):
+        super().__init__(dry, log, stopped)
+        self.rows, self.cur_user_set, self.services = rows, cur_user, services
+        self.force_vendor = vendor
+
+    def one(self, label, ip, pw, method, path, *bodies, accept_drop=False):
+        """Schickt die JSON-Varianten der Reihe nach, die erste erfolgreiche zaehlt. accept_drop: ein
+        Verbindungsabriss (0) gilt als Erfolg (manche BMCs starten beim Zertifikat-Import neu)."""
+        for body in bodies or (None,):
+            self.code = self.api(ip, self.cur_user, pw, method, path, body)
+            if self.ok(self.code):
+                self.log(T("  {0}: gesetzt").format(label), "ok")
+                return True
+        if accept_drop and self.code == 0:
+            self.log(T("  {0}: gesendet, die Verbindung brach dabei ab (der BMC startet oft neu).").format(label), "ok")
+            return True
+        self.fail(label, self.code)
+        return False
+
+    # ---- je Dienst: True = gesetzt, None = auf diesem Hersteller nicht unterstuetzt, False = Fehler ----
+    def svc_ntp(self, ip, pw, v, cfg):
+        servers = [s.strip() for s in cfg.get("servers", []) if s.strip()][:3]
+        tz = cfg.get("timezone", "").strip()
+        if v == "dell":
+            attrs = {"NTPConfigGroup.1.NTPEnable": "Enabled"}
+            for i, srv in enumerate(servers, 1):
+                attrs["NTPConfigGroup.1.NTP%d" % i] = srv
+            if tz:
+                attrs["Time.1.Timezone"] = tz
+            return self.one(T("NTP"), ip, pw, "PATCH",
+                            "/redfish/v1/Managers/iDRAC.Embedded.1/Attributes", {"Attributes": attrs})
+        if v == "hpe":
+            ok = self.one(T("NTP"), ip, pw, "PATCH", "/redfish/v1/Managers/1/DateTime",
+                          {"StaticNTPServers": servers or [""]})
+            if ok and tz:
+                self.log(T("    Zeitzone bei HPE bitte in der iLO-Oberfläche setzen (hier nicht gesetzt)."))
+            return ok
+        if v in ("smc", "lenovo"):
+            ok = self.one(T("NTP"), ip, pw, "PATCH", "/redfish/v1/Managers/1/NetworkProtocol",
+                          {"NTP": {"ProtocolEnabled": True, "NTPServers": servers}})
+            if ok and tz:
+                self.log(T("    Zeitzone bei diesem Hersteller bitte in der Oberfläche setzen (hier nicht gesetzt)."))
+            return ok
+        return None
+
+    def svc_syslog(self, ip, pw, v, cfg):
+        server = cfg.get("server", "").strip()
+        port = int(cfg.get("port") or 514)
+        if v == "dell":
+            return self.one(T("Syslog"), ip, pw, "PATCH", "/redfish/v1/Managers/iDRAC.Embedded.1/Attributes",
+                            {"Attributes": {"SysLog.1.SysLogEnable": "Enabled",
+                                            "SysLog.1.Server1": server, "SysLog.1.Port": str(port)}})
+        if v == "hpe":
+            return self.one(T("Syslog"), ip, pw, "PATCH", "/redfish/v1/Managers/1/NetworkProtocol",
+                            {"Oem": {"Hpe": {"RemoteSyslogEnabled": True,
+                                             "RemoteSyslogServer": server, "RemoteSyslogPort": port}}})
+        return None          # Supermicro/Lenovo: kein einheitlicher Redfish-Weg
+
+    def svc_ldap(self, ip, pw, v, cfg):
+        search = {"BaseDistinguishedNames": [cfg.get("base", "").strip()]}
+        if cfg.get("user_attr", "").strip():
+            search["UsernameAttribute"] = cfg["user_attr"].strip()
+        if cfg.get("group_attr", "").strip():
+            search["GroupNameAttribute"] = cfg["group_attr"].strip()
+        ldap = {"ServiceEnabled": True, "LDAPService": {"SearchSettings": search}}
+        if cfg.get("bind_dn", "").strip():
+            ldap["Authentication"] = {"AuthenticationType": "UsernameAndPassword",
+                                      "Username": cfg["bind_dn"].strip(), "Password": cfg.get("bind_pw", "")}
+        groups = [(g.strip(), (r.strip() or "Administrator")) for g, r in cfg.get("groups", []) if g.strip()]
+        if groups:
+            ldap["RemoteRoleMapping"] = [{"RemoteGroup": g, "LocalRole": r} for g, r in groups]
+        host = cfg.get("server", "").strip()
+        port = int(cfg.get("port") or 636)
+        bodies = [{"LDAP": dict(ldap, ServiceAddresses=["%s:%d" % (host, port)])},
+                  {"LDAP": dict(ldap, ServiceAddresses=["ldap://%s:%d" % (host, port)])}]
+        return self.one(T("LDAP"), ip, pw, "PATCH", "/redfish/v1/AccountService", *bodies)
+
+    def svc_cert(self, ip, pw, v, cfg):
+        pem = cfg.get("pem", "")
+        if not pem.strip():
+            return None
+        if v == "dell":
+            path = ("/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DelliDRACCardService"
+                    "/Actions/DelliDRACCardService.ImportSSLCertificate")
+            return self.one(T("HTTPS-Zertifikat"), ip, pw, "POST", path,
+                            {"CertificateType": "Server", "SSLCertificateFile": pem},
+                            {"SSLCertType": "Server", "SSLCertificateFile": pem}, accept_drop=True)
+        if v == "hpe":
+            path = "/redfish/v1/Managers/1/SecurityService/HttpsCert/Actions/HpeHttpsCert.ImportCertificate"
+            return self.one(T("HTTPS-Zertifikat"), ip, pw, "POST", path, {"Certificate": pem}, accept_drop=True)
+        path = "/redfish/v1/Managers/1/SecurityService/HttpsCert/Actions/HttpsCert.ImportServerCertificate"
+        return self.one(T("HTTPS-Zertifikat"), ip, pw, "POST", path, {"Certificate": pem}, accept_drop=True)
+
+    def run(self):
+        """Gibt True zurueck, wenn alle Server ohne Fehler durchliefen."""
+        order = [("ntp", self.svc_ntp), ("syslog", self.svc_syslog), ("ldap", self.svc_ldap), ("cert", self.svc_cert)]
+        active = [(k, fn) for k, fn in order if k in self.services]
+        done, failed = [], []
+        for ip, row_pw in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                failed.append(T("Abbruch"))
+                break
+            if not row_pw:
+                self.log(T('== {0}: kein Passwort').format(ip), "err")
+                failed.append(ip)
+                continue
+            self.log("== " + ip, "head")
+            v = self.force_vendor or self.vendor(ip)
+            if self.dry and v not in self.NAME and v != "hpe_old":
+                self.log(T('  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf').format(v))
+                v = "dell"
+            if v == "offline":
+                self.log(T("  FEHLER: nicht erreichbar"), "err")
+                failed.append(ip)
+                continue
+            if v == "hpe_old":
+                self.log(T("  iLO 3/4: Dienste werden hier nicht unterstützt, übersprungen."), "err")
+                failed.append(ip)
+                continue
+            if v not in self.NAME:
+                self.log(T("  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"), "err")
+                self.unknown_hint()
+                failed.append(ip)
+                continue
+            self.cur_user = self.cur_user_set or self.DEFAULT_USER[v]
+            self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], self.cur_user))
+            bad = False
+            for key, fn in active:
+                res = fn(ip, row_pw, v, self.services[key])
+                if res is None:
+                    self.log(T('  {0}: auf diesem Hersteller nicht unterstützt, übersprungen').format(T(self.LABEL[key])))
+                elif res is False:
+                    bad = True
+            (failed if bad else done).append(ip)
+        self.log("")
+        summary = T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(len(done), len(failed))
+        self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
+        return not failed
+
+
 # ======================================================================
 # Kleiner DHCP-Server (für Windows; unter Linux wird dnsmasq verwendet)
 # ======================================================================
@@ -1229,6 +1393,24 @@ class BiosEngineThread(QThread):
         try:
             good = BiosEngine(log=lambda text, kind="": self.line.emit(text, kind),
                               stopped=self.isInterruptionRequested, **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good = False
+        self.result.emit(0 if good else 1)
+
+
+class ServicesEngineThread(QThread):
+    line = pyqtSignal(str, str)
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good = ServicesEngine(log=lambda text, kind="": self.line.emit(text, kind),
+                                  stopped=self.isInterruptionRequested, **self.kw).run()
         except Exception as e:
             self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
             good = False
@@ -1479,10 +1661,11 @@ class Window(QWidget):
         self.tabs.addTab(self.build_dhcp(), T("1 · DHCP-Server"))
         self.tabs.addTab(page, T("2 · Server konfigurieren"))
         self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
+        self.tabs.addTab(self.build_services(), T("4 · Dienste"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[LANG] + ABOUT)
-        self.tabs.addTab(help_view, T("4 · Hilfe"))
+        self.tabs.addTab(help_view, T("5 · Hilfe"))
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)
@@ -1514,6 +1697,7 @@ class Window(QWidget):
             w.textChanged.connect(self.update_missing)
         self.dry.toggled.connect(self.mode_changed)
         self.bios_dry.toggled.connect(self.bios_mode_changed)
+        self.svc_dry.toggled.connect(self.svc_mode_changed)
         self.dirty = False
         if state:
             self.import_state(state)
@@ -1521,6 +1705,7 @@ class Window(QWidget):
             self.status.setText(T("Ein DHCP-Server aus einem früheren, abgebrochenen Lauf lief noch und wurde beendet."))
         self.mode_changed()
         self.bios_mode_changed()
+        self.svc_mode_changed()
 
     # ---------- Hilfen ----------
     @staticmethod
@@ -2027,7 +2212,8 @@ class Window(QWidget):
 
     def running(self):
         return (bool(self.worker) and self.worker.isRunning()) \
-            or (bool(getattr(self, "bios_worker", None)) and self.bios_worker.isRunning())
+            or (bool(getattr(self, "bios_worker", None)) and self.bios_worker.isRunning()) \
+            or (bool(getattr(self, "svc_worker", None)) and self.svc_worker.isRunning())
 
     def closeEvent(self, event):
         if getattr(self, "switching", False):   # Sprachwechsel: das neue Fenster hat alles übernommen
@@ -2878,6 +3064,340 @@ class Window(QWidget):
         self.table.setEnabled(True)
         self.status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
 
+    # ---------- Dienste (NTP, Syslog, LDAP, HTTPS-Zertifikat) ----------
+    def build_services(self):
+        self.svc_worker = None
+        self.cert_pem = ""
+        self.cert_name = ""
+
+        self.svc_vendor = QComboBox()
+        for text, key in VENDORS:
+            self.svc_vendor.addItem(text, key)
+        self.svc_user = QLineEdit()
+        self.svc_user.setPlaceholderText(T("automatisch je Hersteller"))
+        self.svc_pass = self._pw()
+        box_login = QGroupBox(T("Login (Werksbenutzer, gilt für alle Server der Liste)"))
+        box_login.setToolTip(T("Die Dienste werden auf allen Servern der Serverliste (Reiter 2) eingerichtet.\n"
+                               "Fertige (grüne) Server werden unter ihrer neuen Adresse angesprochen.\n"
+                               "Angemeldet wird mit dem Werksbenutzer; der Werks-Administrator bleibt bestehen."))
+        f = QFormLayout(box_login)
+        self.tip_row(f, T("Hersteller"), self.svc_vendor,
+                     T("Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ fragt jedes Gerät."))
+        self.tip_row(f, T("Benutzer"), self.svc_user,
+                     T("Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet."))
+        self.tip_row(f, T("Passwort"), self._with_eye(self.svc_pass),
+                     T("Fällt für Zeilen ein, deren Spalte „Passwort“ in der Serverliste leer ist."))
+
+        self.ntp_box = QGroupBox(T("NTP (Zeitserver)"))
+        self.ntp_box.setCheckable(True)
+        self.ntp_box.setChecked(False)
+        self.ntp1 = QLineEdit()
+        self.ntp1.setPlaceholderText(T("z. B. 10.20.0.1 oder pool.ntp.org"))
+        self.ntp2 = QLineEdit()
+        self.ntp2.setPlaceholderText(T("optional"))
+        self.ntp_tz = QLineEdit()
+        self.ntp_tz.setPlaceholderText(T("nur Dell, z. B. Europe/Berlin"))
+        f = QFormLayout(self.ntp_box)
+        self.tip_row(f, T("NTP-Server 1"), self.ntp1, T("Pflicht, wenn NTP eingerichtet wird."))
+        self.tip_row(f, T("NTP-Server 2"), self.ntp2, T("Optional, zweiter Zeitserver."))
+        self.tip_row(f, T("Zeitzone"), self.ntp_tz,
+                     T("Nur bei Dell gesetzt. Bei HPE, Supermicro und Lenovo bitte in der Oberfläche wählen."))
+
+        self.syslog_box = QGroupBox(T("Syslog"))
+        self.syslog_box.setCheckable(True)
+        self.syslog_box.setChecked(False)
+        self.syslog_box.setToolTip(T("Nur Dell und HPE. Bei Supermicro und Lenovo wird Syslog übersprungen."))
+        self.syslog_server = QLineEdit()
+        self.syslog_server.setPlaceholderText(T("z. B. 10.20.0.9"))
+        self.syslog_port = QLineEdit("514")
+        f = QFormLayout(self.syslog_box)
+        self.tip_row(f, T("Server"), self.syslog_server, T("Adresse des Syslog-Empfängers."))
+        self.tip_row(f, T("Port"), self.syslog_port, T("Standard 514."))
+
+        self.ldap_box = QGroupBox(T("LDAP / Active Directory"))
+        self.ldap_box.setCheckable(True)
+        self.ldap_box.setChecked(False)
+        self.ldap_server = QLineEdit()
+        self.ldap_server.setPlaceholderText(T("z. B. ad.example.com"))
+        self.ldap_port = QLineEdit("636")
+        self.ldap_base = QLineEdit()
+        self.ldap_base.setPlaceholderText("dc=example,dc=com")
+        self.ldap_bind = QLineEdit()
+        self.ldap_bind.setPlaceholderText(T("optional, z. B. cn=svc,dc=example,dc=com"))
+        self.ldap_bindpw = self._pw()
+        self.ldap_userattr = QLineEdit("sAMAccountName")
+        self.ldap_groupattr = QLineEdit("memberOf")
+        f = QFormLayout(self.ldap_box)
+        self.tip_row(f, T("Server"), self.ldap_server, T("Adresse des LDAP-/AD-Servers."))
+        self.tip_row(f, T("Port"), self.ldap_port, T("389 unverschlüsselt, 636 für LDAPS."))
+        self.tip_row(f, T("Base-DN"), self.ldap_base, T("Ab wo gesucht wird, z. B. dc=example,dc=com."))
+        self.tip_row(f, T("Bind-DN"), self.ldap_bind,
+                     T("Dienstkonto zum Suchen. Leer lassen, wenn der Server anonyme Suche erlaubt."))
+        self.tip_row(f, T("Bind-Passwort"), self._with_eye(self.ldap_bindpw), T("Passwort des Bind-DN."))
+        self.tip_row(f, T("Benutzer-Attribut"), self.ldap_userattr,
+                     T("Active Directory: sAMAccountName. OpenLDAP oft uid."))
+        self.tip_row(f, T("Gruppen-Attribut"), self.ldap_groupattr, T("Meist memberOf."))
+        self.ldap_groups = QTableWidget(0, 2)
+        self.ldap_groups.setHorizontalHeaderLabels([T("LDAP-Gruppe"), T("Rolle")])
+        self.ldap_groups.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ldap_groups.setMaximumHeight(140)
+        self.ldap_groups.setToolTip(T("Ordnet LDAP-Gruppen einer Rolle zu: Administrator, Operator oder ReadOnly.\n"
+                                      "Leer lassen, wenn keine Gruppen-Zuordnung gebraucht wird."))
+        gadd = QPushButton(T("+ Gruppe"))
+        gadd.clicked.connect(self.ldap_group_add)
+        grem = QPushButton(T("– Gruppe"))
+        grem.clicked.connect(self.ldap_group_remove)
+        gbar = QHBoxLayout()
+        gbar.addWidget(gadd)
+        gbar.addWidget(grem)
+        gbar.addStretch()
+        f.addRow(QLabel(T("Gruppen → Rolle")))
+        f.addRow(self.ldap_groups)
+        f.addRow(gbar)
+
+        self.cert_box = QGroupBox(T("HTTPS-Zertifikat"))
+        self.cert_box.setCheckable(True)
+        self.cert_box.setChecked(False)
+        self.cert_box.setToolTip(T("Experimentell und je Hersteller verschieden. Importiert ein von einer CA signiertes\n"
+                                   "Zertifikat (PEM). Bei HPE muss der passende Schlüssel aus einer auf dem iLO erzeugten\n"
+                                   "Zertifikatsanforderung (CSR) stammen, sonst scheitert der Import."))
+        self.cert_label = QLabel(T("keine Datei gewählt"))
+        cert_btn = QPushButton(T("PEM-Datei wählen …"))
+        cert_btn.clicked.connect(self.cert_load)
+        f = QFormLayout(self.cert_box)
+        crow = QHBoxLayout()
+        crow.addWidget(cert_btn)
+        crow.addWidget(self.cert_label, 1)
+        f.addRow(crow)
+
+        settings = QWidget()
+        sv = QVBoxLayout(settings)
+        for w in (box_login, self.ntp_box, self.syslog_box, self.ldap_box, self.cert_box):
+            sv.addWidget(w)
+        sv.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(settings)
+
+        self.svc_dry = QCheckBox(T("Trockenlauf (nichts ändern)"))
+        self.svc_dry.setChecked(True)
+        self.svc_dry.setToolTip(T("Mit Haken wird nichts geändert; das Protokoll zeigt nur die Aufrufe."))
+        self.svc_start = QPushButton(T("Trockenlauf für alle Server der Liste"))
+        self.svc_start.setMinimumHeight(34)
+        self.svc_start.clicked.connect(self.services_run)
+        self.svc_stop = QPushButton(T("Abbrechen"))
+        self.svc_stop.setEnabled(False)
+        self.svc_stop.clicked.connect(self.svc_abort)
+        self.svc_status = QLabel(T("Bereit"))
+        act = QHBoxLayout()
+        act.addWidget(self.svc_dry)
+        act.addStretch()
+        act.addWidget(self.svc_stop)
+        act.addWidget(self.svc_start)
+
+        self.svc_log = QTextEdit()
+        self.svc_log.setReadOnly(True)
+        self.svc_log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+
+        page = QWidget()
+        pl = QVBoxLayout(page)
+        hint = QLabel("<small>" + T("Nur angehakte Abschnitte werden angewendet. Alles wird auf den Servern der "
+                                    "Liste in Reiter 2 gesetzt, grüne unter ihrer neuen Adresse.") + "</small>")
+        hint.setWordWrap(True)
+        pl.addWidget(hint)
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(scroll)
+        low = QWidget()
+        ll = QVBoxLayout(low)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.addLayout(act)
+        ll.addWidget(self.svc_log)
+        split.addWidget(low)
+        split.setSizes([470, 210])
+        pl.addWidget(split, 1)
+        return page
+
+    def ldap_group_add(self):
+        r = self.ldap_groups.rowCount()
+        self.ldap_groups.insertRow(r)
+        self.ldap_groups.setItem(r, 0, QTableWidgetItem(""))
+        self.ldap_groups.setItem(r, 1, QTableWidgetItem("Administrator"))
+
+    def ldap_group_remove(self):
+        for r in sorted({i.row() for i in self.ldap_groups.selectedIndexes()}, reverse=True):
+            self.ldap_groups.removeRow(r)
+
+    def cert_load(self):
+        path, _ = QFileDialog.getOpenFileName(self, T("Zertifikat wählen"), str(HERE),
+                                              T("Zertifikat (*.pem *.crt *.cer);;Alle Dateien (*)"))
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            QMessageBox.warning(self, T("Zertifikat"), T('Datei nicht lesbar:\n{0}').format(e))
+            return
+        if "BEGIN CERTIFICATE" not in text:
+            QMessageBox.warning(self, T("Zertifikat"),
+                                T("Die Datei enthält kein PEM-Zertifikat (erwartet „BEGIN CERTIFICATE“)."))
+            return
+        self.cert_pem = text
+        self.cert_name = os.path.basename(path)
+        self.cert_label.setText(self.cert_name)
+
+    def services_dict(self):
+        """Sammelt die angehakten Dienste und prüft die Pflichtfelder. Gibt ein dict zurück, {} wenn
+        nichts angehakt ist, oder None bei einem Eingabefehler (dann wird eine Meldung gezeigt)."""
+        def bad(widget, msg):
+            self.tabs.setCurrentIndex(3)
+            QMessageBox.warning(self, T("Dienste"), msg)
+            if widget:
+                widget.setFocus()
+            return None
+        out = {}
+        if self.ntp_box.isChecked():
+            if not self.ntp1.text().strip():
+                return bad(self.ntp1, T("NTP: mindestens den ersten Server eintragen."))
+            out["ntp"] = {"servers": [self.ntp1.text(), self.ntp2.text()], "timezone": self.ntp_tz.text()}
+        if self.syslog_box.isChecked():
+            if not self.syslog_server.text().strip():
+                return bad(self.syslog_server, T("Syslog: Server eintragen."))
+            port = self.syslog_port.text().strip() or "514"
+            if not port.isdigit() or not 1 <= int(port) <= 65535:
+                return bad(self.syslog_port, T("Port muss eine Zahl von 1 bis 65535 sein."))
+            out["syslog"] = {"server": self.syslog_server.text(), "port": int(port)}
+        if self.ldap_box.isChecked():
+            if not self.ldap_server.text().strip() or not self.ldap_base.text().strip():
+                return bad(self.ldap_server, T("LDAP: Server und Base-DN eintragen."))
+            port = self.ldap_port.text().strip() or "636"
+            if not port.isdigit() or not 1 <= int(port) <= 65535:
+                return bad(self.ldap_port, T("Port muss eine Zahl von 1 bis 65535 sein."))
+            groups = []
+            for r in range(self.ldap_groups.rowCount()):
+                g = self.ldap_groups.item(r, 0).text().strip() if self.ldap_groups.item(r, 0) else ""
+                role = self.ldap_groups.item(r, 1).text().strip() if self.ldap_groups.item(r, 1) else ""
+                if g:
+                    if role and role not in ServicesEngine.ROLES:
+                        return bad(self.ldap_groups,
+                                   T("Rolle muss Administrator, Operator oder ReadOnly sein (Gruppe {0}).").format(g))
+                    groups.append((g, role))
+            out["ldap"] = {"server": self.ldap_server.text(), "port": int(port), "base": self.ldap_base.text(),
+                           "bind_dn": self.ldap_bind.text(), "bind_pw": self.ldap_bindpw.text(),
+                           "user_attr": self.ldap_userattr.text(), "group_attr": self.ldap_groupattr.text(),
+                           "groups": groups}
+        if self.cert_box.isChecked():
+            if not self.cert_pem.strip():
+                return bad(None, T("HTTPS-Zertifikat: erst eine PEM-Datei wählen."))
+            out["cert"] = {"pem": self.cert_pem}
+        return out
+
+    def services_run(self):
+        services = self.services_dict()
+        if services is None:
+            return
+        if not services:
+            QMessageBox.warning(self, T("Dienste"), T("Kein Abschnitt angehakt. Oben mindestens einen aktivieren."))
+            return
+        rows = [(ip, pw or self.svc_pass.text()) for ip, pw in self.reachable_rows()]
+        if not rows:
+            QMessageBox.warning(self, T("Dienste"), T("Die Serverliste (Reiter 2) ist leer."))
+            return
+        dry = self.svc_dry.isChecked()
+        names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat")}
+        chosen = ", ".join(names[k] for k in ("ntp", "syslog", "ldap", "cert") if k in services)
+        if not dry:
+            info = T("Dienste: {0}").format(chosen) + "\n\n" + T(
+                "Es werden Verwaltungseinstellungen der BMCs geändert. Eine falsche LDAP- oder "
+                "Zertifikatseinstellung kann die Anmeldung erschweren; der lokale Administrator bleibt "
+                "aber bestehen.")
+            if not self.confirm(T("Scharf ausführen?"),
+                                T('Auf {0} Servern werden jetzt wirklich Dienste eingerichtet.').format(len(rows)),
+                                info, len(rows)):
+                return
+        self.svc_log.clear()
+        mode = T("Trockenlauf") if dry else T("Scharfer Lauf")
+        self.svc_say(T('— {0}, {1} Server, {2} —').format(mode, len(rows), chosen), "gray")
+        self.svc_worker = ServicesEngineThread(
+            self, rows=rows, cur_user=self.svc_user.text().strip(), services=services, dry=dry,
+            vendor=self.svc_vendor.currentData() or None)
+        self.svc_worker.line.connect(self.svc_show_line)
+        self.svc_worker.result.connect(self.svc_done)
+        self.svc_start.setEnabled(False)
+        self.svc_stop.setEnabled(True)
+        self.svc_status.setText(T("Läuft …"))
+        self.svc_worker.start()
+
+    def svc_say(self, text, color=None, bold=False):
+        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
+        if bold:
+            style += "font-weight:bold;"
+        self.svc_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+
+    def svc_show_line(self, line, kind=""):
+        self.svc_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
+
+    def svc_abort(self):
+        if self.svc_worker and self.svc_worker.isRunning():
+            self.svc_worker.requestInterruption()
+            self.svc_stop.setEnabled(False)
+            self.svc_status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
+
+    def svc_done(self, code, *_):
+        self.svc_start.setEnabled(True)
+        self.svc_stop.setEnabled(False)
+        self.svc_status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+
+    def svc_mode_changed(self, *_):
+        dry = self.svc_dry.isChecked()
+        self.svc_start.setText(T("Trockenlauf für alle Server der Liste") if dry
+                               else T("Scharf auf allen Servern der Liste setzen"))
+        self.svc_start.setStyleSheet("" if dry else LIVE_CSS)
+
+    def export_services(self):
+        return {
+            "vendor": self.svc_vendor.currentData() or "", "user": self.svc_user.text(), "pass": self.svc_pass.text(),
+            "ntp_on": self.ntp_box.isChecked(), "ntp1": self.ntp1.text(), "ntp2": self.ntp2.text(),
+            "tz": self.ntp_tz.text(), "syslog_on": self.syslog_box.isChecked(),
+            "syslog_server": self.syslog_server.text(), "syslog_port": self.syslog_port.text(),
+            "ldap_on": self.ldap_box.isChecked(), "ldap_server": self.ldap_server.text(),
+            "ldap_port": self.ldap_port.text(), "ldap_base": self.ldap_base.text(), "ldap_bind": self.ldap_bind.text(),
+            "ldap_bindpw": self.ldap_bindpw.text(), "ldap_userattr": self.ldap_userattr.text(),
+            "ldap_groupattr": self.ldap_groupattr.text(),
+            "ldap_groups": [(self.ldap_groups.item(r, 0).text() if self.ldap_groups.item(r, 0) else "",
+                             self.ldap_groups.item(r, 1).text() if self.ldap_groups.item(r, 1) else "")
+                            for r in range(self.ldap_groups.rowCount())],
+            "cert_on": self.cert_box.isChecked(), "cert_pem": self.cert_pem, "cert_name": self.cert_name,
+        }
+
+    def import_services(self, s):
+        self.svc_vendor.setCurrentIndex(max(0, self.svc_vendor.findData(s["vendor"])))
+        self.svc_user.setText(s["user"])
+        self.svc_pass.setText(s["pass"])
+        self.ntp_box.setChecked(s["ntp_on"])
+        self.ntp1.setText(s["ntp1"])
+        self.ntp2.setText(s["ntp2"])
+        self.ntp_tz.setText(s["tz"])
+        self.syslog_box.setChecked(s["syslog_on"])
+        self.syslog_server.setText(s["syslog_server"])
+        self.syslog_port.setText(s["syslog_port"])
+        self.ldap_box.setChecked(s["ldap_on"])
+        self.ldap_server.setText(s["ldap_server"])
+        self.ldap_port.setText(s["ldap_port"])
+        self.ldap_base.setText(s["ldap_base"])
+        self.ldap_bind.setText(s["ldap_bind"])
+        self.ldap_bindpw.setText(s["ldap_bindpw"])
+        self.ldap_userattr.setText(s["ldap_userattr"])
+        self.ldap_groupattr.setText(s["ldap_groupattr"])
+        for g, role in s["ldap_groups"]:
+            r = self.ldap_groups.rowCount()
+            self.ldap_groups.insertRow(r)
+            self.ldap_groups.setItem(r, 0, QTableWidgetItem(g))
+            self.ldap_groups.setItem(r, 1, QTableWidgetItem(role))
+        self.cert_box.setChecked(s["cert_on"])
+        self.cert_pem = s["cert_pem"]
+        self.cert_name = s["cert_name"]
+        self.cert_label.setText(self.cert_name or T("keine Datei gewählt"))
+
     def confirm(self, title, text, info="", type_count=None):
         """Sicherheitsabfrage, bei der „Abbrechen“ vorausgewählt ist. Mit type_count muss zusätzlich
         diese Zahl eingetippt werden."""
@@ -2977,6 +3497,7 @@ class Window(QWidget):
             "bios_profile": self.bios_current_profile(), "bios_vendor": self.bios_vendor.currentData() or "",
             "bios_ref": self.bios_ref.currentText(), "bios_live": dict(self.bios_live),
             "bios_new": self.bios_wanted(), "bios_pending": dict(self.bios_pending),
+            "services": self.export_services(),
         }
 
     def import_state(self, s):
@@ -3004,6 +3525,7 @@ class Window(QWidget):
         self.bios_pending = s["bios_pending"]
         self.bios_refresh_ips()
         self.bios_ref.setEditText(s["bios_ref"])
+        self.import_services(s["services"])
         self.validate_defaults()
         self.validate_range()
         self.update_count()
@@ -4961,14 +5483,389 @@ TR = {
 "  Note: iLO 3 cannot do UEFI settings via Redfish. With iLO 4 it only works from Gen9 with firmware 2.30 and is untested.",
 "  Remarque : iLO 3 ne gère pas les réglages UEFI via Redfish. Avec iLO 4, cela ne fonctionne qu'à partir de Gen9 avec le firmware 2.30 et n'est pas testé.",
 "  Hiiwiis: iLO 3 cha kei UEFI-Iistellige über Redfish. Bi iLO 4 gaht's nume ab Gen9 mit Firmware 2.30 und isch nöd prüeft."
+],
+"LDAP": [
+"LDAP",
+"LDAP",
+"LDAP"
+],
+"NTP": [
+"NTP",
+"NTP",
+"NTP"
+],
+"Syslog": [
+"Syslog",
+"Syslog",
+"Syslog"
+],
+"HTTPS-Zertifikat": [
+"HTTPS certificate",
+"Certificat HTTPS",
+"HTTPS-Zertifikat"
+],
+"4 · Dienste": [
+"4 · Services",
+"4 · Services",
+"4 · Dienscht"
+],
+"5 · Hilfe": [
+"5 · Help",
+"5 · Aide",
+"5 · Hilf"
+],
+"Login (Werksbenutzer, gilt für alle Server der Liste)": [
+"Login (factory user, used for every server in the list)",
+"Connexion (utilisateur d'usine, pour tous les serveurs de la liste)",
+"Login (Wärksbenutzer, gilt für alli Server vo de Lischte)"
+],
+"Die Dienste werden auf allen Servern der Serverliste (Reiter 2) eingerichtet.\nFertige (grüne) Server werden unter ihrer neuen Adresse angesprochen.\nAngemeldet wird mit dem Werksbenutzer; der Werks-Administrator bleibt bestehen.": [
+"The services are set up on every server in the list (tab 2).\nFinished (green) servers are reached at their new address.\nLogin uses the factory user; the factory administrator stays in place.",
+"Les services sont configurés sur tous les serveurs de la liste (onglet 2).\nLes serveurs terminés (verts) sont joints à leur nouvelle adresse.\nLa connexion utilise l'utilisateur d'usine ; l'administrateur d'usine reste en place.",
+"D Dienscht wärded uf allne Server vo de Lischte (Riiter 2) iigrichtet.\nFertigi (grüeni) Server wärded under ihrer neue Adrässe aagsproche.\nAagmäldet wird mit em Wärksbenutzer; de Wärks-Administrator bliibt bestah."
+],
+"Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ fragt jedes Gerät.": [
+"A fixed choice skips detection. “Automatic” asks each device.",
+"Un choix fixe saute la détection. « Automatique » interroge chaque appareil.",
+"E feschti Wahl überspringt d Erkennig. „Automatisch“ fragt jedes Grät."
+],
+"Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet.": [
+"Leave empty: the factory user is used per vendor.",
+"Laisser vide : l'utilisateur d'usine est utilisé selon le constructeur.",
+"Läär laa: Denn wird je Hersteller de Wärksbenutzer gnoh."
+],
+"Fällt für Zeilen ein, deren Spalte „Passwort“ in der Serverliste leer ist.": [
+"Used for rows whose “Password” column in the server list is empty.",
+"Utilisé pour les lignes dont la colonne « Mot de passe » est vide.",
+"Gilt für Ziile, wo d Spalte „Passwort“ i de Serverlischte läär isch."
+],
+"NTP (Zeitserver)": [
+"NTP (time servers)",
+"NTP (serveurs de temps)",
+"NTP (Ziitserver)"
+],
+"z. B. 10.20.0.1 oder pool.ntp.org": [
+"e.g. 10.20.0.1 or pool.ntp.org",
+"p. ex. 10.20.0.1 ou pool.ntp.org",
+"z. B. 10.20.0.1 oder pool.ntp.org"
+],
+"optional": [
+"optional",
+"facultatif",
+"optional"
+],
+"nur Dell, z. B. Europe/Berlin": [
+"Dell only, e.g. Europe/Berlin",
+"Dell uniquement, p. ex. Europe/Berlin",
+"nur Dell, z. B. Europe/Berlin"
+],
+"NTP-Server 1": [
+"NTP server 1",
+"Serveur NTP 1",
+"NTP-Server 1"
+],
+"Pflicht, wenn NTP eingerichtet wird.": [
+"Required when setting up NTP.",
+"Obligatoire si NTP est configuré.",
+"Pflicht, wenn NTP iigrichtet wird."
+],
+"NTP-Server 2": [
+"NTP server 2",
+"Serveur NTP 2",
+"NTP-Server 2"
+],
+"Optional, zweiter Zeitserver.": [
+"Optional, second time server.",
+"Facultatif, deuxième serveur de temps.",
+"Optional, zweite Ziitserver."
+],
+"Zeitzone": [
+"Time zone",
+"Fuseau horaire",
+"Ziitzone"
+],
+"Nur bei Dell gesetzt. Bei HPE, Supermicro und Lenovo bitte in der Oberfläche wählen.": [
+"Set on Dell only. On HPE, Supermicro and Lenovo please choose it in the web interface.",
+"Défini uniquement sur Dell. Sur HPE, Supermicro et Lenovo, le choisir dans l'interface.",
+"Nur bi Dell gsetzt. Bi HPE, Supermicro und Lenovo bitte i de Oberflächi wähle."
+],
+"Nur Dell und HPE. Bei Supermicro und Lenovo wird Syslog übersprungen.": [
+"Dell and HPE only. On Supermicro and Lenovo syslog is skipped.",
+"Dell et HPE uniquement. Sur Supermicro et Lenovo, syslog est ignoré.",
+"Nur Dell und HPE. Bi Supermicro und Lenovo wird Syslog übersprunge."
+],
+"z. B. 10.20.0.9": [
+"e.g. 10.20.0.9",
+"p. ex. 10.20.0.9",
+"z. B. 10.20.0.9"
+],
+"Server": [
+"Server",
+"Serveur",
+"Server"
+],
+"Adresse des Syslog-Empfängers.": [
+"Address of the syslog receiver.",
+"Adresse du récepteur syslog.",
+"Adrässe vom Syslog-Empfänger."
+],
+"Port": [
+"Port",
+"Port",
+"Port"
+],
+"Standard 514.": [
+"Default 514.",
+"Par défaut 514.",
+"Standard 514."
+],
+"LDAP / Active Directory": [
+"LDAP / Active Directory",
+"LDAP / Active Directory",
+"LDAP / Active Directory"
+],
+"z. B. ad.example.com": [
+"e.g. ad.example.com",
+"p. ex. ad.example.com",
+"z. B. ad.example.com"
+],
+"optional, z. B. cn=svc,dc=example,dc=com": [
+"optional, e.g. cn=svc,dc=example,dc=com",
+"facultatif, p. ex. cn=svc,dc=example,dc=com",
+"optional, z. B. cn=svc,dc=example,dc=com"
+],
+"Adresse des LDAP-/AD-Servers.": [
+"Address of the LDAP/AD server.",
+"Adresse du serveur LDAP/AD.",
+"Adrässe vom LDAP-/AD-Server."
+],
+"389 unverschlüsselt, 636 für LDAPS.": [
+"389 plain, 636 for LDAPS.",
+"389 en clair, 636 pour LDAPS.",
+"389 unverschlüsselet, 636 für LDAPS."
+],
+"Base-DN": [
+"Base DN",
+"Base DN",
+"Base-DN"
+],
+"Ab wo gesucht wird, z. B. dc=example,dc=com.": [
+"Where the search starts, e.g. dc=example,dc=com.",
+"Point de départ de la recherche, p. ex. dc=example,dc=com.",
+"Ab wo gsuecht wird, z. B. dc=example,dc=com."
+],
+"Bind-DN": [
+"Bind DN",
+"Bind DN",
+"Bind-DN"
+],
+"Dienstkonto zum Suchen. Leer lassen, wenn der Server anonyme Suche erlaubt.": [
+"Service account for searching. Leave empty if the server allows anonymous search.",
+"Compte de service pour la recherche. Laisser vide si la recherche anonyme est permise.",
+"Dienstkonto zum Sueche. Läär laa, wenn de Server anonymi Suech erlaubt."
+],
+"Bind-Passwort": [
+"Bind password",
+"Mot de passe du bind",
+"Bind-Passwort"
+],
+"Passwort des Bind-DN.": [
+"Password of the bind DN.",
+"Mot de passe du bind DN.",
+"Passwort vom Bind-DN."
+],
+"Benutzer-Attribut": [
+"User attribute",
+"Attribut utilisateur",
+"Benutzer-Attribut"
+],
+"Active Directory: sAMAccountName. OpenLDAP oft uid.": [
+"Active Directory: sAMAccountName. OpenLDAP often uid.",
+"Active Directory : sAMAccountName. OpenLDAP souvent uid.",
+"Active Directory: sAMAccountName. OpenLDAP of uid."
+],
+"Gruppen-Attribut": [
+"Group attribute",
+"Attribut de groupe",
+"Gruppe-Attribut"
+],
+"Meist memberOf.": [
+"Usually memberOf.",
+"En général memberOf.",
+"Meischtens memberOf."
+],
+"Ordnet LDAP-Gruppen einer Rolle zu: Administrator, Operator oder ReadOnly.\nLeer lassen, wenn keine Gruppen-Zuordnung gebraucht wird.": [
+"Maps LDAP groups to a role: Administrator, Operator or ReadOnly.\nLeave empty if no group mapping is needed.",
+"Associe des groupes LDAP à un rôle : Administrator, Operator ou ReadOnly.\nLaisser vide si aucun mappage de groupe n'est nécessaire.",
+"Ordnet LDAP-Gruppe ere Rolle zue: Administrator, Operator oder ReadOnly.\nLäär laa, wenn kei Gruppe-Zueordnig bruucht wird."
+],
+"+ Gruppe": [
+"+ Group",
+"+ Groupe",
+"+ Gruppe"
+],
+"– Gruppe": [
+"– Group",
+"– Groupe",
+"– Gruppe"
+],
+"Experimentell und je Hersteller verschieden. Importiert ein von einer CA signiertes\nZertifikat (PEM). Bei HPE muss der passende Schlüssel aus einer auf dem iLO erzeugten\nZertifikatsanforderung (CSR) stammen, sonst scheitert der Import.": [
+"Experimental and vendor-specific. Imports a CA-signed certificate (PEM). On HPE the\nmatching key must come from a CSR generated on the iLO, otherwise the import fails.",
+"Expérimental et propre au constructeur. Importe un certificat signé par une CA (PEM).\nSur HPE, la clé correspondante doit provenir d'une CSR générée sur l'iLO, sinon l'import échoue.",
+"Experimentell und je Hersteller andersch. Importiert es vonere CA signiets Zertifikat (PEM).\nBi HPE mues de passend Schlüssel us ere uf em iLO erzüügte CSR cho, susch schiitert de Import."
+],
+"keine Datei gewählt": [
+"no file chosen",
+"aucun fichier choisi",
+"kei Datei gwählt"
+],
+"PEM-Datei wählen …": [
+"Choose PEM file …",
+"Choisir un fichier PEM …",
+"PEM-Datei wähle …"
+],
+"Mit Haken wird nichts geändert; das Protokoll zeigt nur die Aufrufe.": [
+"When ticked nothing is changed; the log only shows the calls.",
+"Si coché, rien n'est modifié ; le journal montre seulement les appels.",
+"Mit Haagge wird nüt gänderet; s Protokoll zeigt nur d Uffruef."
+],
+"Zertifikat wählen": [
+"Choose certificate",
+"Choisir un certificat",
+"Zertifikat wähle"
+],
+"Zertifikat (*.pem *.crt *.cer);;Alle Dateien (*)": [
+"Certificate (*.pem *.crt *.cer);;All files (*)",
+"Certificat (*.pem *.crt *.cer);;Tous les fichiers (*)",
+"Zertifikat (*.pem *.crt *.cer);;Alli Datei (*)"
+],
+"LDAP-Gruppe": [
+"LDAP group",
+"Groupe LDAP",
+"LDAP-Gruppe"
+],
+"Rolle": [
+"Role",
+"Rôle",
+"Rolle"
+],
+"Gruppen → Rolle": [
+"Groups → role",
+"Groupes → rôle",
+"Gruppe → Rolle"
+],
+"Zertifikat": [
+"Certificate",
+"Certificat",
+"Zertifikat"
+],
+"Die Datei enthält kein PEM-Zertifikat (erwartet „BEGIN CERTIFICATE“).": [
+"The file contains no PEM certificate (expected “BEGIN CERTIFICATE”).",
+"Le fichier ne contient pas de certificat PEM (« BEGIN CERTIFICATE » attendu).",
+"D Datei hät kei PEM-Zertifikat (erwartet „BEGIN CERTIFICATE“)."
+],
+"Dienste": [
+"Services",
+"Services",
+"Dienscht"
+],
+"Kein Abschnitt angehakt. Oben mindestens einen aktivieren.": [
+"No section ticked. Enable at least one above.",
+"Aucune section cochée. En activer au moins une ci-dessus.",
+"Kei Abschnitt aaghaaggt. Obe mindeschtens eine aktiviere."
+],
+"Es werden Verwaltungseinstellungen der BMCs geändert. Eine falsche LDAP- oder Zertifikatseinstellung kann die Anmeldung erschweren; der lokale Administrator bleibt aber bestehen.": [
+"Management settings of the BMCs are changed. A wrong LDAP or certificate setting can make signing in harder; the local administrator stays in place, though.",
+"Les réglages de gestion des BMC sont modifiés. Un mauvais réglage LDAP ou de certificat peut compliquer la connexion ; l'administrateur local reste toutefois en place.",
+"Es wärded Verwaltigs-Iistellige vo de BMC gänderet. E falschi LDAP- oder Zertifikats-Iistellig cha s Aamälde erschwere; de lokal Administrator bliibt aber bestah."
+],
+"    Zeitzone bei HPE bitte in der iLO-Oberfläche setzen (hier nicht gesetzt).": [
+"    Please set the time zone on HPE in the iLO interface (not set here).",
+"    Veuillez définir le fuseau horaire HPE dans l'interface iLO (non défini ici).",
+"    Ziitzone bi HPE bitte i de iLO-Oberflächi setze (da nöd gsetzt)."
+],
+"    Zeitzone bei diesem Hersteller bitte in der Oberfläche setzen (hier nicht gesetzt).": [
+"    Please set the time zone for this vendor in its interface (not set here).",
+"    Veuillez définir le fuseau horaire de ce constructeur dans son interface (non défini ici).",
+"    Ziitzone bi dem Hersteller bitte i de Oberflächi setze (da nöd gsetzt)."
+],
+"  iLO 3/4: Dienste werden hier nicht unterstützt, übersprungen.": [
+"  iLO 3/4: services are not supported here, skipped.",
+"  iLO 3/4 : services non pris en charge ici, ignoré.",
+"  iLO 3/4: Dienscht wärded da nöd understützt, übersprunge."
+],
+"Nur angehakte Abschnitte werden angewendet. Alles wird auf den Servern der Liste in Reiter 2 gesetzt, grüne unter ihrer neuen Adresse.": [
+"Only ticked sections are applied. Everything is set on the servers in the list on tab 2, green ones at their new address.",
+"Seules les sections cochées sont appliquées. Tout est défini sur les serveurs de la liste de l'onglet 2, les verts à leur nouvelle adresse.",
+"Nur aaghaaggti Abschnitt wärded aagwändet. Alles wird uf de Server vo de Lischte i Riiter 2 gsetzt, grüeni under ihrer neue Adrässe."
+],
+"NTP: mindestens den ersten Server eintragen.": [
+"NTP: enter at least the first server.",
+"NTP : saisir au moins le premier serveur.",
+"NTP: mindeschtens de erscht Server iiträge."
+],
+"Syslog: Server eintragen.": [
+"Syslog: enter the server.",
+"Syslog : saisir le serveur.",
+"Syslog: de Server iiträge."
+],
+"Port muss eine Zahl von 1 bis 65535 sein.": [
+"Port must be a number from 1 to 65535.",
+"Le port doit être un nombre de 1 à 65535.",
+"Port mues e Zahl vo 1 bis 65535 si."
+],
+"LDAP: Server und Base-DN eintragen.": [
+"LDAP: enter server and base DN.",
+"LDAP : saisir le serveur et le base DN.",
+"LDAP: Server und Base-DN iiträge."
+],
+"HTTPS-Zertifikat: erst eine PEM-Datei wählen.": [
+"HTTPS certificate: choose a PEM file first.",
+"Certificat HTTPS : choisir d'abord un fichier PEM.",
+"HTTPS-Zertifikat: zerscht e PEM-Datei wähle."
+],
+"— {0}, {1} Server, {2} —": [
+"— {0}, {1} servers, {2} —",
+"— {0}, {1} serveurs, {2} —",
+"— {0}, {1} Server, {2} —"
+],
+"  {0}: gesendet, die Verbindung brach dabei ab (der BMC startet oft neu).": [
+"  {0}: sent, the connection dropped (the BMC often restarts).",
+"  {0} : envoyé, la connexion a été coupée (le BMC redémarre souvent).",
+"  {0}: gschickt, d Verbindig isch abgrisse (de BMC startet of neu)."
+],
+"  {0}: gesetzt": [
+"  {0}: set",
+"  {0} : défini",
+"  {0}: gsetzt"
+],
+"Dienste: {0}": [
+"Services: {0}",
+"Services : {0}",
+"Dienscht: {0}"
+],
+"Auf {0} Servern werden jetzt wirklich Dienste eingerichtet.": [
+"Services will now really be set up on {0} servers.",
+"Les services vont maintenant vraiment être configurés sur {0} serveurs.",
+"Uf {0} Server wärded jetz würklich Dienscht iigrichtet."
+],
+"  {0}: auf diesem Hersteller nicht unterstützt, übersprungen": [
+"  {0}: not supported on this vendor, skipped",
+"  {0} : non pris en charge sur ce constructeur, ignoré",
+"  {0}: uf dem Hersteller nöd understützt, übersprunge"
+],
+"Rolle muss Administrator, Operator oder ReadOnly sein (Gruppe {0}).": [
+"Role must be Administrator, Operator or ReadOnly (group {0}).",
+"Le rôle doit être Administrator, Operator ou ReadOnly (groupe {0}).",
+"D Rolle mues Administrator, Operator oder ReadOnly si (Gruppe {0})."
 ]
 }
 
 HELP = {
-"de": "<h2>BMC-Steward</h2>\n<p>Der BMC-Steward bedient jeden Server der Reihe nach: Er legt den neuen Administrator an, setzt den\nHostnamen und stellt den BMC auf eine feste Adresse um. Die Server müssen nicht alle auf einmal\neingetragen werden, sie können nach und nach dazukommen.</p>\n\n<h2>Schutz vor Fehlbedienung</h2>\n<p>Das Tool ist so gebaut, dass ein Fehlgriff möglichst nichts kaputt macht:</p>\n<ul>\n<li><b>Trockenlauf ist voreingestellt.</b> Solange der Haken gesetzt ist, wird nichts geändert.</li>\n<li><b>Jeder scharfe Lauf wird vorher gezeigt</b> (alte IP → neue IP, Hostname). In allen Abfragen ist\n    „Abbrechen“ vorausgewählt, Enter bricht also ab.</li>\n<li><b>Ungewöhnliche Fälle verlangen das Eintippen der Server-Anzahl</b>, z. B. wenn ein Gerät nicht im\n    eigenen Staging-Netz liegt, und immer bei UEFI-Änderungen.</li>\n<li><b>Adressen werden geprüft:</b> doppelte IPs oder Hostnamen, Gateway außerhalb des Netzes, eine\n    Adresse dieses Rechners, eine Adresse aus dem laufenden DHCP-Bereich und die aktuelle IP eines\n    anderen Geräts werden abgelehnt. Vor dem Umstellen prüft das Tool außerdem, ob unter der neuen IP\n    schon ein Gerät antwortet, und lässt das Gerät dann unverändert.</li>\n<li><b>Dell:</b> Ein schon belegter User-Slot wird nie überschrieben.</li>\n<li><b>Das neue Passwort wird zweimal eingegeben.</b> Stimmen die Eingaben nicht überein, startet kein\n    Lauf.</li>\n<li><b>Der Adresswechsel wird geprüft:</b> Reißt beim Umstellen nur die Verbindung ab, gilt ein Gerät\n    erst als fertig, wenn es unter der alten Adresse wirklich nicht mehr antwortet.</li>\n<li><b>DHCP-Server:</b> startet nicht auf einer Karte mit öffentlicher Adresse, mit der Standardroute\n    (Internet/Firmennetz), mit einer per DHCP bezogenen Adresse oder wenn dort schon ein DHCP-Server\n    antwortet. Er stoppt von selbst, wenn die Karte später zur Standardroute wird. Geräte, die ihre\n    Adresse von einem anderen Server haben, werden nie abgewiesen. Ein nach einem Absturz\n    übrig gebliebener DHCP-Server wird beim nächsten Start beendet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribute sind gesperrt. Werte, die nicht zum Typ passen,\n    werden nicht gesetzt. Ein Neustart ist nicht vorausgewählt.</li>\n<li><b>Passwörter</b> bleiben im Arbeitsspeicher und landen nur auf ausdrücklichen Wunsch in einer\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Reiter 1): Die Netzwerkkarte am getrennten Staging-Switch braucht eine feste\n    Adresse ohne Gateway. DHCP starten, die Geräte holen sich eine Adresse und erscheinen in der Liste,\n    von dort „In Serverliste übernehmen“. Unter Linux läuft dafür dnsmasq, unter Windows ein\n    eingebauter Server.</li>\n<li><b>Serverliste</b> (Reiter 2): neue IP, Subnetzmaske, Gateway und Hostname eintragen. Was noch fehlt,\n    ist <b>gelb</b> markiert, Fehlerhaftes <b>rot</b>, Fertiges <b>grün</b>. Über dem Start-Knopf steht in\n    einer Zeile, was vor dem Lauf noch auszufüllen ist; der Grund zu jedem Feld steht im Tooltip.</li>\n<li><b>Trockenlauf</b>: zeigt im Protokoll, was gesendet würde.</li>\n<li><b>Scharfer Lauf</b>: Haken bei „Trockenlauf“ entfernen. Der Start-Knopf wird rot und heißt dann\n    „Scharf starten“. Klicken und die Abfrage bestätigen.</li>\n<li><b>Kontrolle</b>: Am Ende prüft das Tool, ob jede neue Adresse mit dem neuen Benutzer antwortet. Das\n    klappt nur, wenn dieser Rechner das neue Netz erreicht; sonst steht dort „FEHLT“, obwohl die\n    Umstellung geklappt haben kann.</li>\n</ol>\n\n<h2>Server nacheinander konfigurieren</h2>\n<ul>\n<li>Man kann einen Server konfigurieren, Start drücken, den nächsten anschließen und wieder Start\n    drücken, beliebig oft. Der DHCP-Server läuft dabei weiter.</li>\n<li>Erfolgreich umgestellte Zeilen werden <b>grün</b> markiert, bleiben in der Liste stehen und werden\n    beim nächsten Start übersprungen. Fehlgeschlagene werden erneut versucht.</li>\n<li>Soll ein grünes Gerät noch einmal bearbeitet werden: Zeile markieren, „Erneut bearbeiten“ und die\n    „Aktuelle IP“ auf seine jetzige Adresse setzen.</li>\n<li>Der Trockenlauf markiert nie etwas als fertig.</li>\n<li>„Liste speichern“ schreibt die grüne Markierung mit in die Datei (Spalte „fertig“), nach\n    „Liste laden“ sind die Zeilen wieder grün. So lässt sich ein Rollout auch an einem anderen Tag\n    fortsetzen.</li>\n</ul>\n\n<h2>Profile</h2>\n<ul>\n<li>Ein Profil merkt sich die Einstellungen der Maske: Hersteller, Werksbenutzer, neuen Administrator,\n    User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen. Passwörter und die Serverliste\n    gehören nie dazu.</li>\n<li>Die Profile liegen in <code>bmc-profile.json</code> neben dem Tool; beim Start werden das zuletzt\n    genutzte Profil und die zuletzt gewählte Sprache geladen.</li>\n</ul>\n\n<h2>UEFI-Einstellungen (Reiter 3)</h2>\n<ul>\n<li>UEFI-Attribute unterscheiden sich je Modell. Das Tool liest deshalb die tatsächlich vorhandenen\n    Attribute von einem <b>Referenzgerät</b>, statt sie zu raten. Lesen ändert nichts.</li>\n<li><b>Ändern:</b> bei den gewünschten Zeilen „Neuer Wert“ ausfüllen, die Suche grenzt die Liste ein.\n    Leere Felder bleiben unverändert. Graue Zeilen (Passwörter, TPM, Löschfunktionen) sind gesperrt.</li>\n<li><b>Anwenden:</b> „Auf allen Servern der Liste setzen“ nutzt die Serverliste aus Reiter 2; grüne\n    Zeilen werden unter ihrer neuen IP angesprochen. Jedes Gerät bekommt nur Attribute, die es auch\n    hat. Werte, die schon stimmen, werden übersprungen.</li>\n<li><b>Neustart:</b> UEFI-Werte wirken erst nach einem Neustart. Mit dem Haken „Danach hart neu\n    starten“ wird ein laufender Server hart neu gestartet (wie mit der Reset-Taste), ein\n    ausgeschalteter eingeschaltet. Nur bei Servern ohne laufendes Betriebssystem verwenden.</li>\n<li><b>UEFI-Vorlagen</b> merken sich Hersteller und „Neuer Wert“-Felder und liegen getrennt in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Hersteller im Vergleich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Auszug)</td><td>individuell,\n    Anhänger am Gerät</td><td>individuell auf dem Aufkleber, alte Boards ADMIN</td><td>individuell,\n    Anhänger am Gerät</td></tr>\n<tr><td><b>Neuer Benutzer</b></td><td>in den User-Slot, nur wenn frei</td><td>neu angelegt</td>\n    <td>neu angelegt</td><td>neu angelegt</td></tr>\n<tr><td><b>Adresswechsel</b></td><td>sofort</td><td>nach iLO-Neustart (löst das Tool aus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunden</td><td>1 bis 3 Minuten</td><td>Sekunden</td>\n    <td>Sekunden</td></tr>\n</table>\n<p>Bleibt „Benutzer“ beim aktuellen Login leer, wird je Hersteller der Werksbenutzer verwendet; so gehen\nauch gemischte Listen. „Automatisch erkennen“ ermittelt den Hersteller pro Gerät, eine feste Wahl gilt\nfür alle Zeilen.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 ist root). Ist der Slot von einem anderen Benutzer belegt,\n    bricht das Tool für dieses Gerät ab und ändert nichts.</li>\n<li><b>Hostname:</b> gesetzt wird der DNS-Name des iDRAC, nicht der des Betriebssystems.</li>\n<li><b>Auslieferung:</b> je nach Bestellung DHCP oder feste Adresse 192.168.0.120. Mit fester Adresse\n    erscheint der iDRAC nicht in der DHCP-Liste; mehrere solche Geräte am selben Switch kollidieren,\n    dann einzeln anschließen.</li>\n<li><b>Generationen:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    brauchen mindestens Firmware 2.50.50.50; ältere erkennt das Tool, meldet es und ändert nichts.\n    iDRAC10 zuerst an einem Gerät testen. iDRAC6 wird nicht unterstützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile in die Spalte „Passwort“ eintragen.</li>\n<li><b>Zuordnung:</b> in der DHCP-Liste meldet sich ein iLO meist als „ILO“ plus Seriennummer.</li>\n<li><b>Neustart:</b> Hostname und Adresse werden erst nach dem iLO-Neustart aktiv; der Server selbst\n    läuft weiter.</li>\n<li><b>Port:</b> konfiguriert wird der dedizierte iLO-Port. Neue Passwörter brauchen mindestens 8\n    Zeichen.</li>\n<li><b>Generationen:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 ist nicht geprüft. Für iLO 3\n    und 4 siehe den nächsten Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (ältere Server)</h2>\n<ul>\n<li><b>Geräte:</b> iLO 3 steckt in G7-Servern, iLO 4 in Gen8 und Gen9. Das Tool erkennt sie von selbst;\n    wer den Hersteller fest wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>Anderer Weg:</b> iLO 3 kennt kein Redfish. Das Tool nutzt deshalb für iLO 3 und iLO 4 die\n    XML-Schnittstelle RIBCL, die beide ab Werk mitbringen. Im Trockenlauf stehen die XML-Befehle im\n    Protokoll, Passwörter sind dort durch *** ersetzt.</li>\n<li><b>Neustart:</b> Nach dem Setzen von Adresse und Hostname startet das iLO von selbst neu; der Server\n    läuft weiter. Bis es unter der neuen Adresse antwortet, vergehen 1 bis 3 Minuten.</li>\n<li><b>Alte Verschlüsselung:</b> iLO 3 kann nur TLS 1.0/1.1. Das Tool schaltet dafür je Gerät von selbst\n    auf die alte Verschlüsselung um und schreibt einen Hinweis ins Protokoll. Solche Geräte gehören in\n    ein abgeschottetes Verwaltungsnetz.</li>\n<li><b>Grenzen:</b> Hostname höchstens 49 Zeichen. UEFI-Einstellungen (Reiter 3) gehen bei iLO 3 nicht.\n    iLO 2 und älter werden nicht unterstützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Aufkleber, je Zeile eintragen.</li>\n<li><b>Zugriffsarten:</b> das Tool vergibt Web, IPMI und Konsole mit. Steht im Protokoll „ohne\n    Zugriffsarten angelegt“, die Web-Anmeldung einmal prüfen.</li>\n<li><b>Lizenz:</b> bei älteren Boards können Redfish-Funktionen eine Lizenz brauchen.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erkannt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile eintragen.</li>\n<li><b>Werksbenutzer:</b> USERID in Großbuchstaben.</li>\n<li><b>Port:</b> konfiguriert wird die Schnittstelle „NIC“, der dedizierte XCC-Port.</li>\n<li><b>Generationen:</b> XCC2/XCC3. XCC1 zuerst an einem Gerät testen.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>Das Tool setzt nur BMC-Adresse und BMC-Benutzer, nicht Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> der Cluster-Erstellung so umstellen. Bei einem laufenden Cluster das\n    Nutanix-Verfahren nutzen, weil der Cluster die BMC-Daten selbst verwendet.</li>\n</ul>\n\n<h2>Wenn etwas nicht klappt</h2>\n<ul>\n<li><b>DHCP startet nicht:</b> Die Meldung nennt den Grund. Meist hat die Karte ein Gateway oder ihre\n    Adresse per DHCP. Unter Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;karte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Keine Geräte in der DHCP-Liste:</b> Firewall (Linux mit ufw: UDP 67 freigeben; Windows: die\n    Firewall-Abfrage zulassen) oder der BMC steht nicht auf DHCP.</li>\n<li><b>Port 67 belegt (Windows):</b> meist Internetverbindungsfreigabe oder mobiler Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Feld „Benutzer“ leeren, Passwort der Zeile\n    prüfen.</li>\n<li><b>Hersteller nicht erkannt:</b> Das Gerät antwortet weder per Redfish noch als iLO 3/4. iDRAC6,\n    iLO 2 und sehr alte Firmware werden nicht unterstützt. Ein iLO 3/4, bei dem die Geräteauskunft\n    abgeschaltet wurde, lässt sich über die feste Wahl „HPE iLO 3/4“ trotzdem ansprechen.</li>\n<li><b>Benutzer abgelehnt:</b> meist Passwortregeln. Die Meldung des BMC steht unter der\n    Fehlerzeile.</li>\n<li><b>„neue IP ist schon vergeben“:</b> Unter der Adresse antwortet bereits ein Gerät. Andere Adresse\n    wählen.</li>\n<li><b>Liste aus Excel oder einem anderen Tool:</b> Ohne Spalte „fertig“ sind alle Zeilen offen. Schon\n    umgestellte Geräte sind unter der alten Adresse nicht erreichbar, diese Zeilen entfernen oder\n    anpassen.</li>\n</ul>\n\n<h2>Daten und Grenzen</h2>\n<ul>\n<li>Das Tool speichert nichts von selbst. „Liste speichern“ fragt, ob Passwörter mit in die Datei\n    sollen (dann im Klartext). Eine solche Datei nach dem Rollout löschen.</li>\n<li>Die Abläufe für HPE (auch iLO 3/4), ältere iDRAC7/8, Supermicro, Lenovo und UEFI sowie der\n    Windows-DHCP-Server sind bisher nur gegen simulierte Gegenstellen geprüft. Vor einem großen Lauf immer zuerst ein einzelnes Gerät\n    konfigurieren.</li>\n<li>„Protokoll speichern“ schreibt das Protokoll des letzten Laufs in eine Textdatei, z. B. für die\n    Dokumentation. Passwörter stehen nicht darin.</li>\n<li>Die Sprache lässt sich oben rechts umstellen, solange kein Lauf aktiv ist und der DHCP-Server\n    gestoppt ist.</li>\n</ul>\n",
-"en": "<h2>BMC-Steward</h2>\n<p>BMC-Steward serves one server after another: it creates the new administrator, sets the hostname and\nswitches the BMC to a static address. You don't have to enter all servers at once; they can be added\none by one.</p>\n\n<h2>Protection against mistakes</h2>\n<p>The tool is built so that a slip does as little damage as possible:</p>\n<ul>\n<li><b>Dry run is the default.</b> As long as it is ticked, nothing is changed.</li>\n<li><b>Every live run is shown first</b> (old IP → new IP, hostname). “Cancel” is preselected in every\n    prompt, so pressing Enter cancels.</li>\n<li><b>Unusual cases require typing the number of servers</b>, e.g. when a device is not in the\n    computer's own staging network, and always for UEFI changes.</li>\n<li><b>Addresses are checked:</b> duplicate IPs or hostnames, a gateway outside the network, an address\n    of this computer, an address from the running DHCP range and the current IP of another device are\n    rejected. Before reconfiguring, the tool also checks whether a device already answers on the new IP\n    and, if so, leaves the device unchanged.</li>\n<li><b>Dell:</b> an occupied user slot is never overwritten.</li>\n<li><b>The new password is entered twice.</b> If the entries differ, no run starts.</li>\n<li><b>The address change is verified:</b> if only the connection drops during the change, a device\n    counts as done only once it really no longer answers on the old address.</li>\n<li><b>DHCP server:</b> does not start on a card with a public address, with the default route\n    (internet/company network), with an address obtained via DHCP, or when a DHCP server already\n    answers there. It stops by itself if the card later becomes the default route. Devices that got\n    their address from another server are never refused. A DHCP server left over after a crash is\n    stopped at the next start.</li>\n<li><b>UEFI:</b> password, TPM and erase attributes are locked. Values that don't match the type are\n    not set. A restart is not preselected.</li>\n<li><b>Passwords</b> stay in memory and only go into a file if you explicitly ask for it.</li>\n</ul>\n\n<h2>Procedure</h2>\n<ol>\n<li><b>DHCP server</b> (tab 1): the network card on the separate staging switch needs a static address\n    without a gateway. Start DHCP; the devices get an address and appear in the list. From there,\n    “Add to server list”. On Linux dnsmasq is used, on Windows a built-in server.</li>\n<li><b>Server list</b> (tab 2): enter new IP, subnet mask, gateway and hostname. Whatever is still\n    missing is marked <b>yellow</b>, wrong entries <b>red</b>, finished ones <b>green</b>. A line above the\n    Start button says what still has to be filled in; the tooltip of each field gives the reason.</li>\n<li><b>Dry run</b>: the log shows what would be sent.</li>\n<li><b>Live run</b>: untick “Dry run”. The Start button turns red and reads “Start live run”. Click it\n    and confirm the prompt.</li>\n<li><b>Check</b>: at the end the tool checks whether each new address answers with the new user. That\n    only works if this computer can reach the new network; otherwise it shows “MISSING” even though\n    the change may have worked.</li>\n</ol>\n\n<h2>Configuring servers one after another</h2>\n<ul>\n<li>You can configure one server, press Start, connect the next one and press Start again, as often as\n    you like. The DHCP server keeps running.</li>\n<li>Successfully reconfigured rows turn <b>green</b>, stay in the list and are skipped at the next\n    start. Failed ones are tried again.</li>\n<li>To process a green device again: select the row, click “Process again” and set “Current IP” to its\n    present address.</li>\n<li>A dry run never marks anything as done.</li>\n<li>“Save list” writes the green mark into the file as well (column “fertig”); after “Load list” the\n    rows are green again. This lets you continue a rollout on another day.</li>\n</ul>\n\n<h2>Profiles</h2>\n<ul>\n<li>A profile remembers the settings of the form: vendor, factory user, new administrator, user slot,\n    defaults for new rows and the DHCP settings. Passwords and the server list are never included.</li>\n<li>Profiles are stored in <code>bmc-profile.json</code> next to the tool; at start-up the last used\n    profile and the last chosen language are loaded.</li>\n</ul>\n\n<h2>UEFI settings (tab 3)</h2>\n<ul>\n<li>UEFI attributes differ per model. The tool therefore reads the attributes that actually exist from\n    a <b>reference device</b> instead of guessing. Reading changes nothing.</li>\n<li><b>Change:</b> fill in “New value” in the rows you want; the search narrows the list. Empty fields\n    stay unchanged. Grey rows (passwords, TPM, erase functions) are locked.</li>\n<li><b>Apply:</b> “Set on all servers in the list” uses the server list from tab 2; green rows are\n    addressed at their new IP. Each device only gets attributes it actually has. Values that are\n    already correct are skipped.</li>\n<li><b>Restart:</b> UEFI values only take effect after a restart. With “Then hard restart” ticked, a\n    running server is hard restarted (like pressing reset) and a powered-off one is switched on. Use\n    only for servers without a running operating system.</li>\n<li><b>UEFI templates</b> remember the vendor and the “New value” fields and are stored separately in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Vendors compared</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Factory user</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Factory password</b></td><td>calvin or individual (service tag sheet)</td><td>individual,\n    tag on the device</td><td>individual on the sticker, old boards ADMIN</td><td>individual, tag on\n    the device</td></tr>\n<tr><td><b>New user</b></td><td>into the user slot, only if free</td><td>created</td><td>created</td>\n    <td>created</td></tr>\n<tr><td><b>Address change</b></td><td>immediate</td><td>after iLO restart (triggered by the tool)</td>\n    <td>immediate</td><td>immediate</td></tr>\n<tr><td><b>Until reachable</b></td><td>seconds</td><td>1 to 3 minutes</td><td>seconds</td>\n    <td>seconds</td></tr>\n</table>\n<p>If “User” in the current login stays empty, the vendor's factory user is used, so mixed lists work.\n“Detect automatically” determines the vendor per device; a fixed choice applies to all rows.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User slot:</b> default 3 (slot 2 is root). If another user occupies the slot, the tool stops for\n    this device and changes nothing.</li>\n<li><b>Hostname:</b> the iDRAC DNS name is set, not the operating system's.</li>\n<li><b>As delivered:</b> DHCP or static 192.168.0.120, depending on the order. With a static address the\n    iDRAC does not appear in the DHCP list; several such devices on one switch collide, so connect\n    them one at a time.</li>\n<li><b>Generations:</b> iDRAC9 (14th to 16th generation) and iDRAC7/8 (12th and 13th generation). iDRAC7/8\n    need at least firmware 2.50.50.50; the tool detects older firmware, reports it and changes nothing.\n    Test iDRAC10 on one device first. iDRAC6 is not supported.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row in the “Password” column.</li>\n<li><b>Identification:</b> in the DHCP list an iLO usually reports as “ILO” plus serial number.</li>\n<li><b>Restart:</b> hostname and address only become active after the iLO restart; the server itself\n    keeps running.</li>\n<li><b>Port:</b> the dedicated iLO port is configured. New passwords need at least 8 characters.</li>\n<li><b>Generations:</b> iLO 5 and 6 (Gen10 to Gen11) via Redfish. iLO 7 is untested. For iLO 3 and 4 see\n    the next section.</li>\n</ul>\n\n<h2>HPE iLO 3 and iLO 4 (older servers)</h2>\n<ul>\n<li><b>Devices:</b> iLO 3 is found in G7 servers, iLO 4 in Gen8 and Gen9. The tool detects them by\n    itself; if you pick the vendor by hand, choose “HPE iLO 3/4”.</li>\n<li><b>A different route:</b> iLO 3 has no Redfish. For iLO 3 and iLO 4 the tool therefore uses the RIBCL\n    XML interface, which both ship with. In a dry run the XML commands appear in the log, with\n    passwords replaced by ***.</li>\n<li><b>Restart:</b> after the address and hostname are set, the iLO restarts by itself; the server keeps\n    running. It takes 1 to 3 minutes until it answers on the new address.</li>\n<li><b>Old encryption:</b> iLO 3 only speaks TLS 1.0/1.1. The tool switches to the old encryption per\n    device by itself and writes a note to the log. Such devices belong in an isolated management\n    network.</li>\n<li><b>Limits:</b> hostname at most 49 characters. UEFI settings (tab 3) do not work with iLO 3. iLO 2\n    and older are not supported.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Password per device:</b> on the sticker; enter it per row.</li>\n<li><b>Access types:</b> the tool also grants web, IPMI and console. If the log says “created without\n    access types”, check the web login once.</li>\n<li><b>Licence:</b> on older boards some Redfish functions may need a licence.</li>\n<li><b>Nutanix NX</b> is detected as Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row.</li>\n<li><b>Factory user:</b> USERID in capitals.</li>\n<li><b>Port:</b> the “NIC” interface, i.e. the dedicated XCC port, is configured.</li>\n<li><b>Generations:</b> XCC2/XCC3. Test XCC1 on one device first.</li>\n</ul>\n\n<h2>Nutanix nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>The tool only sets the BMC address and BMC user, not the hypervisor or CVM.</li>\n<li>Only change these <b>before</b> creating the cluster. On a running cluster use the Nutanix\n    procedure, because the cluster uses the BMC data itself.</li>\n</ul>\n\n<h2>Troubleshooting</h2>\n<ul>\n<li><b>DHCP does not start:</b> the message gives the reason. Usually the card has a gateway or got its\n    address via DHCP. On Linux, for example:\n    <code>nmcli con add type ethernet ifname &lt;card&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>No devices in the DHCP list:</b> firewall (Linux with ufw: allow UDP 67; Windows: allow the\n    firewall prompt) or the BMC is not set to DHCP.</li>\n<li><b>Port 67 in use (Windows):</b> usually Internet Connection Sharing or a mobile hotspot.</li>\n<li><b>HTTP 401:</b> wrong user or password. Clear “User”, check the row's password.</li>\n<li><b>Vendor not recognised:</b> the device answers neither via Redfish nor as an iLO 3/4. iDRAC6, iLO 2\n    and very old firmware are not supported. An iLO 3/4 whose device information has been switched off\n    can still be addressed by choosing “HPE iLO 3/4” by hand.</li>\n<li><b>User refused:</b> usually password rules. The BMC's message appears below the error line.</li>\n<li><b>“new IP is already taken”:</b> a device already answers on that address. Choose another one.</li>\n<li><b>List from Excel or another tool:</b> without the “fertig” column all rows are open. Devices\n    already reconfigured cannot be reached at their old address; remove or adjust those rows.</li>\n</ul>\n\n<h2>Data and limits</h2>\n<ul>\n<li>The tool saves nothing on its own. “Save list” asks whether passwords go into the file (then in plain\n    text). Delete such a file after the rollout.</li>\n<li>The procedures for HPE (including iLO 3/4), older iDRAC7/8, Supermicro, Lenovo and UEFI and the\n    Windows DHCP server have so far only been tested against simulated counterparts. Always configure a single device first before a large\n    run.</li>\n<li>“Save log” writes the log of the last run to a text file, e.g. for documentation. It contains no\n    passwords.</li>\n<li>The language can be changed at the top right while no run is active and the DHCP server is\n    stopped.</li>\n</ul>\n",
-"fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> (onglet 1) : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Sous Linux, dnsmasq est utilisé ;\n    sous Windows, un serveur intégré.</li>\n<li><b>Liste des serveurs</b> (onglet 2) : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Réglages UEFI (onglet 3)</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de l'onglet 2 ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> iDRAC9 (14e à 16e génération) et iDRAC7/8 (12e et 13e génération). iDRAC7/8\n    exigent au moins le firmware 2.50.50.50 ; l'outil détecte un firmware plus ancien, le signale et ne\n    modifie rien. Tester d'abord iDRAC10 sur un seul appareil. iDRAC6 n'est pas pris en charge.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11) via Redfish. iLO 7 n'est pas testé. Pour iLO 3 et 4,\n    voir la section suivante.</li>\n</ul>\n\n<h2>HPE iLO 3 et iLO 4 (serveurs plus anciens)</h2>\n<ul>\n<li><b>Appareils :</b> iLO 3 équipe les serveurs G7, iLO 4 les Gen8 et Gen9. L'outil les reconnaît de\n    lui-même ; si le constructeur est choisi à la main, prendre « HPE iLO 3/4 ».</li>\n<li><b>Autre voie :</b> iLO 3 ne connaît pas Redfish. Pour iLO 3 et iLO 4, l'outil utilise donc\n    l'interface XML RIBCL, présente d'origine sur les deux. En simulation, les commandes XML figurent\n    dans le journal, les mots de passe y sont remplacés par ***.</li>\n<li><b>Redémarrage :</b> une fois l'adresse et le nom d'hôte définis, l'iLO redémarre de lui-même ; le\n    serveur continue de tourner. Il faut 1 à 3 minutes avant qu'il réponde à la nouvelle adresse.</li>\n<li><b>Chiffrement ancien :</b> iLO 3 ne gère que TLS 1.0/1.1. L'outil bascule de lui-même, appareil par\n    appareil, sur l'ancien chiffrement et l'indique dans le journal. Ces appareils ont leur place dans\n    un réseau d'administration isolé.</li>\n<li><b>Limites :</b> nom d'hôte de 49 caractères au plus. Les réglages UEFI (onglet 3) ne fonctionnent pas\n    avec iLO 3. iLO 2 et versions antérieures ne sont pas pris en charge.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67 ; Windows :\n    accepter la demande du pare-feu) ou le BMC n'est pas en DHCP.</li>\n<li><b>Port 67 occupé (Windows) :</b> en général le partage de connexion Internet ou un point d'accès\n    mobile.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond ni en Redfish ni comme iLO 3/4. iDRAC6, iLO 2\n    et les firmwares très anciens ne sont pas pris en charge. Un iLO 3/4 dont les informations\n    d'appareil ont été désactivées reste accessible en choisissant « HPE iLO 3/4 » à la main.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE (iLO 3/4 compris), iDRAC7/8 anciens, Supermicro, Lenovo et UEFI ainsi que le\n    serveur DHCP Windows n'ont été testés jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en haut à droite, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n",
-"gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Riiter 1): D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Under Linux lauft defür dnsmasq, under Windows en iibaute Server.</li>\n<li><b>Serverlischte</b> (Riiter 2): neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>UEFI-Iistellige (Riiter 3)</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us em Riiter 2; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    bruuched mindeschtens Firmware 2.50.50.50; älteri erchännt s Tool, mäldet's und änderet nüt.\n    iDRAC10 zerscht a eim Grät teste. iDRAC6 wird nöd understützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 isch nöd prüeft. Für iLO 3 und\n    4 lueg im nächschte Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (di ältere Semeschter)</h2>\n<ul>\n<li><b>Grät:</b> iLO 3 steckt i G7-Server, iLO 4 i Gen8 und Gen9. S Tool erchännt si vo sälber; wär de\n    Hersteller fescht wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>En andere Wäg:</b> iLO 3 kännt kei Redfish. S Tool bruucht drum für iLO 3 und iLO 4 d\n    XML-Schnittstell RIBCL, wo beidi ab Wärk debii händ. Im Trocheluuf stönd d XML-Befähl im Protokoll,\n    Passwörter sind dört dur *** ersetzt.</li>\n<li><b>Neustart:</b> Nach em Setze vo Adrässe und Hostname startet s iLO vo sälber neu; de Server lauft\n    wiiter. Bis es under de neue Adrässe antwortet, gaht's 1 bis 3 Minute.</li>\n<li><b>Alti Verschlüsselig:</b> iLO 3 cha nume TLS 1.0/1.1. S Tool schaltet defür pro Grät vo sälber uf\n    di alt Verschlüsselig um und schriibt en Hiiwiis is Protokoll. Söttigi Grät ghöred in es\n    abgschottets Verwaltigsnetz.</li>\n<li><b>Gränze:</b> Hostname höchschtens 49 Zeiche. UEFI-Iistellige (Riiter 3) gönd bi iLO 3 nöd. iLO 2\n    und älter wärded nöd understützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh; Windows: d\n    Firewall-Abfrag zuelaa) oder de BMC staht nöd uf DHCP.</li>\n<li><b>Port 67 bsetzt (Windows):</b> meischtens Internetverbindigsfreigab oder mobile Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet weder per Redfish no als iLO 3/4. iDRAC6, iLO 2 und\n    uralti Firmware wärded nöd understützt. Es iLO 3/4, wo d Grätuuskunft abgschaltet isch, laat sich\n    über di feschti Wahl „HPE iLO 3/4“ glich aaspräche.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE (au iLO 3/4), älteri iDRAC7/8, Supermicro, Lenovo und UEFI und de\n    Windows-DHCP-Server sind bis jetzt nur gäge simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer obe rächts umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n"
+"de": "<h2>BMC-Steward</h2>\n<p>Der BMC-Steward bedient jeden Server der Reihe nach: Er legt den neuen Administrator an, setzt den\nHostnamen und stellt den BMC auf eine feste Adresse um. Die Server müssen nicht alle auf einmal\neingetragen werden, sie können nach und nach dazukommen.</p>\n\n<h2>Schutz vor Fehlbedienung</h2>\n<p>Das Tool ist so gebaut, dass ein Fehlgriff möglichst nichts kaputt macht:</p>\n<ul>\n<li><b>Trockenlauf ist voreingestellt.</b> Solange der Haken gesetzt ist, wird nichts geändert.</li>\n<li><b>Jeder scharfe Lauf wird vorher gezeigt</b> (alte IP → neue IP, Hostname). In allen Abfragen ist\n    „Abbrechen“ vorausgewählt, Enter bricht also ab.</li>\n<li><b>Ungewöhnliche Fälle verlangen das Eintippen der Server-Anzahl</b>, z. B. wenn ein Gerät nicht im\n    eigenen Staging-Netz liegt, und immer bei UEFI-Änderungen.</li>\n<li><b>Adressen werden geprüft:</b> doppelte IPs oder Hostnamen, Gateway außerhalb des Netzes, eine\n    Adresse dieses Rechners, eine Adresse aus dem laufenden DHCP-Bereich und die aktuelle IP eines\n    anderen Geräts werden abgelehnt. Vor dem Umstellen prüft das Tool außerdem, ob unter der neuen IP\n    schon ein Gerät antwortet, und lässt das Gerät dann unverändert.</li>\n<li><b>Dell:</b> Ein schon belegter User-Slot wird nie überschrieben.</li>\n<li><b>Das neue Passwort wird zweimal eingegeben.</b> Stimmen die Eingaben nicht überein, startet kein\n    Lauf.</li>\n<li><b>Der Adresswechsel wird geprüft:</b> Reißt beim Umstellen nur die Verbindung ab, gilt ein Gerät\n    erst als fertig, wenn es unter der alten Adresse wirklich nicht mehr antwortet.</li>\n<li><b>DHCP-Server:</b> startet nicht auf einer Karte mit öffentlicher Adresse, mit der Standardroute\n    (Internet/Firmennetz), mit einer per DHCP bezogenen Adresse oder wenn dort schon ein DHCP-Server\n    antwortet. Er stoppt von selbst, wenn die Karte später zur Standardroute wird. Geräte, die ihre\n    Adresse von einem anderen Server haben, werden nie abgewiesen. Ein nach einem Absturz\n    übrig gebliebener DHCP-Server wird beim nächsten Start beendet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribute sind gesperrt. Werte, die nicht zum Typ passen,\n    werden nicht gesetzt. Ein Neustart ist nicht vorausgewählt.</li>\n<li><b>Passwörter</b> bleiben im Arbeitsspeicher und landen nur auf ausdrücklichen Wunsch in einer\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Reiter 1): Die Netzwerkkarte am getrennten Staging-Switch braucht eine feste\n    Adresse ohne Gateway. DHCP starten, die Geräte holen sich eine Adresse und erscheinen in der Liste,\n    von dort „In Serverliste übernehmen“. Unter Linux läuft dafür dnsmasq, unter Windows ein\n    eingebauter Server.</li>\n<li><b>Serverliste</b> (Reiter 2): neue IP, Subnetzmaske, Gateway und Hostname eintragen. Was noch fehlt,\n    ist <b>gelb</b> markiert, Fehlerhaftes <b>rot</b>, Fertiges <b>grün</b>. Über dem Start-Knopf steht in\n    einer Zeile, was vor dem Lauf noch auszufüllen ist; der Grund zu jedem Feld steht im Tooltip.</li>\n<li><b>Trockenlauf</b>: zeigt im Protokoll, was gesendet würde.</li>\n<li><b>Scharfer Lauf</b>: Haken bei „Trockenlauf“ entfernen. Der Start-Knopf wird rot und heißt dann\n    „Scharf starten“. Klicken und die Abfrage bestätigen.</li>\n<li><b>Kontrolle</b>: Am Ende prüft das Tool, ob jede neue Adresse mit dem neuen Benutzer antwortet. Das\n    klappt nur, wenn dieser Rechner das neue Netz erreicht; sonst steht dort „FEHLT“, obwohl die\n    Umstellung geklappt haben kann.</li>\n</ol>\n\n<h2>Server nacheinander konfigurieren</h2>\n<ul>\n<li>Man kann einen Server konfigurieren, Start drücken, den nächsten anschließen und wieder Start\n    drücken, beliebig oft. Der DHCP-Server läuft dabei weiter.</li>\n<li>Erfolgreich umgestellte Zeilen werden <b>grün</b> markiert, bleiben in der Liste stehen und werden\n    beim nächsten Start übersprungen. Fehlgeschlagene werden erneut versucht.</li>\n<li>Soll ein grünes Gerät noch einmal bearbeitet werden: Zeile markieren, „Erneut bearbeiten“ und die\n    „Aktuelle IP“ auf seine jetzige Adresse setzen.</li>\n<li>Der Trockenlauf markiert nie etwas als fertig.</li>\n<li>„Liste speichern“ schreibt die grüne Markierung mit in die Datei (Spalte „fertig“), nach\n    „Liste laden“ sind die Zeilen wieder grün. So lässt sich ein Rollout auch an einem anderen Tag\n    fortsetzen.</li>\n</ul>\n\n<h2>Profile</h2>\n<ul>\n<li>Ein Profil merkt sich die Einstellungen der Maske: Hersteller, Werksbenutzer, neuen Administrator,\n    User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen. Passwörter und die Serverliste\n    gehören nie dazu.</li>\n<li>Die Profile liegen in <code>bmc-profile.json</code> neben dem Tool; beim Start werden das zuletzt\n    genutzte Profil und die zuletzt gewählte Sprache geladen.</li>\n</ul>\n\n<h2>UEFI-Einstellungen (Reiter 3)</h2>\n<ul>\n<li>UEFI-Attribute unterscheiden sich je Modell. Das Tool liest deshalb die tatsächlich vorhandenen\n    Attribute von einem <b>Referenzgerät</b>, statt sie zu raten. Lesen ändert nichts.</li>\n<li><b>Ändern:</b> bei den gewünschten Zeilen „Neuer Wert“ ausfüllen, die Suche grenzt die Liste ein.\n    Leere Felder bleiben unverändert. Graue Zeilen (Passwörter, TPM, Löschfunktionen) sind gesperrt.</li>\n<li><b>Anwenden:</b> „Auf allen Servern der Liste setzen“ nutzt die Serverliste aus Reiter 2; grüne\n    Zeilen werden unter ihrer neuen IP angesprochen. Jedes Gerät bekommt nur Attribute, die es auch\n    hat. Werte, die schon stimmen, werden übersprungen.</li>\n<li><b>Neustart:</b> UEFI-Werte wirken erst nach einem Neustart. Mit dem Haken „Danach hart neu\n    starten“ wird ein laufender Server hart neu gestartet (wie mit der Reset-Taste), ein\n    ausgeschalteter eingeschaltet. Nur bei Servern ohne laufendes Betriebssystem verwenden.</li>\n<li><b>UEFI-Vorlagen</b> merken sich Hersteller und „Neuer Wert“-Felder und liegen getrennt in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienste: NTP, Syslog, LDAP, Zertifikat (Reiter 4)</h2>\n<p>Reiter 4 richtet auf allen Servern der Liste gemeinsame Verwaltungsdienste ein. Nur angehakte\nAbschnitte werden angewendet; grüne (fertige) Server werden unter ihrer neuen Adresse angesprochen.\nAngemeldet wird mit dem Werksbenutzer, der Werks-Administrator bleibt bestehen. Der Trockenlauf ist\nvoreingestellt und zeigt nur, was gesendet würde; Passwörter und der Zertifikatsinhalt stehen dabei\nnicht im Protokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwei Zeitserver. Die Zeitzone wird nur bei Dell gesetzt; bei HPE, Supermicro\n    und Lenovo bitte in der Oberfläche wählen.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bei Supermicro und Lenovo gibt es keinen einheitlichen Weg, der\n    Abschnitt wird dort übersprungen.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional ein Bind-Konto, Benutzer- und\n    Gruppen-Attribut. Unter „Gruppen → Rolle“ werden LDAP-Gruppen den Rollen Administrator, Operator\n    oder ReadOnly zugeordnet. Funktioniert bei allen vier Herstellern über den Standard-Redfish-Weg.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert ein von einer CA signiertes PEM-Zertifikat. Das ist\n    experimentell und je Hersteller verschieden. Bei HPE muss der passende Schlüssel aus einer auf dem\n    iLO erzeugten Zertifikatsanforderung (CSR) stammen, sonst scheitert der Import. Beim Import kann der\n    BMC neu starten.</li>\n</ul>\n<p>Für jeden Dienst gilt: Ein Hersteller, der ihn nicht kennt, wird übersprungen, nicht geraten.\niLO 3/4 (über RIBCL) werden hier nicht bedient. Die Abläufe sind bisher nur gegen simulierte\nGegenstellen geprüft; vor einem großen Lauf immer zuerst ein einzelnes Gerät.</p>\n<h2>Hersteller im Vergleich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Auszug)</td><td>individuell,\n    Anhänger am Gerät</td><td>individuell auf dem Aufkleber, alte Boards ADMIN</td><td>individuell,\n    Anhänger am Gerät</td></tr>\n<tr><td><b>Neuer Benutzer</b></td><td>in den User-Slot, nur wenn frei</td><td>neu angelegt</td>\n    <td>neu angelegt</td><td>neu angelegt</td></tr>\n<tr><td><b>Adresswechsel</b></td><td>sofort</td><td>nach iLO-Neustart (löst das Tool aus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunden</td><td>1 bis 3 Minuten</td><td>Sekunden</td>\n    <td>Sekunden</td></tr>\n</table>\n<p>Bleibt „Benutzer“ beim aktuellen Login leer, wird je Hersteller der Werksbenutzer verwendet; so gehen\nauch gemischte Listen. „Automatisch erkennen“ ermittelt den Hersteller pro Gerät, eine feste Wahl gilt\nfür alle Zeilen.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 ist root). Ist der Slot von einem anderen Benutzer belegt,\n    bricht das Tool für dieses Gerät ab und ändert nichts.</li>\n<li><b>Hostname:</b> gesetzt wird der DNS-Name des iDRAC, nicht der des Betriebssystems.</li>\n<li><b>Auslieferung:</b> je nach Bestellung DHCP oder feste Adresse 192.168.0.120. Mit fester Adresse\n    erscheint der iDRAC nicht in der DHCP-Liste; mehrere solche Geräte am selben Switch kollidieren,\n    dann einzeln anschließen.</li>\n<li><b>Generationen:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    brauchen mindestens Firmware 2.50.50.50; ältere erkennt das Tool, meldet es und ändert nichts.\n    iDRAC10 zuerst an einem Gerät testen. iDRAC6 wird nicht unterstützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile in die Spalte „Passwort“ eintragen.</li>\n<li><b>Zuordnung:</b> in der DHCP-Liste meldet sich ein iLO meist als „ILO“ plus Seriennummer.</li>\n<li><b>Neustart:</b> Hostname und Adresse werden erst nach dem iLO-Neustart aktiv; der Server selbst\n    läuft weiter.</li>\n<li><b>Port:</b> konfiguriert wird der dedizierte iLO-Port. Neue Passwörter brauchen mindestens 8\n    Zeichen.</li>\n<li><b>Generationen:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 ist nicht geprüft. Für iLO 3\n    und 4 siehe den nächsten Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (ältere Server)</h2>\n<ul>\n<li><b>Geräte:</b> iLO 3 steckt in G7-Servern, iLO 4 in Gen8 und Gen9. Das Tool erkennt sie von selbst;\n    wer den Hersteller fest wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>Anderer Weg:</b> iLO 3 kennt kein Redfish. Das Tool nutzt deshalb für iLO 3 und iLO 4 die\n    XML-Schnittstelle RIBCL, die beide ab Werk mitbringen. Im Trockenlauf stehen die XML-Befehle im\n    Protokoll, Passwörter sind dort durch *** ersetzt.</li>\n<li><b>Neustart:</b> Nach dem Setzen von Adresse und Hostname startet das iLO von selbst neu; der Server\n    läuft weiter. Bis es unter der neuen Adresse antwortet, vergehen 1 bis 3 Minuten.</li>\n<li><b>Alte Verschlüsselung:</b> iLO 3 kann nur TLS 1.0/1.1. Das Tool schaltet dafür je Gerät von selbst\n    auf die alte Verschlüsselung um und schreibt einen Hinweis ins Protokoll. Solche Geräte gehören in\n    ein abgeschottetes Verwaltungsnetz.</li>\n<li><b>Grenzen:</b> Hostname höchstens 49 Zeichen. UEFI-Einstellungen (Reiter 3) gehen bei iLO 3 nicht.\n    iLO 2 und älter werden nicht unterstützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Aufkleber, je Zeile eintragen.</li>\n<li><b>Zugriffsarten:</b> das Tool vergibt Web, IPMI und Konsole mit. Steht im Protokoll „ohne\n    Zugriffsarten angelegt“, die Web-Anmeldung einmal prüfen.</li>\n<li><b>Lizenz:</b> bei älteren Boards können Redfish-Funktionen eine Lizenz brauchen.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erkannt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile eintragen.</li>\n<li><b>Werksbenutzer:</b> USERID in Großbuchstaben.</li>\n<li><b>Port:</b> konfiguriert wird die Schnittstelle „NIC“, der dedizierte XCC-Port.</li>\n<li><b>Generationen:</b> XCC2/XCC3. XCC1 zuerst an einem Gerät testen.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>Das Tool setzt nur BMC-Adresse und BMC-Benutzer, nicht Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> der Cluster-Erstellung so umstellen. Bei einem laufenden Cluster das\n    Nutanix-Verfahren nutzen, weil der Cluster die BMC-Daten selbst verwendet.</li>\n</ul>\n\n<h2>Wenn etwas nicht klappt</h2>\n<ul>\n<li><b>DHCP startet nicht:</b> Die Meldung nennt den Grund. Meist hat die Karte ein Gateway oder ihre\n    Adresse per DHCP. Unter Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;karte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Keine Geräte in der DHCP-Liste:</b> Firewall (Linux mit ufw: UDP 67 freigeben; Windows: die\n    Firewall-Abfrage zulassen) oder der BMC steht nicht auf DHCP.</li>\n<li><b>Port 67 belegt (Windows):</b> meist Internetverbindungsfreigabe oder mobiler Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Feld „Benutzer“ leeren, Passwort der Zeile\n    prüfen.</li>\n<li><b>Hersteller nicht erkannt:</b> Das Gerät antwortet weder per Redfish noch als iLO 3/4. iDRAC6,\n    iLO 2 und sehr alte Firmware werden nicht unterstützt. Ein iLO 3/4, bei dem die Geräteauskunft\n    abgeschaltet wurde, lässt sich über die feste Wahl „HPE iLO 3/4“ trotzdem ansprechen.</li>\n<li><b>Benutzer abgelehnt:</b> meist Passwortregeln. Die Meldung des BMC steht unter der\n    Fehlerzeile.</li>\n<li><b>„neue IP ist schon vergeben“:</b> Unter der Adresse antwortet bereits ein Gerät. Andere Adresse\n    wählen.</li>\n<li><b>Liste aus Excel oder einem anderen Tool:</b> Ohne Spalte „fertig“ sind alle Zeilen offen. Schon\n    umgestellte Geräte sind unter der alten Adresse nicht erreichbar, diese Zeilen entfernen oder\n    anpassen.</li>\n</ul>\n\n<h2>Daten und Grenzen</h2>\n<ul>\n<li>Das Tool speichert nichts von selbst. „Liste speichern“ fragt, ob Passwörter mit in die Datei\n    sollen (dann im Klartext). Eine solche Datei nach dem Rollout löschen.</li>\n<li>Die Abläufe für HPE (auch iLO 3/4), ältere iDRAC7/8, Supermicro, Lenovo und UEFI sowie der\n    Windows-DHCP-Server sind bisher nur gegen simulierte Gegenstellen geprüft. Vor einem großen Lauf immer zuerst ein einzelnes Gerät\n    konfigurieren.</li>\n<li>„Protokoll speichern“ schreibt das Protokoll des letzten Laufs in eine Textdatei, z. B. für die\n    Dokumentation. Passwörter stehen nicht darin.</li>\n<li>Die Sprache lässt sich oben rechts umstellen, solange kein Lauf aktiv ist und der DHCP-Server\n    gestoppt ist.</li>\n</ul>\n",
+"en": "<h2>BMC-Steward</h2>\n<p>BMC-Steward serves one server after another: it creates the new administrator, sets the hostname and\nswitches the BMC to a static address. You don't have to enter all servers at once; they can be added\none by one.</p>\n\n<h2>Protection against mistakes</h2>\n<p>The tool is built so that a slip does as little damage as possible:</p>\n<ul>\n<li><b>Dry run is the default.</b> As long as it is ticked, nothing is changed.</li>\n<li><b>Every live run is shown first</b> (old IP → new IP, hostname). “Cancel” is preselected in every\n    prompt, so pressing Enter cancels.</li>\n<li><b>Unusual cases require typing the number of servers</b>, e.g. when a device is not in the\n    computer's own staging network, and always for UEFI changes.</li>\n<li><b>Addresses are checked:</b> duplicate IPs or hostnames, a gateway outside the network, an address\n    of this computer, an address from the running DHCP range and the current IP of another device are\n    rejected. Before reconfiguring, the tool also checks whether a device already answers on the new IP\n    and, if so, leaves the device unchanged.</li>\n<li><b>Dell:</b> an occupied user slot is never overwritten.</li>\n<li><b>The new password is entered twice.</b> If the entries differ, no run starts.</li>\n<li><b>The address change is verified:</b> if only the connection drops during the change, a device\n    counts as done only once it really no longer answers on the old address.</li>\n<li><b>DHCP server:</b> does not start on a card with a public address, with the default route\n    (internet/company network), with an address obtained via DHCP, or when a DHCP server already\n    answers there. It stops by itself if the card later becomes the default route. Devices that got\n    their address from another server are never refused. A DHCP server left over after a crash is\n    stopped at the next start.</li>\n<li><b>UEFI:</b> password, TPM and erase attributes are locked. Values that don't match the type are\n    not set. A restart is not preselected.</li>\n<li><b>Passwords</b> stay in memory and only go into a file if you explicitly ask for it.</li>\n</ul>\n\n<h2>Procedure</h2>\n<ol>\n<li><b>DHCP server</b> (tab 1): the network card on the separate staging switch needs a static address\n    without a gateway. Start DHCP; the devices get an address and appear in the list. From there,\n    “Add to server list”. On Linux dnsmasq is used, on Windows a built-in server.</li>\n<li><b>Server list</b> (tab 2): enter new IP, subnet mask, gateway and hostname. Whatever is still\n    missing is marked <b>yellow</b>, wrong entries <b>red</b>, finished ones <b>green</b>. A line above the\n    Start button says what still has to be filled in; the tooltip of each field gives the reason.</li>\n<li><b>Dry run</b>: the log shows what would be sent.</li>\n<li><b>Live run</b>: untick “Dry run”. The Start button turns red and reads “Start live run”. Click it\n    and confirm the prompt.</li>\n<li><b>Check</b>: at the end the tool checks whether each new address answers with the new user. That\n    only works if this computer can reach the new network; otherwise it shows “MISSING” even though\n    the change may have worked.</li>\n</ol>\n\n<h2>Configuring servers one after another</h2>\n<ul>\n<li>You can configure one server, press Start, connect the next one and press Start again, as often as\n    you like. The DHCP server keeps running.</li>\n<li>Successfully reconfigured rows turn <b>green</b>, stay in the list and are skipped at the next\n    start. Failed ones are tried again.</li>\n<li>To process a green device again: select the row, click “Process again” and set “Current IP” to its\n    present address.</li>\n<li>A dry run never marks anything as done.</li>\n<li>“Save list” writes the green mark into the file as well (column “fertig”); after “Load list” the\n    rows are green again. This lets you continue a rollout on another day.</li>\n</ul>\n\n<h2>Profiles</h2>\n<ul>\n<li>A profile remembers the settings of the form: vendor, factory user, new administrator, user slot,\n    defaults for new rows and the DHCP settings. Passwords and the server list are never included.</li>\n<li>Profiles are stored in <code>bmc-profile.json</code> next to the tool; at start-up the last used\n    profile and the last chosen language are loaded.</li>\n</ul>\n\n<h2>UEFI settings (tab 3)</h2>\n<ul>\n<li>UEFI attributes differ per model. The tool therefore reads the attributes that actually exist from\n    a <b>reference device</b> instead of guessing. Reading changes nothing.</li>\n<li><b>Change:</b> fill in “New value” in the rows you want; the search narrows the list. Empty fields\n    stay unchanged. Grey rows (passwords, TPM, erase functions) are locked.</li>\n<li><b>Apply:</b> “Set on all servers in the list” uses the server list from tab 2; green rows are\n    addressed at their new IP. Each device only gets attributes it actually has. Values that are\n    already correct are skipped.</li>\n<li><b>Restart:</b> UEFI values only take effect after a restart. With “Then hard restart” ticked, a\n    running server is hard restarted (like pressing reset) and a powered-off one is switched on. Use\n    only for servers without a running operating system.</li>\n<li><b>UEFI templates</b> remember the vendor and the “New value” fields and are stored separately in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services: NTP, syslog, LDAP, certificate (tab 4)</h2>\n<p>Tab 4 sets up shared management services on every server in the list. Only ticked sections are\napplied; green (finished) servers are reached at their new address. Login uses the factory user and the\nfactory administrator stays in place. The dry run is the default and only shows what would be sent;\npasswords and the certificate content do not appear in the log.</p>\n<ul>\n<li><b>NTP:</b> one or two time servers. The time zone is set on Dell only; on HPE, Supermicro and\n    Lenovo please choose it in the web interface.</li>\n<li><b>Syslog:</b> Dell and HPE only. There is no uniform way on Supermicro and Lenovo, so the section\n    is skipped there.</li>\n<li><b>LDAP / Active Directory:</b> server, base DN, an optional bind account, user and group attribute.\n    Under “Groups → role” LDAP groups are mapped to the roles Administrator, Operator or ReadOnly. Works\n    on all four vendors through the standard Redfish path.</li>\n<li><b>HTTPS certificate:</b> imports a CA-signed PEM certificate. This is experimental and\n    vendor-specific. On HPE the matching key must come from a CSR generated on the iLO, otherwise the\n    import fails. The BMC may restart during the import.</li>\n</ul>\n<p>For each service a vendor that does not know it is skipped, not guessed. iLO 3/4 (via RIBCL) are not\nhandled here. The procedures have so far only been tested against simulated counterparts; always\nconfigure a single device first before a large run.</p>\n<h2>Vendors compared</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Factory user</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Factory password</b></td><td>calvin or individual (service tag sheet)</td><td>individual,\n    tag on the device</td><td>individual on the sticker, old boards ADMIN</td><td>individual, tag on\n    the device</td></tr>\n<tr><td><b>New user</b></td><td>into the user slot, only if free</td><td>created</td><td>created</td>\n    <td>created</td></tr>\n<tr><td><b>Address change</b></td><td>immediate</td><td>after iLO restart (triggered by the tool)</td>\n    <td>immediate</td><td>immediate</td></tr>\n<tr><td><b>Until reachable</b></td><td>seconds</td><td>1 to 3 minutes</td><td>seconds</td>\n    <td>seconds</td></tr>\n</table>\n<p>If “User” in the current login stays empty, the vendor's factory user is used, so mixed lists work.\n“Detect automatically” determines the vendor per device; a fixed choice applies to all rows.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User slot:</b> default 3 (slot 2 is root). If another user occupies the slot, the tool stops for\n    this device and changes nothing.</li>\n<li><b>Hostname:</b> the iDRAC DNS name is set, not the operating system's.</li>\n<li><b>As delivered:</b> DHCP or static 192.168.0.120, depending on the order. With a static address the\n    iDRAC does not appear in the DHCP list; several such devices on one switch collide, so connect\n    them one at a time.</li>\n<li><b>Generations:</b> iDRAC9 (14th to 16th generation) and iDRAC7/8 (12th and 13th generation). iDRAC7/8\n    need at least firmware 2.50.50.50; the tool detects older firmware, reports it and changes nothing.\n    Test iDRAC10 on one device first. iDRAC6 is not supported.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row in the “Password” column.</li>\n<li><b>Identification:</b> in the DHCP list an iLO usually reports as “ILO” plus serial number.</li>\n<li><b>Restart:</b> hostname and address only become active after the iLO restart; the server itself\n    keeps running.</li>\n<li><b>Port:</b> the dedicated iLO port is configured. New passwords need at least 8 characters.</li>\n<li><b>Generations:</b> iLO 5 and 6 (Gen10 to Gen11) via Redfish. iLO 7 is untested. For iLO 3 and 4 see\n    the next section.</li>\n</ul>\n\n<h2>HPE iLO 3 and iLO 4 (older servers)</h2>\n<ul>\n<li><b>Devices:</b> iLO 3 is found in G7 servers, iLO 4 in Gen8 and Gen9. The tool detects them by\n    itself; if you pick the vendor by hand, choose “HPE iLO 3/4”.</li>\n<li><b>A different route:</b> iLO 3 has no Redfish. For iLO 3 and iLO 4 the tool therefore uses the RIBCL\n    XML interface, which both ship with. In a dry run the XML commands appear in the log, with\n    passwords replaced by ***.</li>\n<li><b>Restart:</b> after the address and hostname are set, the iLO restarts by itself; the server keeps\n    running. It takes 1 to 3 minutes until it answers on the new address.</li>\n<li><b>Old encryption:</b> iLO 3 only speaks TLS 1.0/1.1. The tool switches to the old encryption per\n    device by itself and writes a note to the log. Such devices belong in an isolated management\n    network.</li>\n<li><b>Limits:</b> hostname at most 49 characters. UEFI settings (tab 3) do not work with iLO 3. iLO 2\n    and older are not supported.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Password per device:</b> on the sticker; enter it per row.</li>\n<li><b>Access types:</b> the tool also grants web, IPMI and console. If the log says “created without\n    access types”, check the web login once.</li>\n<li><b>Licence:</b> on older boards some Redfish functions may need a licence.</li>\n<li><b>Nutanix NX</b> is detected as Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row.</li>\n<li><b>Factory user:</b> USERID in capitals.</li>\n<li><b>Port:</b> the “NIC” interface, i.e. the dedicated XCC port, is configured.</li>\n<li><b>Generations:</b> XCC2/XCC3. Test XCC1 on one device first.</li>\n</ul>\n\n<h2>Nutanix nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>The tool only sets the BMC address and BMC user, not the hypervisor or CVM.</li>\n<li>Only change these <b>before</b> creating the cluster. On a running cluster use the Nutanix\n    procedure, because the cluster uses the BMC data itself.</li>\n</ul>\n\n<h2>Troubleshooting</h2>\n<ul>\n<li><b>DHCP does not start:</b> the message gives the reason. Usually the card has a gateway or got its\n    address via DHCP. On Linux, for example:\n    <code>nmcli con add type ethernet ifname &lt;card&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>No devices in the DHCP list:</b> firewall (Linux with ufw: allow UDP 67; Windows: allow the\n    firewall prompt) or the BMC is not set to DHCP.</li>\n<li><b>Port 67 in use (Windows):</b> usually Internet Connection Sharing or a mobile hotspot.</li>\n<li><b>HTTP 401:</b> wrong user or password. Clear “User”, check the row's password.</li>\n<li><b>Vendor not recognised:</b> the device answers neither via Redfish nor as an iLO 3/4. iDRAC6, iLO 2\n    and very old firmware are not supported. An iLO 3/4 whose device information has been switched off\n    can still be addressed by choosing “HPE iLO 3/4” by hand.</li>\n<li><b>User refused:</b> usually password rules. The BMC's message appears below the error line.</li>\n<li><b>“new IP is already taken”:</b> a device already answers on that address. Choose another one.</li>\n<li><b>List from Excel or another tool:</b> without the “fertig” column all rows are open. Devices\n    already reconfigured cannot be reached at their old address; remove or adjust those rows.</li>\n</ul>\n\n<h2>Data and limits</h2>\n<ul>\n<li>The tool saves nothing on its own. “Save list” asks whether passwords go into the file (then in plain\n    text). Delete such a file after the rollout.</li>\n<li>The procedures for HPE (including iLO 3/4), older iDRAC7/8, Supermicro, Lenovo and UEFI and the\n    Windows DHCP server have so far only been tested against simulated counterparts. Always configure a single device first before a large\n    run.</li>\n<li>“Save log” writes the log of the last run to a text file, e.g. for documentation. It contains no\n    passwords.</li>\n<li>The language can be changed at the top right while no run is active and the DHCP server is\n    stopped.</li>\n</ul>\n",
+"fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> (onglet 1) : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Sous Linux, dnsmasq est utilisé ;\n    sous Windows, un serveur intégré.</li>\n<li><b>Liste des serveurs</b> (onglet 2) : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Réglages UEFI (onglet 3)</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de l'onglet 2 ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services : NTP, syslog, LDAP, certificat (onglet 4)</h2>\n<p>L'onglet 4 configure des services de gestion communs sur tous les serveurs de la liste. Seules les\nsections cochées sont appliquées ; les serveurs verts (terminés) sont joints à leur nouvelle adresse.\nLa connexion utilise l'utilisateur d'usine et l'administrateur d'usine reste en place. La simulation\nest activée par défaut et montre seulement ce qui serait envoyé ; les mots de passe et le contenu du\ncertificat n'apparaissent pas dans le journal.</p>\n<ul>\n<li><b>NTP :</b> un ou deux serveurs de temps. Le fuseau horaire n'est défini que sur Dell ; sur HPE,\n    Supermicro et Lenovo, le choisir dans l'interface.</li>\n<li><b>Syslog :</b> Dell et HPE uniquement. Il n'existe pas de voie uniforme sur Supermicro et Lenovo,\n    la section y est ignorée.</li>\n<li><b>LDAP / Active Directory :</b> serveur, base DN, un compte de bind facultatif, attribut\n    utilisateur et de groupe. Sous « Groupes → rôle », les groupes LDAP sont associés aux rôles\n    Administrator, Operator ou ReadOnly. Fonctionne sur les quatre constructeurs via la voie Redfish\n    standard.</li>\n<li><b>Certificat HTTPS :</b> importe un certificat PEM signé par une CA. C'est expérimental et propre\n    au constructeur. Sur HPE, la clé correspondante doit provenir d'une CSR générée sur l'iLO, sinon\n    l'import échoue. Le BMC peut redémarrer pendant l'import.</li>\n</ul>\n<p>Pour chaque service, un constructeur qui ne le connaît pas est ignoré, rien n'est deviné. iLO 3/4\n(via RIBCL) ne sont pas gérés ici. Les procédures n'ont jusqu'ici été testées que contre des\néquipements simulés ; toujours configurer un seul appareil d'abord avant une grande série.</p>\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> iDRAC9 (14e à 16e génération) et iDRAC7/8 (12e et 13e génération). iDRAC7/8\n    exigent au moins le firmware 2.50.50.50 ; l'outil détecte un firmware plus ancien, le signale et ne\n    modifie rien. Tester d'abord iDRAC10 sur un seul appareil. iDRAC6 n'est pas pris en charge.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11) via Redfish. iLO 7 n'est pas testé. Pour iLO 3 et 4,\n    voir la section suivante.</li>\n</ul>\n\n<h2>HPE iLO 3 et iLO 4 (serveurs plus anciens)</h2>\n<ul>\n<li><b>Appareils :</b> iLO 3 équipe les serveurs G7, iLO 4 les Gen8 et Gen9. L'outil les reconnaît de\n    lui-même ; si le constructeur est choisi à la main, prendre « HPE iLO 3/4 ».</li>\n<li><b>Autre voie :</b> iLO 3 ne connaît pas Redfish. Pour iLO 3 et iLO 4, l'outil utilise donc\n    l'interface XML RIBCL, présente d'origine sur les deux. En simulation, les commandes XML figurent\n    dans le journal, les mots de passe y sont remplacés par ***.</li>\n<li><b>Redémarrage :</b> une fois l'adresse et le nom d'hôte définis, l'iLO redémarre de lui-même ; le\n    serveur continue de tourner. Il faut 1 à 3 minutes avant qu'il réponde à la nouvelle adresse.</li>\n<li><b>Chiffrement ancien :</b> iLO 3 ne gère que TLS 1.0/1.1. L'outil bascule de lui-même, appareil par\n    appareil, sur l'ancien chiffrement et l'indique dans le journal. Ces appareils ont leur place dans\n    un réseau d'administration isolé.</li>\n<li><b>Limites :</b> nom d'hôte de 49 caractères au plus. Les réglages UEFI (onglet 3) ne fonctionnent pas\n    avec iLO 3. iLO 2 et versions antérieures ne sont pas pris en charge.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67 ; Windows :\n    accepter la demande du pare-feu) ou le BMC n'est pas en DHCP.</li>\n<li><b>Port 67 occupé (Windows) :</b> en général le partage de connexion Internet ou un point d'accès\n    mobile.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond ni en Redfish ni comme iLO 3/4. iDRAC6, iLO 2\n    et les firmwares très anciens ne sont pas pris en charge. Un iLO 3/4 dont les informations\n    d'appareil ont été désactivées reste accessible en choisissant « HPE iLO 3/4 » à la main.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE (iLO 3/4 compris), iDRAC7/8 anciens, Supermicro, Lenovo et UEFI ainsi que le\n    serveur DHCP Windows n'ont été testés jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en haut à droite, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n",
+"gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b> (Riiter 1): D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Under Linux lauft defür dnsmasq, under Windows en iibaute Server.</li>\n<li><b>Serverlischte</b> (Riiter 2): neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>UEFI-Iistellige (Riiter 3)</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us em Riiter 2; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienscht: NTP, Syslog, LDAP, Zertifikat (Riiter 4)</h2>\n<p>Riiter 4 richtet uf allne Server vo de Lischte gmeinsami Verwaltigsdienscht ii. Nur aaghaaggti\nAbschnitt wärded aagwändet; grüeni (fertigi) Server wärded under ihrer neue Adrässe aagsproche.\nAagmäldet wird mit em Wärksbenutzer, de Wärks-Administrator bliibt bestah. De Trocheluuf isch\nvoriigstellt und zeigt nur, was gschickt wür; Passwörter und de Zertifikatsinhalt stönd debii nöd im\nProtokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwee Ziitserver. D Ziitzone wird nur bi Dell gsetzt; bi HPE, Supermicro und\n    Lenovo bitte i de Oberflächi wähle.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bi Supermicro und Lenovo gits kei einheitliche Wäg, de Abschnitt\n    wird dört übersprunge.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional es Bind-Konto, Benutzer- und\n    Gruppe-Attribut. Under „Gruppe → Rolle“ wärded LDAP-Gruppe de Rolle Administrator, Operator oder\n    ReadOnly zuegordnet. Gaht bi allne vier Hersteller über de Standard-Redfish-Wäg.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert es vonere CA signiets PEM-Zertifikat. Das isch experimentell und\n    je Hersteller andersch. Bi HPE mues de passend Schlüssel us ere uf em iLO erzüügte CSR cho, susch\n    schiitert de Import. Bim Import cha de BMC neu starte.</li>\n</ul>\n<p>Für jede Dienscht gilt: En Hersteller, wo ne nöd kännt, wird übersprunge, nöd grate. iLO 3/4 (über\nRIBCL) wärded da nöd bedient. D Abläuf sind bis jetz nur gäge simulierti Gägestelle prüeft; vor eme\ngrosse Luuf immer zerscht eis einzelns Grät.</p>\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    bruuched mindeschtens Firmware 2.50.50.50; älteri erchännt s Tool, mäldet's und änderet nüt.\n    iDRAC10 zerscht a eim Grät teste. iDRAC6 wird nöd understützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 isch nöd prüeft. Für iLO 3 und\n    4 lueg im nächschte Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (di ältere Semeschter)</h2>\n<ul>\n<li><b>Grät:</b> iLO 3 steckt i G7-Server, iLO 4 i Gen8 und Gen9. S Tool erchännt si vo sälber; wär de\n    Hersteller fescht wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>En andere Wäg:</b> iLO 3 kännt kei Redfish. S Tool bruucht drum für iLO 3 und iLO 4 d\n    XML-Schnittstell RIBCL, wo beidi ab Wärk debii händ. Im Trocheluuf stönd d XML-Befähl im Protokoll,\n    Passwörter sind dört dur *** ersetzt.</li>\n<li><b>Neustart:</b> Nach em Setze vo Adrässe und Hostname startet s iLO vo sälber neu; de Server lauft\n    wiiter. Bis es under de neue Adrässe antwortet, gaht's 1 bis 3 Minute.</li>\n<li><b>Alti Verschlüsselig:</b> iLO 3 cha nume TLS 1.0/1.1. S Tool schaltet defür pro Grät vo sälber uf\n    di alt Verschlüsselig um und schriibt en Hiiwiis is Protokoll. Söttigi Grät ghöred in es\n    abgschottets Verwaltigsnetz.</li>\n<li><b>Gränze:</b> Hostname höchschtens 49 Zeiche. UEFI-Iistellige (Riiter 3) gönd bi iLO 3 nöd. iLO 2\n    und älter wärded nöd understützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh; Windows: d\n    Firewall-Abfrag zuelaa) oder de BMC staht nöd uf DHCP.</li>\n<li><b>Port 67 bsetzt (Windows):</b> meischtens Internetverbindigsfreigab oder mobile Hotspot.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet weder per Redfish no als iLO 3/4. iDRAC6, iLO 2 und\n    uralti Firmware wärded nöd understützt. Es iLO 3/4, wo d Grätuuskunft abgschaltet isch, laat sich\n    über di feschti Wahl „HPE iLO 3/4“ glich aaspräche.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE (au iLO 3/4), älteri iDRAC7/8, Supermicro, Lenovo und UEFI und de\n    Windows-DHCP-Server sind bis jetzt nur gäge simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer obe rächts umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n"
 }
 
 

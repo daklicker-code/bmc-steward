@@ -20,6 +20,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 - Dry run that shows every call without changing anything
 - Servers can be configured one by one; finished rows turn green and are skipped
 - Optional UEFI/BIOS settings, read from a real reference device
+- Optional management services across the list: NTP, syslog, LDAP/AD with group-to-role mapping, HTTPS certificate import
 - Interface in German, English, French and Swiss German
 
 ## Built to forgive mistakes
@@ -95,7 +96,11 @@ The password column may be left out. Semicolons work too, so an Excel export can
 | Supermicro | X12/X13 | tested against simulated BMCs only |
 | Lenovo | XCC2/XCC3 | tested against simulated BMCs only |
 
-The UEFI settings and the Windows DHCP server have also only been tested against simulations.
+The UEFI settings, the management services (tab 4) and the Windows DHCP server have also only been
+tested against simulations. Service coverage: NTP on all four vendors; syslog on Dell and HPE only
+(skipped on Supermicro/Lenovo); LDAP with group mapping on all four; HTTPS certificate import is
+experimental and vendor-specific (on HPE the key must come from a CSR generated on the iLO). Services
+are not available for iLO 3/4.
 
 Not supported: iDRAC6, iLO 2 and older, and iDRAC7/8 firmware before 2.50.50.50 (the tool detects it,
 says so and changes nothing). iLO 3 only speaks TLS 1.0/1.1; the tool falls back to the old encryption

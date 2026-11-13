@@ -21,6 +21,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 - Trockenlauf, der jeden Aufruf zeigt, ohne etwas zu ändern
 - Server lassen sich einzeln nacheinander konfigurieren; fertige Zeilen werden grün und übersprungen
 - Optional UEFI/BIOS-Einstellungen, gelesen von einem echten Referenzgerät
+- Optionale Verwaltungsdienste für die ganze Liste: NTP, Syslog, LDAP/AD mit Gruppen-Rollen-Zuordnung, HTTPS-Zertifikat-Import
 - Oberfläche in Deutsch, Englisch, Französisch und Schweizerdeutsch
 
 ## Schutz vor Fehlbedienung
@@ -97,7 +98,11 @@ Die Passwort-Spalte darf fehlen. Semikolons gehen auch, ein Excel-Export lässt 
 | Supermicro | X12/X13 | nur gegen simulierte BMCs geprüft |
 | Lenovo | XCC2/XCC3 | nur gegen simulierte BMCs geprüft |
 
-Auch die UEFI-Einstellungen und der Windows-DHCP-Server sind bisher nur gegen Simulationen geprüft.
+Auch die UEFI-Einstellungen, die Verwaltungsdienste (Reiter 4) und der Windows-DHCP-Server sind bisher
+nur gegen Simulationen geprüft. Abdeckung der Dienste: NTP bei allen vier Herstellern; Syslog nur bei
+Dell und HPE (bei Supermicro/Lenovo übersprungen); LDAP mit Gruppen-Zuordnung bei allen vier; der
+HTTPS-Zertifikat-Import ist experimentell und je Hersteller verschieden (bei HPE muss der Schlüssel aus
+einer auf dem iLO erzeugten CSR stammen). Für iLO 3/4 gibt es die Dienste nicht.
 
 Nicht unterstützt: iDRAC6, iLO 2 und älter sowie iDRAC7/8 mit Firmware vor 2.50.50.50 (das Tool erkennt
 das, meldet es und ändert nichts). iLO 3 kann nur TLS 1.0/1.1; das Tool schaltet für solche Geräte von
