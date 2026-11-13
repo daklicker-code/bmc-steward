@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.2"
+__version__ = "1.7.3"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -2538,13 +2538,17 @@ $("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
 const SIZE={s:[.5,.2],m:[.85,.3],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
+function fit(){return pick("m")!=="ocr"}
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
- const w=innerWidth-24,h=Math.min(innerHeight*.5,w/1.2);
+ let w=innerWidth-24,h;
+ if(fit()){h=w*v.videoHeight/v.videoWidth;const mx=innerHeight*.7;if(h>mx){h=mx;w=h*v.videoWidth/v.videoHeight}}
+ else h=Math.min(innerHeight*.6,w/1.2);
+ $("v").style.objectFit=fit()?"contain":"cover";
  $("wrap").style.width=w+"px";$("wrap").style.height=h+"px";box();
 }
 function geo(){
- const v=$("v"),W=$("wrap").clientWidth,H=$("wrap").clientHeight,s=Math.max(W/v.videoWidth,H/v.videoHeight);
+ const v=$("v"),W=$("wrap").clientWidth,H=$("wrap").clientHeight,s=(fit()?Math.min:Math.max)(W/v.videoWidth,H/v.videoHeight);
  return{s:s,ox:(v.videoWidth*s-W)/2,oy:(v.videoHeight*s-H)/2,W:W,H:H};
 }
 function box(){
@@ -2553,7 +2557,7 @@ function box(){
 }
 document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
 document.querySelectorAll("input[name=m]").forEach(e=>e.onchange=()=>{
- document.querySelector("input[name=c][value="+(pick("m")==="ocr"?"m":"f")+"]").checked=true;cx=cy=.5;box()});
+ document.querySelector("input[name=c][value="+(pick("m")==="ocr"?"m":"f")+"]").checked=true;cx=cy=.5;layout()});
 $("wrap").onclick=e=>{const r=$("wrap").getBoundingClientRect();cx=(e.clientX-r.left)/r.width;cy=(e.clientY-r.top)/r.height;box()};
 addEventListener("resize",layout);$("v").addEventListener("loadedmetadata",layout);
 async function cam(){
@@ -3858,9 +3862,8 @@ class Window(ConsoleMixin, QWidget):
         return r + 1
 
     def closeEvent(self, event):
-        if getattr(self, "scanner", None) is not None:
-            self.scanner.stop_server()
         if getattr(self, "switching", False):   # Sprachwechsel: das neue Fenster hat alles übernommen
+            self.stop_scanner()
             event.accept()
             return
         if self.running():
@@ -3884,9 +3887,20 @@ class Window(ConsoleMixin, QWidget):
             elif box.clickedButton() is not b_drop:
                 event.ignore()
                 return
+        self.stop_scanner()
         self.stop_dhcp()
         self.console_shutdown()
         event.accept()
+
+    def stop_scanner(self):
+        """Scanner-Server und Hotspot sicher beenden, Fehler dabei nie nach aussen lassen."""
+        sc = getattr(self, "scanner", None)
+        if sc is not None:
+            try:
+                sc.stop_server()
+                sc.close()
+            except Exception:
+                pass
 
     # ---------- UEFI/BIOS-Einstellungen ----------
     def reachable_rows(self):
@@ -8131,8 +8145,18 @@ HELP["gsw"] = HELP["gsw"] + "<h3>Bestehendi Server (Reiter 2b)</h3>\n<p>Für BMC
 
 set_language(load_lang())
 
+def _excepthook(kind, err, tb):
+    """PyQt6 bricht bei unbehandelten Fehlern in Slots ab; stattdessen nur melden."""
+    import traceback
+    traceback.print_exception(kind, err, tb)
+
+
 if __name__ == "__main__":
+    sys.excepthook = _excepthook
     app = QApplication(sys.argv)
     MAIN = Window()
     MAIN.show()
-    sys.exit(app.exec())
+    app.aboutToQuit.connect(lambda: MAIN.stop_scanner())
+    code = app.exec()
+    MAIN.stop_scanner()
+    sys.exit(code)
