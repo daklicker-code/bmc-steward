@@ -1930,6 +1930,31 @@ class ConsoleMixin:
                      T("Zeichen × Zeilen; muss zur Einstellung im UEFI passen (meist 80 × 24 oder 80 × 25)."))
         f.addRow(self.con_serial_box)
 
+        pk = QGroupBox(T("Benötigte Pakete"))
+        pl = QVBoxLayout(pk)
+        row = QHBoxLayout()
+        pkgs = [("QtWebEngine", WEBENGINE, "python-pyqt6-webengine")]
+        if not WINDOWS:
+            pkgs += [("pyte", bool(pyte), "python-pyte"), ("ipmitool", bool(shutil.which("ipmitool")), "ipmitool"),
+                     ("sshpass", bool(shutil.which("sshpass")), "sshpass"), ("ssh", bool(shutil.which("ssh")), "openssh")]
+        lacking = []
+        for name, ok, pkg in pkgs:
+            lab = QLabel(("✔ " if ok else "❗ ") + name)
+            lab.setStyleSheet("color: #2e9e4f; font-weight: bold;" if ok else "color: #c9302c; font-weight: bold;")
+            lab.setToolTip(T("installiert") if ok else T("nicht installiert, Paket: {0}").format(pkg))
+            row.addWidget(lab)
+            if not ok:
+                lacking.append(pkg)
+        row.addStretch()
+        pl.addLayout(row)
+        if lacking:
+            hint = QLabel(T("Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):")
+                          + "\n    sudo pacman -S " + " ".join(lacking) + "      (Arch/CachyOS)")
+            hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            pl.addWidget(hint)
+        pk.setToolTip(T("✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\n"
+                        "Bild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo)."))
+
         self.con_connect = QPushButton(T("Verbinden"))
         self.con_connect.setMinimumHeight(30)
         self.con_connect.clicked.connect(self.console_connect)
@@ -2005,6 +2030,7 @@ class ConsoleMixin:
         warn.setStyleSheet("color: #c9302c;")
         lay = QVBoxLayout()
         lay.addWidget(box)
+        lay.addWidget(pk)
         lay.addLayout(btns)
         lay.addWidget(self.con_status)
         lay.addWidget(warn)
@@ -6770,7 +6796,12 @@ TR = {
 "Im Browser geöffnet: {0}": ["Opened in browser: {0}", "Ouvert dans le navigateur : {0}", "Im Browser ufgmacht: {0}"],
 "Start fehlgeschlagen: {0}": ["Start failed: {0}", "Échec du démarrage : {0}", "Start fehlgschlage: {0}"],
 "5 · UEFI-Konsole": ["5 · UEFI console", "5 · Console UEFI", "5 · UEFI-Konsole"],
-"6 · Hilfe": ["6 · Help", "6 · Aide", "6 · Hilf"]
+"6 · Hilfe": ["6 · Help", "6 · Aide", "6 · Hilf"],
+"Benötigte Pakete": ["Required packages", "Paquets requis", "Nötigi Pakete"],
+"installiert": ["installed", "installé", "installiert"],
+"nicht installiert, Paket: {0}": ["not installed, package: {0}", "non installé, paquet : {0}", "nöd installiert, Paket: {0}"],
+"Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):": ["Install what is missing, on the computer running this tool (terminal):", "Installer ce qui manque, sur l'ordinateur qui exécute cet outil (terminal) :", "Fählendi nachinstalliere, uf em Rechner mit däm Tool (Terminal):"],
+"✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo).": ["✔ installed, ❗ missing. Not all are needed, depending on the chosen way:\nPicture: QtWebEngine · Text: pyte + ipmitool (Supermicro) or ssh + sshpass (Dell/HPE/Lenovo).", "✔ installé, ❗ manquant. Tous ne sont pas nécessaires selon la voie choisie :\nImage : QtWebEngine · Texte : pyte + ipmitool (Supermicro) ou ssh + sshpass (Dell/HPE/Lenovo).", "✔ installiert, ❗ fählt. Je nach gwählte Wääg bruucht me nöd alli:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo)."]
 }
 
 HELP = {
