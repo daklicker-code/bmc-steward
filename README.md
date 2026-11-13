@@ -12,6 +12,22 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 
 ![BMC-Steward screenshot](docs/screenshot.png)
 
+<details>
+<summary>Screenshots of all tabs</summary>
+
+| | |
+|---|---|
+| **1 · DHCP server** | **2 · Configure servers** (above) |
+| ![DHCP server](docs/screenshot-1-dhcp.png) | |
+| **2b · Existing servers** (connection test) | **3 · UEFI settings** |
+| ![Existing servers](docs/screenshot-2b-existing.png) | ![UEFI settings](docs/screenshot-3-uefi.png) |
+| **4 · Services** | **5 · UEFI console** |
+| ![Services](docs/screenshot-4-services.png) | ![UEFI console](docs/screenshot-5-console.png) |
+| **6 · Help** | |
+| ![Help](docs/screenshot-6-help.png) | |
+
+</details>
+
 ## Features
 
 - One Python file, runs on Linux and Windows
@@ -21,6 +37,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 - Servers can be configured one by one; finished rows turn green and are skipped
 - Optional UEFI/BIOS settings, read from a real reference device
 - Optional management services across the list: NTP, syslog, LDAP/AD with group-to-role mapping, HTTPS certificate import
+- Existing servers (tab 2b): enter address, port, user and password per server and run a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights); successful servers are handed over to tabs 2–4
 - UEFI console (tab 5): shows a server's UEFI/BIOS through the BMC, as embedded HTML5 console, text console (SOL/SSH) or in the default browser; untested on real hardware
 - Interface in German, English, French and Swiss German
 

@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -46,7 +46,7 @@ from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-    QScrollArea, QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout,
+    QScrollArea, QSplitter, QStyledItemDelegate, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout,
     QWidget,
 )
 from PyQt6.QtCore import Qt
@@ -1228,6 +1228,109 @@ class ServicesEngine(RedfishClient):
         return not failed
 
 
+class ProbeEngine(RedfishClient):
+    """Prüft nur lesend, ob sich Bestandsserver (schon konfigurierte BMCs) erreichen und anmelden lassen:
+    Port, TLS-Stufe, Hersteller, Login, Modell, Firmware und ob das Konto Administratorrechte hat.
+    Jeder Server bekommt genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt."""
+
+    MGR = {"dell": "/redfish/v1/Managers/iDRAC.Embedded.1"}        # sonst /redfish/v1/Managers/1
+    TLS_NAME = {"modern": "TLS 1.2 oder neuer", "old": "veraltet (TLS 1.0/1.1 möglich)", "oldest": "nur TLS 1.0/1.1"}
+
+    def __init__(self, rows, vendor=None, log=print, stopped=lambda: False, on_result=lambda ip, res: None):
+        super().__init__(False, log, stopped)
+        self.rows, self.force_vendor, self.on_result = rows, vendor, on_result
+
+    def probe(self, ip, user, pw):
+        res = {"ok": False, "vendor": "", "user": user, "model": "", "fw": "", "admin": None, "text": ""}
+
+        def fail(text, hint=""):
+            res["text"] = text
+            self.log(T('  FEHLER: {0}').format(text), "err")
+            if hint:
+                self.log("    " + hint)
+            return res
+
+        host, port = hostport(ip)
+        try:
+            socket.create_connection((host, port), timeout=5).close()
+        except OSError as e:
+            return fail(T('Port {0} auf {1} nicht erreichbar ({2})').format(port, host, e.strerror or e),
+                        T("Adresse und Port prüfen, außerdem Routing/Firewall zwischen diesem Rechner und dem BMC-Netz."))
+        self.log(T('  Port {0}: offen').format(port), "ok")
+        mode = self.tls_mode(ip)
+        if mode is None:
+            return fail(T("Kein HTTPS-Handshake möglich"),
+                        T("Der BMC antwortet am Port, spricht aber kein HTTPS oder ist noch nicht bereit."))
+        self.log(T('  Verschlüsselung: {0}').format(T(self.TLS_NAME[mode])), "ok" if mode == "modern" else "")
+        v = self.force_vendor or self.vendor(ip)
+        if v == "offline":
+            return fail(T("nicht erreichbar"))
+        if v not in self.NAME:
+            self.unknown_hint()
+            return fail(T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"))
+        res["vendor"] = v
+        user = user or self.DEFAULT_USER[v]
+        res["user"] = self.cur_user = user
+        self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], user))
+        again = T("Nicht erneut versuchen, bevor Benutzer und Passwort geklärt sind: Mehrfache Fehlversuche können das Konto sperren.")
+        if v == "hpe_old":
+            code = self.ribcl(ip, user, pw, "read", "RIB_INFO", "<GET_FW_VERSION/>", timeout=30)
+            if code == 401:
+                return fail(T("Anmeldung abgelehnt (Benutzer oder Passwort falsch)"), again)
+            if code != 200:
+                return fail(T('keine brauchbare Antwort der XML-Schnittstelle (HTTP {0})').format(code or T("keine Verbindung")))
+            fw = re.search(r'FIRMWARE_VERSION\s*=\s*"([^"]*)"', self.xml)
+            mp = re.search(r'MANAGEMENT_PROCESSOR\s*=\s*"([^"]*)"', self.xml)
+            res["fw"], res["model"] = fw.group(1) if fw else "", (mp.group(1) if mp else "") or self.model
+            res["admin"] = self.ribcl(ip, user, pw, "read", "USER_INFO", "<GET_ALL_USERS/>", timeout=30) == 200
+        else:
+            code = self.api(ip, user, pw, "GET", self.MGR.get(v, "/redfish/v1/Managers/1"), timeout=20)
+            if code == 401:
+                return fail(T("Anmeldung abgelehnt (Benutzer oder Passwort falsch, oder Konto gesperrt)"), again)
+            if code == 403:
+                return fail(T("Anmeldung ok, aber das Konto darf den BMC nicht lesen (HTTP 403)"))
+            if not self.ok(code) or not isinstance(self.body, dict):
+                return fail(T('Anmeldung nicht möglich (HTTP {0})').format(code or T("keine Verbindung")))
+            res["fw"] = str(self.body.get("FirmwareVersion") or "")
+            res["model"] = str(self.body.get("Model") or "")
+            if self.ok(self.api(ip, user, pw, "GET", self.sys_path(v), timeout=20)) and isinstance(self.body, dict):
+                res["system"] = " ".join(str(self.body.get(k) or "") for k in ("Model", "SerialNumber")).strip()
+                res["power"] = str(self.body.get("PowerState") or "")
+            code = self.api(ip, user, pw, "GET", "/redfish/v1/AccountService/Accounts", timeout=20)
+            res["admin"] = True if self.ok(code) else False if code == 403 else None
+        res["ok"] = True
+        self.log(T('  Anmeldung: ok'), "ok")
+        self.log(T('  BMC: {0}, Firmware {1}').format(res["model"] or "?", res["fw"] or "?"))
+        if res.get("system"):
+            self.log(T('  Server: {0}, Stromzustand {1}').format(res["system"], res.get("power") or "?"))
+        if res["admin"] is False:
+            self.log(T("  Hinweis: Das Konto hat keine Administratorrechte, Konfigurieren wird scheitern."), "err")
+        elif res["admin"] is None:
+            self.log(T("  Hinweis: Administratorrechte nicht prüfbar."))
+        return res
+
+    def run(self):
+        good = 0
+        for ip, user, pw in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                break
+            self.log("== " + ip, "head")
+            try:
+                res = self.probe(ip, user, pw)
+            except Exception as e:
+                res = {"ok": False, "text": repr(e)}
+                self.log(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good += bool(res["ok"])
+            self.on_result(ip, res)
+        total = len(self.rows)
+        self.log("")
+        self.log(T('Fertig: {0} von {1} Servern erreichbar und angemeldet').format(good, total),
+                 "ok" if good == total else "err")
+        return good == total
+
+
+
 # ======================================================================
 # Kleiner DHCP-Server (für Windows; unter Linux wird dnsmasq verwendet)
 # ======================================================================
@@ -1412,6 +1515,40 @@ class EngineThread(QThread):
             self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
             good = False
         self.result.emit(0 if good else 1)
+
+
+class ProbeThread(QThread):
+    line = pyqtSignal(str, str)
+    row = pyqtSignal(str, object)       # Adresse, Ergebnis-Dict
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good = ProbeEngine(log=lambda text, kind="": self.line.emit(text, kind),
+                               stopped=self.isInterruptionRequested,
+                               on_result=lambda ip, res: self.row.emit(ip, res), **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good = False
+        self.result.emit(0 if good else 1)
+
+
+class PwDelegate(QStyledItemDelegate):
+    """Zeigt Passwörter in der Tabelle als Punkte; beim Bearbeiten bleibt die Eingabe verdeckt."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.text = "•" * len(option.text)
+
+    def createEditor(self, parent, option, index):
+        e = super().createEditor(parent, option, index)
+        if isinstance(e, QLineEdit):
+            e.setEchoMode(QLineEdit.EchoMode.Password)
+        return e
 
 
 class BiosEngineThread(QThread):
@@ -2524,6 +2661,7 @@ class Window(ConsoleMixin, QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.build_dhcp(), T("1 · DHCP-Server"))
         self.tabs.addTab(page, T("2 · Server konfigurieren"))
+        self.tabs.addTab(self.build_existing(), T("2b · Bestandsserver"))
         self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
         self.tabs.addTab(self.build_services(), T("4 · Dienste"))
         self.tabs.addTab(self.build_console(), T("5 · UEFI-Konsole"))
@@ -3929,6 +4067,292 @@ class Window(ConsoleMixin, QWidget):
         self.stop.setEnabled(False)
         self.table.setEnabled(True)
         self.status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+
+    # ---------- Bestandsserver (schon konfigurierte BMCs: Verbindung prüfen) ----------
+    def build_existing(self):
+        self.ex_worker = None
+        self.ex_ok = {}          # (Adresse, Port, Benutzer, Passwort) -> Ergebnis; nur für unverändert getestete Zeilen
+        self.ex_vendor = QComboBox()
+        for text, key in VENDORS:
+            self.ex_vendor.addItem(text, key)
+        self.ex_vendor.setToolTip(T("„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller.\n"
+                                    "Eine feste Wahl überspringt die Erkennung und gilt für alle Zeilen."))
+        self.ex_user_all = QLineEdit()
+        self.ex_user_all.setPlaceholderText(T("automatisch je Hersteller"))
+        self.ex_pass_all = self._pw()
+        self.ex_from = QLineEdit()
+        self.ex_from.setPlaceholderText(T("z. B. 10.20.0.11"))
+        self.ex_to = QLineEdit()
+        self.ex_to.setPlaceholderText(T("z. B. 10.20.0.30"))
+
+        box_all = QGroupBox(T("Zugangsdaten und Adressen schnell eintragen"))
+        f = QFormLayout(box_all)
+        self.tip_row(f, T("Hersteller"), self.ex_vendor, self.ex_vendor.toolTip())
+        self.tip_row(f, T("Benutzer"), self.ex_user_all,
+                     T("Benutzer, mit dem sich das Tool am BMC anmeldet. Leer lassen: Werksbenutzer je Hersteller."))
+        self.tip_row(f, T("Passwort"), self._with_eye(self.ex_pass_all),
+                     T("Gilt für alle Zeilen, wenn Sie unten auf „Für alle Zeilen übernehmen“ klicken.\n"
+                       "Abweichende Zugangsdaten tragen Sie direkt in der Tabelle je Zeile ein."))
+        apply = QPushButton(T("Für alle Zeilen übernehmen"))
+        apply.setToolTip(T("Trägt Benutzer und Passwort von oben in alle Zeilen ein und überschreibt vorhandene Werte."))
+        apply.clicked.connect(self.ex_apply_all)
+        f.addRow("", apply)
+        rng = QHBoxLayout()
+        rng.addWidget(self.ex_from)
+        rng.addWidget(QLabel("–"))
+        rng.addWidget(self.ex_to)
+        add_rng = QPushButton(T("Bereich einfügen"))
+        add_rng.setToolTip(T("Fügt für jede Adresse von … bis … eine Zeile ein (höchstens 256 auf einmal)."))
+        add_rng.clicked.connect(self.ex_add_range)
+        rng.addWidget(add_rng)
+        f.addRow(T("Adressbereich"), rng)
+
+        self.ex_table = QTableWidget(0, 5)
+        self.ex_table.setHorizontalHeaderLabels([T("Adresse (BMC)"), T("Port"), T("Benutzer"), T("Passwort"), T("Status")])
+        self.ex_table.setItemDelegateForColumn(3, PwDelegate(self.ex_table))
+        self.ex_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ex_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        for c, tip in enumerate((T("IPv4-Adresse des BMC (iDRAC, iLO, Supermicro-IPMI, XCC)."),
+                                 T("HTTPS-Port des BMC, normalerweise 443."),
+                                 T("Benutzer dieses Geräts. Leer: Werksbenutzer je Hersteller."),
+                                 T("Passwort dieses Geräts."),
+                                 T("Ergebnis des Verbindungstests."))):
+            self.ex_table.horizontalHeaderItem(c).setToolTip(tip)
+        add = QPushButton(T("+ Server"))
+        add.clicked.connect(lambda: self.ex_add_row())
+        rem = QPushButton(T("– Entfernen"))
+        rem.clicked.connect(self.ex_remove_rows)
+        pull = QPushButton(T("Aus Serverliste holen"))
+        pull.setToolTip(T("Übernimmt Adressen und Passwörter aus Reiter 2 (Aktuelle IP, Passwort)."))
+        pull.clicked.connect(self.ex_pull)
+        btns = QHBoxLayout()
+        for b in (add, rem, pull):
+            btns.addWidget(b)
+        btns.addStretch()
+        box_list = QGroupBox(T("Bestandsserver"))
+        v = QVBoxLayout(box_list)
+        v.addWidget(self.ex_table)
+        v.addLayout(btns)
+
+        self.ex_test = QPushButton(T("Verbindung testen"))
+        self.ex_test.setMinimumHeight(38)
+        self.ex_test.setDefault(True)
+        self.ex_test.setToolTip(T("Prüft je Server nur lesend: Port, Verschlüsselung, Hersteller, Anmeldung, Modell,\n"
+                                  "Firmware und Administratorrechte. Es wird nichts geändert. Jeder Server bekommt\n"
+                                  "genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt."))
+        self.ex_test.clicked.connect(self.ex_run)
+        self.ex_stop = QPushButton(T("Abbrechen"))
+        self.ex_stop.setEnabled(False)
+        self.ex_stop.clicked.connect(self.ex_abort)
+        self.ex_take = QPushButton(T("In Reiter 2–4 übernehmen"))
+        self.ex_take.setToolTip(T("Übernimmt alle erfolgreich getesteten Server in die Serverliste (Reiter 2) und trägt\n"
+                                  "den Benutzer in die Reiter 2, 3 und 4 ein. Danach dort die Einstellungen wählen und starten."))
+        self.ex_take.clicked.connect(self.ex_transfer)
+        self.ex_status = QLabel(T("Bereit"))
+        act = QHBoxLayout()
+        act.addWidget(self.ex_status, 1)
+        act.addWidget(self.ex_take)
+        act.addWidget(self.ex_stop)
+        act.addWidget(self.ex_test)
+
+        self.ex_log = QTextEdit()
+        self.ex_log.setReadOnly(True)
+        self.ex_log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        info = QLabel(T("Für Server, die schon konfiguriert sind: erst die Verbindung prüfen, dann die erfolgreichen "
+                        "Server in die Reiter 2–4 übernehmen. Das Tool speichert nichts."))
+        info.setWordWrap(True)
+        page = QWidget()
+        pl = QVBoxLayout(page)
+        pl.addWidget(info)
+        pl.addWidget(box_all)
+        split = QSplitter(Qt.Orientation.Vertical)
+        upper = QWidget()
+        u = QVBoxLayout(upper)
+        u.setContentsMargins(0, 0, 0, 0)
+        u.addWidget(box_list)
+        u.addLayout(act)
+        split.addWidget(upper)
+        split.addWidget(self.ex_log)
+        split.setSizes([320, 240])
+        pl.addWidget(split, 1)
+        self.ex_add_row()
+        return page
+
+    def ex_add_row(self, values=None):
+        r = self.ex_table.rowCount()
+        values = values or ["", "443", self.ex_user_all.text().strip(), self.ex_pass_all.text()]
+        self.ex_table.insertRow(r)
+        for c, val in enumerate(values):
+            self.ex_table.setItem(r, c, QTableWidgetItem(val))
+        st = QTableWidgetItem("")
+        st.setFlags(st.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.ex_table.setItem(r, 4, st)
+        self.ex_table.setCurrentCell(r, 0)
+
+    def ex_remove_rows(self):
+        for r in sorted({i.row() for i in self.ex_table.selectedIndexes()}, reverse=True):
+            self.ex_table.removeRow(r)
+
+    def ex_cell(self, r, c):
+        item = self.ex_table.item(r, c)
+        return item.text().strip() if item else ""
+
+    def ex_apply_all(self):
+        for r in range(self.ex_table.rowCount()):
+            self.ex_table.item(r, 2).setText(self.ex_user_all.text().strip())
+            self.ex_table.item(r, 3).setText(self.ex_pass_all.text())
+
+    def ex_drop_empty(self):
+        for r in range(self.ex_table.rowCount() - 1, -1, -1):
+            if not any(self.ex_cell(r, c) for c in (0, 2, 3)):
+                self.ex_table.removeRow(r)
+
+    def ex_add_range(self):
+        a, b = ipv4(self.ex_from.text().strip()), ipv4(self.ex_to.text().strip())
+        if not a or not b or int(b) < int(a):
+            QMessageBox.warning(self, T("Adressbereich"), T("Bitte eine gültige Start- und Endadresse (Start vor Ende) eintragen."))
+            return
+        if int(b) - int(a) >= 256:
+            QMessageBox.warning(self, T("Adressbereich"), T("Höchstens 256 Adressen auf einmal."))
+            return
+        self.ex_drop_empty()
+        have = {self.ex_cell(r, 0) for r in range(self.ex_table.rowCount())}
+        for n in range(int(a), int(b) + 1):
+            ip = str(ipaddress.IPv4Address(n))
+            if ip not in have:
+                self.ex_add_row(["" + ip, "443", self.ex_user_all.text().strip(), self.ex_pass_all.text()])
+
+    def ex_pull(self):
+        self.ex_drop_empty()
+        have = {self.ex_cell(r, 0) for r in range(self.ex_table.rowCount())}
+        for r in range(self.table.rowCount()):
+            ip, pw = self.cell(r, 0), self.cell(r, 1) or self.cur_pass.text()
+            if ip and ip not in have:
+                self.ex_add_row([ip, "443", self.cur_user.text().strip(), pw])
+                have.add(ip)
+
+    def ex_say(self, text, color=None, bold=False):
+        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "") + ("font-weight:bold;" if bold else "")
+        self.ex_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+
+    def ex_show_line(self, line, kind=""):
+        self.ex_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
+
+    def ex_collect(self):
+        """(Zeile, Adresse[:Port], Benutzer, Passwort) aller ausgefüllten Zeilen und die Fehlermeldungen."""
+        rows, errs, seen = [], [], set()
+        for r in range(self.ex_table.rowCount()):
+            ip, port, user, pw = (self.ex_cell(r, c) for c in range(4))
+            if not (ip or user or pw):
+                continue
+            n, port = r + 1, port or "443"
+            if not ipv4(ip):
+                errs.append(T('Zeile {0}: keine gültige IPv4-Adresse').format(n))
+            elif not (port.isdigit() and 1 <= int(port) <= 65535):
+                errs.append(T('Zeile {0}: ungültiger Port').format(n))
+            elif not self.ex_table.item(r, 3).text():
+                errs.append(T('Zeile {0}: Passwort fehlt').format(n))
+            elif (ip, port) in seen:
+                errs.append(T('Zeile {0}: Adresse und Port kommen mehrfach vor').format(n))
+            else:
+                seen.add((ip, port))
+                rows.append((r, ip if port == "443" else f"{ip}:{port}", user,
+                             self.ex_table.item(r, 3).text()))
+        return rows, errs
+
+    def ex_key(self, r):
+        return (self.ex_cell(r, 0), self.ex_cell(r, 1) or "443", self.ex_cell(r, 2), self.ex_table.item(r, 3).text())
+
+    def ex_run(self):
+        if self.ex_worker and self.ex_worker.isRunning():
+            return
+        rows, errs = self.ex_collect()
+        if errs or not rows:
+            QMessageBox.warning(self, T("Bestandsserver"), "\n".join(errs) or T("Die Liste ist leer."))
+            return
+        self.ex_log.clear()
+        self.ex_ok = {}
+        self.ex_rowof = {ip: r for r, ip, _, _ in rows}
+        for r, *_ in rows:
+            self.ex_table.item(r, 4).setText(T("wartet …"))
+            self.ex_table.item(r, 4).setBackground(QBrush())
+        self.ex_say(T('— Verbindungstest, {0} Server, nur lesend —').format(len(rows)), "gray")
+        self.ex_worker = ProbeThread(self, rows=[(ip, u, pw) for _, ip, u, pw in rows],
+                                     vendor=self.ex_vendor.currentData() or None)
+        self.ex_worker.line.connect(self.ex_show_line)
+        self.ex_worker.row.connect(self.ex_row_result)
+        self.ex_worker.result.connect(self.ex_done)
+        self.ex_test.setEnabled(False)
+        self.ex_stop.setEnabled(True)
+        self.ex_table.setEnabled(False)
+        self.ex_status.setText(T("Läuft …"))
+        self.ex_worker.start()
+
+    def ex_row_result(self, ip, res):
+        r = self.ex_rowof.get(ip)
+        item = self.ex_table.item(r, 4) if r is not None else None
+        if item is None:
+            return
+        if res["ok"]:
+            self.ex_ok[self.ex_key(r)] = res
+            admin = {True: "", False: " · " + T("kein Admin"), None: ""}[res.get("admin")]
+            item.setText(T("OK") + " · " + (res.get("model") or self.NAME_OF(res)) + (f" {res['fw']}" if res.get("fw") else "") + admin)
+            item.setBackground(QBrush(QColor("#f0ad4e" if res.get("admin") is False else "#3fa45b")))
+        else:
+            item.setText(T("Fehler") + ": " + res.get("text", ""))
+            item.setBackground(QBrush(QColor("#d9534f")))
+
+    @staticmethod
+    def NAME_OF(res):
+        return ProbeEngine.NAME.get(res.get("vendor", ""), "")
+
+    def ex_abort(self):
+        if self.ex_worker and self.ex_worker.isRunning():
+            self.ex_worker.requestInterruption()
+            self.ex_stop.setEnabled(False)
+            self.ex_status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
+
+    def ex_done(self, code, *_):
+        self.ex_test.setEnabled(True)
+        self.ex_stop.setEnabled(False)
+        self.ex_table.setEnabled(True)
+        self.ex_status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+
+    def ex_transfer(self):
+        good = [(r, self.ex_ok[self.ex_key(r)]) for r in range(self.ex_table.rowCount())
+                if self.ex_cell(r, 0) and self.ex_key(r) in self.ex_ok]
+        if not good:
+            QMessageBox.information(self, T("Bestandsserver"), T("Noch kein erfolgreich getesteter Server. Erst „Verbindung testen“."))
+            return
+        users = {}
+        for r, res in good:
+            users.setdefault(res["user"], []).append(r)
+        user = max(users, key=lambda k: len(users[k]))
+        take = [r for r in users[user] if self.ex_cell(r, 1) in ("", "443")]
+        left = len(good) - len(take)
+        self.ex_drop_main()
+        have = {self.cell(r, 0) for r in range(self.table.rowCount())}
+        for r in take:
+            ip = self.ex_cell(r, 0)
+            if ip not in have:
+                self.add_row([ip, self.ex_table.item(r, 3).text(), "", self.def_mask.text().strip(),
+                              self.def_gw.text().strip(), ""])
+        for w in (self.cur_user, self.bios_user, self.svc_user):
+            w.setText(user)
+        self.update_count()
+        self.touch()
+        msg = T('{0} Server in die Serverliste (Reiter 2) übernommen, Benutzer „{1}“ eingetragen.').format(len(take), user)
+        if left:
+            msg += "\n\n" + T('{0} getestete Server blieben draußen: anderer Benutzer als „{1}“ oder Port ungleich 443. '
+                              'Die Reiter 2 bis 4 kennen nur einen Benutzer für alle Server; diese Server in einem zweiten Durchgang übernehmen.').format(left, user)
+        QMessageBox.information(self, T("Bestandsserver"), msg)
+        self.tabs.setCurrentIndex(1)
+
+    def ex_drop_main(self):
+        """Leere Zeilen der Serverliste (Reiter 2) entfernen, damit die übernommenen Server oben stehen."""
+        for r in range(self.table.rowCount() - 1, -1, -1):
+            if not any(self.cell(r, c) for c in range(len(COLS))):
+                self.table.removeRow(r)
 
     # ---------- Dienste (NTP, Syslog, LDAP, HTTPS-Zertifikat) ----------
     def build_services(self):
@@ -6801,7 +7225,41 @@ TR = {
 "installiert": ["installed", "installé", "installiert"],
 "nicht installiert, Paket: {0}": ["not installed, package: {0}", "non installé, paquet : {0}", "nöd installiert, Paket: {0}"],
 "Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):": ["Install what is missing, on the computer running this tool (terminal):", "Installer ce qui manque, sur l'ordinateur qui exécute cet outil (terminal) :", "Fählendi nachinstalliere, uf em Rechner mit däm Tool (Terminal):"],
-"✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo).": ["✔ installed, ❗ missing. Not all are needed, depending on the chosen way:\nPicture: QtWebEngine · Text: pyte + ipmitool (Supermicro) or ssh + sshpass (Dell/HPE/Lenovo).", "✔ installé, ❗ manquant. Tous ne sont pas nécessaires selon la voie choisie :\nImage : QtWebEngine · Texte : pyte + ipmitool (Supermicro) ou ssh + sshpass (Dell/HPE/Lenovo).", "✔ installiert, ❗ fählt. Je nach gwählte Wääg bruucht me nöd alli:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo)."]
+"✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo).": ["✔ installed, ❗ missing. Not all are needed, depending on the chosen way:\nPicture: QtWebEngine · Text: pyte + ipmitool (Supermicro) or ssh + sshpass (Dell/HPE/Lenovo).", "✔ installé, ❗ manquant. Tous ne sont pas nécessaires selon la voie choisie :\nImage : QtWebEngine · Texte : pyte + ipmitool (Supermicro) ou ssh + sshpass (Dell/HPE/Lenovo).", "✔ installiert, ❗ fählt. Je nach gwählte Wääg bruucht me nöd alli:\nBild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo)."],
+"2b · Bestandsserver": ["2b · Existing servers", "2b · Serveurs existants", "2b · Bestehendi Server"],
+"Bestandsserver": ["Existing servers", "Serveurs existants", "Bestehendi Server"],
+"Adresse (BMC)": ["Address (BMC)", "Adresse (BMC)", "Adrässe (BMC)"],
+"Status": ["Status", "Statut", "Status"],
+"wartet …": ["waiting …", "en attente …", "wartet …"],
+"OK": ["OK", "OK", "OK"],
+"Fehler": ["Error", "Erreur", "Fähler"],
+"kein Admin": ["not admin", "pas admin", "kei Admin"],
+"Verbindung testen": ["Test connection", "Tester la connexion", "Verbindig teste"],
+"In Reiter 2–4 übernehmen": ["Use in tabs 2–4", "Reprendre dans les onglets 2–4", "I Reiter 2–4 übernäh"],
+"Aus Serverliste holen": ["Get from server list", "Prendre dans la liste", "Us de Serverlischte hole"],
+"Für alle Zeilen übernehmen": ["Apply to all rows", "Appliquer à toutes les lignes", "Für alli Zile übernäh"],
+"Bereich einfügen": ["Insert range", "Insérer la plage", "Bereich iifüege"],
+"Zugangsdaten und Adressen schnell eintragen": ["Enter credentials and addresses quickly", "Saisie rapide des accès et adresses", "Zuegangsdate und Adrässe schnäll iitrage"],
+"Für Server, die schon konfiguriert sind: erst die Verbindung prüfen, dann die erfolgreichen Server in die Reiter 2–4 übernehmen. Das Tool speichert nichts.": ["For servers that are already configured: check the connection first, then use the successful servers in tabs 2–4. The tool stores nothing.", "Pour les serveurs déjà configurés : vérifier d'abord la connexion, puis reprendre les serveurs réussis dans les onglets 2–4. L'outil n'enregistre rien.", "Für Server, wo scho konfiguriert sind: zerscht d Verbindig prüefe, dänn d erfolgriichä Server i d Reiter 2–4 übernäh. S Tool speicheret nüt."],
+"— Verbindungstest, {0} Server, nur lesend —": ["— Connection test, {0} servers, read-only —", "— Test de connexion, {0} serveurs, lecture seule —", "— Verbindigstest, {0} Server, nume läse —"],
+"Fertig: {0} von {1} Servern erreichbar und angemeldet": ["Done: {0} of {1} servers reachable and logged in", "Terminé : {0} serveurs sur {1} joignables et connectés", "Fertig: {0} vo {1} Server erreichbar und aagmäldet"],
+"Port {0} auf {1} nicht erreichbar ({2})": ["Port {0} on {1} not reachable ({2})", "Port {0} sur {1} injoignable ({2})", "Port {0} uf {1} nöd erreichbar ({2})"],
+"  Port {0}: offen": ["Port {0}: open", "Port {0} : ouvert", "Port {0}: offe"],
+"  Anmeldung: ok": ["Login: ok", "Connexion : ok", "Aamäldig: ok"],
+"  BMC: {0}, Firmware {1}": ["BMC: {0}, firmware {1}", "BMC : {0}, firmware {1}", "BMC: {0}, Firmware {1}"],
+"  Server: {0}, Stromzustand {1}": ["Server: {0}, power state {1}", "Serveur : {0}, état d'alimentation {1}", "Server: {0}, Stromzuestand {1}"],
+"  Verschlüsselung: {0}": ["Encryption: {0}", "Chiffrement : {0}", "Verschlüsselig: {0}"],
+"TLS 1.2 oder neuer": ["TLS 1.2 or newer", "TLS 1.2 ou plus récent", "TLS 1.2 oder neuer"],
+"veraltet (TLS 1.0/1.1 möglich)": ["outdated (TLS 1.0/1.1 possible)", "obsolète (TLS 1.0/1.1 possible)", "veralteti (TLS 1.0/1.1 möglich)"],
+"nur TLS 1.0/1.1": ["TLS 1.0/1.1 only", "TLS 1.0/1.1 uniquement", "nume TLS 1.0/1.1"],
+"Anmeldung abgelehnt (Benutzer oder Passwort falsch)": ["Login rejected (wrong user or password)", "Connexion refusée (utilisateur ou mot de passe incorrect)", "Aamäldig abglehnt (Benutzer oder Passwort falsch)"],
+"Anmeldung abgelehnt (Benutzer oder Passwort falsch, oder Konto gesperrt)": ["Login rejected (wrong user or password, or account locked)", "Connexion refusée (utilisateur ou mot de passe incorrect, ou compte verrouillé)", "Aamäldig abglehnt (Benutzer oder Passwort falsch, oder Konto gsperrt)"],
+"  Hinweis: Das Konto hat keine Administratorrechte, Konfigurieren wird scheitern.": ["Note: the account has no administrator rights, configuring will fail.", "Remarque : le compte n'a pas de droits d'administrateur, la configuration échouera.", "Hiiwiis: S Konto het kei Administratorrächt, s Konfiguriere wird schiitere."],
+"Noch kein erfolgreich getesteter Server. Erst „Verbindung testen“.": ["No successfully tested server yet. Run “Test connection” first.", "Aucun serveur testé avec succès. Lancez d'abord « Tester la connexion ».", "No kei erfolgriich tested Server. Zerscht „Verbindig teste“."],
+"Die Liste ist leer.": ["The list is empty.", "La liste est vide.", "D Lischte isch leer."],
+"Passwort fehlt": ["password missing", "mot de passe manquant", "Passwort fehlt"],
+"z. B. 10.20.0.11": ["e.g. 10.20.0.11", "p. ex. 10.20.0.11", "z. B. 10.20.0.11"],
+"z. B. 10.20.0.30": ["e.g. 10.20.0.30", "p. ex. 10.20.0.30", "z. B. 10.20.0.30"]
 }
 
 HELP = {
@@ -6816,6 +7274,14 @@ HELP["en"] = HELP["en"] + "<h3>UEFI console (tab 5)</h3>\n<p>Shows a server's UE
 HELP["fr"] = HELP["fr"] + "<h3>Console UEFI (onglet 5)</h3>\n<p>Affiche l'UEFI/BIOS d'un serveur via le BMC. Trois voies : <b>Image</b> (console HTML5 intégrée du BMC, souris et clavier comme sur l'original, connexion automatique), <b>Texte</b> (console série via IPMI-SOL ou SSH, Linux uniquement, nécessite <code>pyte</code>, <code>ipmitool</code> et <code>sshpass</code>) et <b>navigateur par défaut</b>. « Démarrer dans la configuration UEFI » prépare via Redfish le prochain démarrage dans la configuration et redémarre le serveur de force. Cet onglet n'enregistre rien. Les anciens BMC avec TLS 1.0/1.1 seulement ne fonctionnent qu'en console texte.</p>\n"
 HELP["gsw"] = HELP["gsw"] + "<h3>UEFI-Konsole (Reiter 5)</h3>\n<p>Zeigt s UEFI/BIOS vomene Server über de BMC aa. Drü Wääg: <b>Bild</b> (iibettet HTML5-Konsole vom BMC, Muus und Tastatur wie am Original, Aamäldig automatisch), <b>Text</b> (serielli Konsole über IPMI-SOL oder SSH, nume Linux, bruucht <code>pyte</code>, <code>ipmitool</code> und <code>sshpass</code>) und <b>Standardbrowser</b>. „Is UEFI-Setup boote“ merkt per Redfish de Start is Setup vor und startet de Server hert neu. De Reiter speicheret nüt. Alti BMCs mit nume TLS 1.0/1.1 gönd nume über d Textkonsole.</p>\n"
 
+
+HELP["de"] = HELP["de"] + "<h3>Bestandsserver (Reiter 2b)</h3>\n<p>Für BMCs, die schon konfiguriert sind. Je Zeile Adresse, Port (Standard 443), Benutzer und Passwort eintragen, dann <b>Verbindung testen</b>: Das Tool prüft nur lesend Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware und Administratorrechte. Jeder Server bekommt genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt. Erfolgreiche Server übernimmt <b>In Reiter 2–4 übernehmen</b> in die Serverliste; dort stellen Sie Netzwerk, UEFI und Dienste ein. Die Reiter 2 bis 4 kennen einen Benutzer für alle Server, abweichende Benutzer in einem zweiten Durchgang. Der Reiter speichert nichts.</p>\n"
+
+HELP["en"] = HELP["en"] + "<h3>Existing servers (tab 2b)</h3>\n<p>For BMCs that are already configured. Enter address, port (default 443), user and password per row, then <b>Test connection</b>: the tool checks read-only the port, encryption, vendor, login, model, firmware and administrator rights. Each server gets exactly one login attempt so a wrong password cannot lock an account. <b>Use in tabs 2–4</b> copies the successful servers into the server list, where you set network, UEFI and services. Tabs 2 to 4 know one user for all servers; use different users in a second pass. This tab stores nothing.</p>\n"
+
+HELP["fr"] = HELP["fr"] + "<h3>Serveurs existants (onglet 2b)</h3>\n<p>Pour les BMC déjà configurés. Saisissez adresse, port (443 par défaut), utilisateur et mot de passe par ligne, puis <b>Tester la connexion</b> : l'outil vérifie en lecture seule le port, le chiffrement, le fabricant, la connexion, le modèle, le firmware et les droits d'administrateur. Chaque serveur n'a qu'une seule tentative de connexion pour qu'un mauvais mot de passe ne verrouille pas un compte. <b>Reprendre dans les onglets 2–4</b> copie les serveurs réussis dans la liste, où vous réglez réseau, UEFI et services. Les onglets 2 à 4 ne connaissent qu'un utilisateur pour tous les serveurs ; les autres en deuxième passe. Cet onglet n'enregistre rien.</p>\n"
+
+HELP["gsw"] = HELP["gsw"] + "<h3>Bestehendi Server (Reiter 2b)</h3>\n<p>Für BMCs, wo scho konfiguriert sind. Pro Zile Adrässe, Port (Standard 443), Benutzer und Passwort iitrage, dänn <b>Verbindig teste</b>: S Tool prüeft nume läsend Port, Verschlüsselig, Hersteller, Aamäldig, Modell, Firmware und Administratorrächt. Jede Server überchunnt gnau en Aamäldversuech, dass es falsches Passwort kei Konto sperrt. <b>I Reiter 2–4 übernäh</b> kopiert d erfolgriichä Server i d Serverlischte; det stellsch Netzwärk, UEFI und Dienscht i. D Reiter 2 bis 4 kännd eimal Benutzer für alli Server, anderi i emene zweite Durchgang. De Reiter speicheret nüt.</p>\n"
 
 set_language(load_lang())
 

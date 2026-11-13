@@ -12,6 +12,22 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 
 ![BMC-Steward](docs/screenshot.png)
 
+<details>
+<summary>Screenshots aller Reiter</summary>
+
+| | |
+|---|---|
+| **1 · DHCP-Server** | **2 · Server konfigurieren** (oben) |
+| ![DHCP-Server](docs/screenshot-1-dhcp.png) | |
+| **2b · Bestandsserver** (Verbindungstest) | **3 · UEFI-Einstellungen** |
+| ![Bestandsserver](docs/screenshot-2b-existing.png) | ![UEFI-Einstellungen](docs/screenshot-3-uefi.png) |
+| **4 · Dienste** | **5 · UEFI-Konsole** |
+| ![Dienste](docs/screenshot-4-services.png) | ![UEFI-Konsole](docs/screenshot-5-console.png) |
+| **6 · Hilfe** | |
+| ![Hilfe](docs/screenshot-6-help.png) | |
+
+</details>
+
 ## Funktionen
 
 - Eine einzige Python-Datei, läuft unter Linux und Windows
@@ -22,6 +38,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 - Server lassen sich einzeln nacheinander konfigurieren; fertige Zeilen werden grün und übersprungen
 - Optional UEFI/BIOS-Einstellungen, gelesen von einem echten Referenzgerät
 - Optionale Verwaltungsdienste für die ganze Liste: NTP, Syslog, LDAP/AD mit Gruppen-Rollen-Zuordnung, HTTPS-Zertifikat-Import
+- Bestandsserver (Reiter 2b): Adresse, Port, Benutzer und Passwort je Server eintragen und die Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte); erfolgreiche Server gehen in die Reiter 2–4 über
 - UEFI-Konsole (Reiter 5): zeigt das UEFI/BIOS eines Servers über den BMC, als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser; an echter Hardware noch ungetestet
 - Oberfläche in Deutsch, Englisch, Französisch und Schweizerdeutsch
 
