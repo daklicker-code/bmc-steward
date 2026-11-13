@@ -12,7 +12,7 @@ Lizenz: MIT (siehe LICENSE)
 Quelle: https://github.com/daklicker-code/bmc-steward
 """
 __author__ = "Björn Franzke"
-__version__ = "1.7.5"
+__version__ = "1.7.6"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 import base64
@@ -50,7 +50,7 @@ from PyQt6.QtGui import QBrush, QColor, QFontDatabase, QImage, QPixmap
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+    QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSpinBox,
     QScrollArea, QSplitter, QStyledItemDelegate, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout,
     QWidget,
 )
@@ -2611,6 +2611,7 @@ SCAN_MAX_IMAGE = 12 * 1024 * 1024
 class ScanBridge(QObject):
     """Bringt einen Wert vom Server-Thread in den Hauptthread (die Oberfläche)."""
     value = pyqtSignal(str, object)
+    connected = pyqtSignal()        # das Handy hat die Seite geladen
 
 
 def scan_tools():
@@ -2683,6 +2684,64 @@ def binarize(gray):
     return out.copy(), thr
 
 
+def locate_line(gray):
+    """Findet im Foto das Band mit dunkler Schrift (Zeilen mit auffallend vielen dunklen Punkten) und schneidet es
+    in voller Breite aus. None, wenn kein klares Band da ist."""
+    w, h = gray.width(), gray.height()
+    sw = 360
+    sh = max(1, h * sw // w)
+    sm = gray.scaled(sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    bg = sm.scaled(max(1, sw // 12), max(1, sh // 12), Qt.AspectRatioMode.IgnoreAspectRatio,
+                   Qt.TransformationMode.SmoothTransformation).scaled(
+                       sw, sh, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    bg = bg.convertToFormat(QImage.Format.Format_Grayscale8)
+
+    def rows_of(im):
+        ptr = im.constBits()
+        ptr.setsize(im.bytesPerLine() * im.height())
+        raw = bytes(ptr)
+        return [raw[y * im.bytesPerLine():y * im.bytesPerLine() + sw] for y in range(im.height())]
+    a, c = rows_of(sm), rows_of(bg)
+    counts = [sum(1 for x in range(sw) if a[y][x] < c[y][x] - 30) for y in range(sh)]
+    med = sorted(counts)[len(counts) // 2]
+    thr = max(med * 1.5, 8)
+    best, y = (0, 0, 0), 0
+    while y < sh:
+        if counts[y] > thr:
+            e = y
+            while e < sh and counts[e] > thr:
+                e += 1
+            if e - y > best[0]:
+                best = (e - y, y, e)
+            y = e
+        else:
+            y += 1
+    n, y0, y1 = best
+    if n < 3 or n > sh * 0.6:
+        return None
+    pad = max(2, int(n * 0.6))
+    top, bottom = max(0, y0 - pad) * h // sh, min(sh, y1 + pad) * h // sh
+    return gray.copy(0, top, w, max(1, bottom - top))
+
+
+def line_variants(line):
+    """Ausschnitt in mehreren Größen/Glättungen, jeweils mit weissem Rand (Tesseract mag Rand)."""
+    for scale in (0.75, 1.5):
+        base = line.scaled(max(1, int(line.width() * scale)), max(1, int(line.height() * scale)),
+                           Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        for k in (2, 3, 4):
+            im = base.scaled(max(1, base.width() // k), max(1, base.height() // k),
+                             Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            im = im.scaled(base.width(), base.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation).convertToFormat(QImage.Format.Format_Grayscale8)
+            out = QImage(im.width() + 80, im.height() + 80, QImage.Format.Format_Grayscale8)
+            out.fill(255)
+            pt = QPainter(out)
+            pt.drawImage(40, 40, im)
+            pt.end()
+            yield f"zeile-x{scale}-w{k}", out
+
+
 class ScanDebug:
     """Sammelt beim Debug-Modus, was beim Lesen passiert ist (Schritte, Kandidaten, zwischengespeicherte Bilder)."""
 
@@ -2742,7 +2801,12 @@ def scan_decode(jpeg, mode, dbg=None):
                 line = " ".join(line.split())
                 if line and line not in out and len(line) <= 200:
                     out.append(line)
-            return out[:12], "", info
+            if out:
+                return out[:12], "", info
+            if dbg:
+                dbg.add("Kein Barcode gefunden, versuche Texterkennung")
+            texts, err, info2 = scan_decode(jpeg, "ocr", dbg)
+            return texts, err, info
         gray0 = img.convertToFormat(QImage.Format.Format_Grayscale8)
         longest = max(gray0.width(), gray0.height())
         scale = 1 if longest >= 1800 else 2 if longest >= 900 else 3
@@ -2765,6 +2829,28 @@ def scan_decode(jpeg, mode, dbg=None):
         gray = grow(gray0)
         votes = Counter()
         out, errs = [], []
+        # 1. Textzeile im Foto suchen und gezielt lesen (hilft bei Hintergrund mit Muster)
+        line = locate_line(gray0)
+        if dbg:
+            dbg.add("Textzeile: " + (f"gefunden, Ausschnitt {line.width()}x{line.height()}" if line else "nicht gefunden"))
+        for name, im in (line_variants(line) if line else ()):
+            path = os.path.join(d, name + ".png")
+            im.save(path, "PNG")
+            if dbg:
+                dbg.image(name + ".png", im)
+            for psm in ("7", "8"):
+                found, err = tesseract_run(exe, path, psm)
+                if dbg:
+                    dbg.add(f"tesseract {name} psm {psm}: Kandidaten {dbg.cands(found)}"
+                            + (f", Fehler: {err}" if err else ""))
+                if err and err not in errs:
+                    errs.append(err)
+                for t in found:
+                    t = t.strip(" |_—-~“”\"'`.,;:")
+                    if plausible(t) and len(t) <= 200:
+                        votes[t] += 1
+                        if t not in out:
+                            out.append(t)
         bw, thr = binarize(gray)
         if dbg:
             dbg.add(f"Vorbereitung: Graustufen {gray.width()}x{gray.height()} (Faktor {scale}), Otsu-Schwelle {thr}")
@@ -2774,7 +2860,7 @@ def scan_decode(jpeg, mode, dbg=None):
                  ("grau", gray, False, ("7", "8", "6", "11")), ("sw", bw, False, ("7", "8", "6")),
                  ("grau-invers", gray, True, ("7", "6")), ("sw-invers", bw, True, ("7", "6")))
         for name, base, inverted, modes in steps:
-            if out and not name.startswith("weich"):
+            if (out and not name.startswith("weich")) or (len(votes) and max(votes.values()) >= 3):
                 break
             im = base.copy()
             if inverted:
@@ -2875,6 +2961,7 @@ class ScanServer:
                          f"({self.headers.get('User-Agent', '')[:120]})")
                 if rest == "/":
                     self.reply(200, SCAN_HTML, "text/html")
+                    srv.bridge.connected.emit()
                 else:
                     self.reply(404, "{}")
 
@@ -2940,6 +3027,8 @@ class ScanServer:
             self.tmp = None
 
 
+SCAN_WAIT_SECONDS = 18      # so lange dauert der Verbindungsaufbau des Handys etwa
+WAIT_STEPS = 100
 HOTSPOT_CON = "BMC-Steward-Hotspot"
 USB_TETHER_DRIVERS = ("rndis_host", "cdc_ether", "cdc_ncm", "cdc_eem", "ipheth")
 
@@ -2990,6 +3079,13 @@ class ScannerDialog(QDialog):
         self.hotspot = False        # True, solange der von uns angelegte Hotspot läuft
         self.bridge = ScanBridge()
         self.bridge.value.connect(self.on_value)
+        self.bridge.connected.connect(self.on_phone_connected)
+        self.wait_bar = QProgressBar()
+        self.wait_bar.setRange(0, WAIT_STEPS)
+        self.wait_bar.setFormat(T("Warte auf das Handy … %p %"))
+        self.wait_bar.hide()
+        self.wait_timer = QTimer(self)
+        self.wait_timer.timeout.connect(self.wait_tick)
         self.setWindowTitle(T("Handy-Scanner (Passwort)"))
         self.setMinimumWidth(480)
         self.setMinimumHeight(560)
@@ -3059,6 +3155,7 @@ class ScannerDialog(QDialog):
         lay.addLayout(row1)
         lay.addLayout(row2)
         lay.addLayout(row3)
+        lay.addWidget(self.wait_bar)
         for w in (self.qr_wifi, self.wifi_info, self.qr, self.url, self.state, hint, self.log):
             lay.addWidget(w)
         self.way.currentIndexChanged.connect(self.fill_ifaces)
@@ -3068,6 +3165,31 @@ class ScannerDialog(QDialog):
     def say(self, text):
         self.log.append(html.escape(text))
         self.events.append(time.strftime("%H:%M:%S ") + "[Fenster] " + text)
+
+    def wait_start(self):
+        self.wait_bar.setValue(0)
+        self.wait_bar.setFormat(T("Warte auf das Handy … %p %"))
+        self.wait_bar.show()
+        self.wait_timer.start(1000 * SCAN_WAIT_SECONDS // WAIT_STEPS)
+
+    def wait_tick(self):
+        v = self.wait_bar.value() + 1
+        self.wait_bar.setValue(v)
+        if v >= WAIT_STEPS:
+            self.wait_timer.stop()
+            self.wait_bar.setFormat(T("Noch kein Handy verbunden – Link/Firewall prüfen"))
+
+    def wait_stop(self, text=None):
+        self.wait_timer.stop()
+        if text:
+            self.wait_bar.setValue(WAIT_STEPS)
+            self.wait_bar.setFormat(text)
+        else:
+            self.wait_bar.hide()
+
+    def on_phone_connected(self):
+        if self.wait_timer.isActive():
+            self.wait_stop(T("Handy verbunden"))
 
     def set_debug(self, on):
         if self.server:
@@ -3238,6 +3360,7 @@ class ScannerDialog(QDialog):
         else:
             self.qr.setText(T("(Für einen QR-Code: sudo pacman -S qrencode)"))
         self.say(T("Scanner gestartet auf {0}").format(link.rsplit("/", 2)[0]))
+        self.wait_start()
         self.adjustSize()
 
     def stop_server(self):
@@ -3254,6 +3377,7 @@ class ScannerDialog(QDialog):
             w.clear()
         self.qr.setMinimumSize(0, 0)
         self.qr_wifi.setMinimumSize(0, 0)
+        self.wait_stop()
         self.adjustSize()
         self.state.setText(T("Gestoppt"))
         self.fill_ifaces()
