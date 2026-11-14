@@ -48,7 +48,7 @@ SCAN_HTML = """<!doctype html>
  #v{display:block;width:100%;height:100%;object-fit:cover}
  #box{position:absolute;border:1px solid #ffd54a;box-shadow:0 0 0 9999px rgba(0,0,0,.6);pointer-events:none;box-sizing:border-box}
  button,input[type=text]{font:inherit;padding:10px;border-radius:8px;border:1px solid #556;background:#2b3138;color:#eee;box-sizing:border-box}
- button.main{width:100%;flex:none;background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
+ button.main{width:100%;flex:none;background:#d9534f;border-color:#d9534f;font-weight:bold}
  button.ok{background:#3fa45b;border-color:#3fa45b;font-weight:bold;white-space:nowrap}
  button.small{padding:6px 12px}
  #res{flex:none;display:flex;gap:6px;overflow-x:auto}
@@ -60,15 +60,16 @@ SCAN_HTML = """<!doctype html>
  #ctl input[type=range]{flex:1}
  #row{flex:none;display:flex;gap:6px}
  #val{flex:1;min-width:0}
- #prev{display:none;position:absolute;left:6px;right:6px;bottom:6px;max-height:30%;max-width:calc(100% - 12px);margin:0 auto;object-fit:contain;
-  border-radius:6px;border:1px solid #556;background:#000}
+ #cmp{display:none;flex:none;flex-direction:column;gap:3px;align-items:stretch}
+ #prev{display:block;width:100%;max-height:20vh;object-fit:contain;border-radius:6px;border:1px solid #556;background:#000}
+ #big{font-family:ui-monospace,monospace;font-size:1.7rem;font-weight:bold;letter-spacing:.04em;word-break:break-all;text-align:center;line-height:1.1;min-height:1.2em}
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
 <div class="seg">
  <label><input type="radio" name="m" value="barcode"><span id="t_bc">Barcode</span></label>
  <label><input type="radio" name="m" value="ocr" checked><span id="t_ocr">Text (OCR)</span></label>
 </div>
-<div id="area"><div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div><img id="prev" alt=""></div>
+<div id="area"><div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div></div>
 <div class="seg">
  <label><input type="radio" name="c" value="s"><span id="c_s">Klein</span></label>
  <label><input type="radio" name="c" value="m" checked><span id="c_m">Mittel</span></label>
@@ -76,17 +77,18 @@ SCAN_HTML = """<!doctype html>
 </div>
 <div id="ctl"><input type="range" id="zoom" style="display:none"><button class="small" id="torch" style="display:none">💡</button></div>
 <button class="main" id="shot">Aufnehmen</button>
+<div id="cmp"><img id="prev" alt=""><div id="big"></div></div>
 <div id="res"></div>
 <div id="row"><input type="text" id="val" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
  placeholder="Passwort"><button class="ok" id="send">Übernehmen</button></div>
 <div id="msg"></div>
 <script>
 const de=(navigator.language||"de").startsWith("de");
-const L=de?{shot:"Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt. ",
+const L=de?{shot:"● Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …",none:"Nichts erkannt. ",
  tip:"Tipp: Aufkleber antippen, Ausschnitt „Klein“ oder „Mittel“ wählen, bei Bedarf zoomen. Der gelbe Rahmen wird gelesen.",
  sent:"✓ Eingetragen in Zeile ",nosend:"Kein passendes Feld frei im Tool.",nocam:"Kamera nicht verfügbar. Bitte die Seite über HTTPS öffnen und die Kamera erlauben.",
  empty:"Erst aufnehmen oder Wert eintippen.",fail:"Fehler: ",s:"Klein",m:"Mittel",f:"Ganz"}
- :{shot:"Capture",send:"Use",ph:"Password",busy:"Reading …",none:"Nothing recognised. ",
+ :{shot:"● Capture",send:"Use",ph:"Password",busy:"Reading …",none:"Nothing recognised. ",
  tip:"Tip: tap the label, choose crop “Small” or “Medium”, zoom if needed. The yellow frame is read.",
  sent:"✓ Entered in row ",nosend:"No free field in the tool.",nocam:"Camera not available. Open the page via HTTPS and allow the camera.",
  empty:"Capture first or type a value.",fail:"Error: ",s:"Small",m:"Medium",f:"Full"};
@@ -117,7 +119,7 @@ document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
 document.querySelectorAll("input[name=m]").forEach(e=>e.onchange=()=>{
  document.querySelector("input[name=c][value=m]").checked=true;cx=cy=.5;layout()});
 $("wrap").onclick=e=>{const r=$("wrap").getBoundingClientRect();cx=(e.clientX-r.left)/r.width;cy=(e.clientY-r.top)/r.height;box()};
-addEventListener("resize",layout);if(window.ResizeObserver)new ResizeObserver(layout).observe($("area"));$("prev").onclick=()=>{$("prev").style.display="none"};$("v").addEventListener("loadedmetadata",layout);
+addEventListener("resize",layout);if(window.ResizeObserver)new ResizeObserver(layout).observe($("area"));$("prev").onclick=()=>{$("cmp").style.display="none";$("big").textContent=""};$("v").addEventListener("loadedmetadata",layout);
 async function cam(){
  try{
   const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:3840},height:{ideal:2160}},audio:false});
@@ -142,13 +144,13 @@ $("shot").onclick=async()=>{
  c.getContext("2d").drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
  say(L.busy);$("res").innerHTML="";
  c.toBlob(async b=>{
-  if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$("prev").src=prevUrl;$("prev").style.display="block";
+  if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$("prev").src=prevUrl;$("cmp").style.display="flex";$("big").textContent="";
   try{
    const r=await fetch(base+"decode?mode="+pick("m"),{method:"POST",body:b,headers:{"X-Client":JSON.stringify({win:[innerWidth,innerHeight],video:[v.videoWidth,v.videoHeight],wrap:[Math.round($("wrap").clientWidth),Math.round($("wrap").clientHeight)],crop:[sx,sy,sw,sh],out:[c.width,c.height],size:pick("c"),zoom:$("zoom")?$("zoom").value:null})}}),j=await r.json();
    if(j.error){say(j.error,"err");return}
    if(!j.texts.length){say(L.none+(j.info||""),"err");return}
-   say("");
-   j.texts.forEach((t,i)=>{const e=document.createElement("button");e.textContent=t;e.onclick=()=>{$("val").value=t};$("res").appendChild(e);if(!i)$("val").value=t});
+   say("");$("big").textContent=j.texts[0];
+   j.texts.forEach((t,i)=>{const e=document.createElement("button");e.textContent=t;e.onclick=()=>{$("val").value=t;$("big").textContent=t};$("res").appendChild(e);if(!i)$("val").value=t});
   }catch(e){say(L.fail+e,"err")}
  },"image/jpeg",0.95);
 };
@@ -156,7 +158,7 @@ $("send").onclick=async()=>{
  const t=$("val").value.trim();if(!t){say(L.empty,"err");return}
  try{
   const r=await fetch(base+"set",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:t})}),j=await r.json();
-  if(j.ok){$("val").value="";$("res").innerHTML="";$("prev").style.display="none";if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null}say(L.sent+j.row,"good")}else say(L.nosend,"err");
+  if(j.ok){$("val").value="";$("res").innerHTML="";$("cmp").style.display="none";$("big").textContent="";if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null}say(L.sent+j.row,"good")}else say(L.nosend,"err");
  }catch(e){say(L.fail+e,"err")}
 };
 cam();
