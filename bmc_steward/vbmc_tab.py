@@ -236,15 +236,17 @@ class VbmcTabMixin:
             self.add_row()
             r = self.table.rowCount() - 1
             self.table.item(r, 0).setText(addr)                        # Aktuelle IP (mit :Port)
-            # Passwort (Default) bewusst NICHT in die Liste schreiben - gehört ins Werkspasswort-Feld oben
+            # Passwort direkt je Zeile eintragen (Werte unterscheiden sich je Hersteller; das eine
+            # globale Werkspasswort-Feld oben könnte nur einen davon abdecken).
+            self.table.item(r, 1).setText(pw)
             # Neue IP: Präfix vorgefüllt, letzte Ziffer bleibt offen (beim Fallback komplett)
             self.table.item(r, 2).setText(f"{new_prefix}.{str(51 + i) + new_port if not net else ''}")
             self.table.item(r, 3).setText(mask)                        # Subnetzmaske
             self.table.item(r, 4).setText(gw)                          # Gateway
             self.table.item(r, 5).setText(f"vsrv-{vendor}-{i + 1}")    # Hostname-Vorschlag
             added += 1
-        # Kein Passwort automatisch setzen (auch nicht global) - das Werks-Login kommt oben
-        # ins Passwortfeld; die Logins stehen im Status und im Testlabor-Log.
+        # Benutzer bleibt leer: Der Hauptablauf erkennt ihn automatisch je Hersteller (DEFAULT_USER),
+        # solange "Werksbenutzer" oben leer bleibt. Passwort steht jetzt direkt je Zeile.
         self.update_count()
         self.touch()
         self.tabs.setCurrentIndex(1)
@@ -252,11 +254,11 @@ class VbmcTabMixin:
             return
         hint = ", ".join(f"{v}: {u}/{p}" for v, (u, p) in logins.items())
         if net:
-            self.status.setText(T("{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur "
-                                  "noch die letzte Ziffer eintragen. Werks-Login(s): {3}.").format(
-                                  added, gw or "?", mask, hint))
+            self.status.setText(T("{0} Server übernommen (Passwörter stehen schon in der Liste). Netz erkannt "
+                                  "(Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen. "
+                                  "Werks-Login(s): {3}.").format(added, gw or "?", mask, hint))
         else:
-            self.status.setText(T("{0} Server übernommen (Loopback). Oben neuen Benutzer/Passwort setzen. "
+            self.status.setText(T("{0} Server übernommen (Loopback, Passwörter stehen schon in der Liste). "
                                   "Werks-Login(s): {1}.").format(added, hint))
 
     def vbmc_shutdown(self):
