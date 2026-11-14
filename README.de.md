@@ -1,6 +1,4 @@
-<p align="center"><img src="docs/logo.svg" width="112" alt="BMC-Steward Logo"></p>
-
-# BMC-Steward
+<h1><img src="docs/logo.svg" width="44" align="center" alt="">&nbsp; BMC-Steward</h1>
 
 *English version: [README.md](README.md)*
 
