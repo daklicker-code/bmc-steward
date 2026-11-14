@@ -263,8 +263,19 @@ class VbmcTabMixin:
 
     def vbmc_shutdown(self):
         """Beim Schließen des Programms die Flotte mitnehmen."""
-        if self.vbmc_running():
-            self.vbmc_proc.terminate()
+        if not self.vbmc_running():
+            return
+        pid = self.vbmc_proc.processId()
+        via_pkexec = self.vbmc_proc.program() == "pkexec"
+        self.vbmc_proc.terminate()
+        if self.vbmc_proc.waitForFinished(3000):
+            return
+        if self.vbmc_running() and via_pkexec and not WINDOWS and shutil.which("pkexec"):
+            # Mit --console läuft die Flotte dauerhaft als root (Ports < 1024); ein Signal von diesem,
+            # nicht privilegierten Prozess aus verhallt wirkungslos. Wie beim DHCP-Server: über pkexec
+            # selbst beenden, das darf root-Prozesse signalisieren.
+            QProcess.execute("pkexec", ["kill", str(pid)])
             self.vbmc_proc.waitForFinished(3000)
-            if self.vbmc_running():
-                self.vbmc_proc.kill()
+        if self.vbmc_running():
+            self.vbmc_proc.kill()
+            self.vbmc_proc.waitForFinished(1000)
