@@ -30,7 +30,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 
 ## Features
 
-- One Python file, runs on Linux and Windows
+- Modular layout (package `bmc_steward/`), runs on Linux and Windows
 - Built-in DHCP server for a separate staging switch (dnsmasq on Linux, built-in on Windows)
 - Server list with validation, CSV import/export, profiles for recurring settings
 - Dry run that shows every call without changing anything
