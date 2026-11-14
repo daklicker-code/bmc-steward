@@ -19,9 +19,10 @@ from . import i18n
 from .i18n import BIOS_PROFILES, HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
 from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, mask, netmask, row_errors
 from .branding import app_icon, logo_png_data_uri
-from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread
+from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
+from .firmware_tab import FirmwareTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
 
@@ -47,7 +48,7 @@ class PwDelegate(QStyledItemDelegate):
 
 
 
-class Window(ConsoleMixin, VbmcTabMixin, QWidget):
+class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
     def __init__(self, state=None):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
@@ -250,7 +251,8 @@ class Window(ConsoleMixin, VbmcTabMixin, QWidget):
         self.tabs.addTab(self.build_existing(), T("2b · Bestandsserver"))
         self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
         self.tabs.addTab(self.build_services(), T("4 · Dienste"))
-        self.tabs.addTab(self.build_console(), T("5 · UEFI-Konsole"))
+        self.tabs.addTab(self.build_firmware(), T("5 · Firmware"))
+        self.tabs.addTab(self.build_console(), T("6 · UEFI-Konsole"))
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
@@ -258,7 +260,7 @@ class Window(ConsoleMixin, VbmcTabMixin, QWidget):
         _logo_html = (f'<p align="center" style="margin-top:14px">'
                       f'<img src="{_logo}" width="64" height="64"></p>') if _logo else ""
         help_view.setHtml(HELP[i18n.LANG] + _logo_html + ABOUT)
-        self.tabs.addTab(help_view, T("6 · Hilfe"))
+        self.tabs.addTab(help_view, T("7 · Hilfe"))
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)

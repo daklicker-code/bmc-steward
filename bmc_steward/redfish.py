@@ -11,6 +11,7 @@ import ssl
 import time
 import urllib.error
 import warnings
+from pathlib import Path
 from .i18n import T
 from .core import mask
 
@@ -1069,6 +1070,215 @@ class ServicesEngine(RedfishClient):
 
 
 
+class FirmwareEngine(RedfishClient):
+    """Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar, lädt eine Datei
+    per Multipart-/HTTP-Push hoch oder stößt ein SimpleUpdate von einer URL an und verfolgt den Task
+    bis zum Ende. Arbeitet die Serverliste der Reihe nach ab. Dieser Vorgang ist heikel - Trockenlauf
+    ist Vorgabe, und ein Fehlschlag kann einen BMC unbrauchbar machen; immer erst ein Einzelgerät."""
+
+    US = "/redfish/v1/UpdateService"
+
+    def __init__(self, rows, cur_user, cfg, dry=True, log=print, stopped=lambda: False, vendor=None):
+        super().__init__(dry, log, stopped)
+        self.rows, self.cur_user_set, self.cfg = rows, cur_user, cfg
+        self.force_vendor = vendor
+
+    # ---------- Rohzugriff für Datei-Upload (api() schickt nur JSON) ----------
+    def raw(self, ip, user, pw, method, path, body=None, ctype=None, timeout=600):
+        """Wie api(), aber mit beliebigem Body (z. B. Multipart). Gibt (code, location) zurück; die
+        JSON-Antwort steht in self.body. location ist der Task-Pfad aus dem Location-Header."""
+        self.body = None
+        mode = self.tls_mode(ip, min(timeout, 10))
+        if mode is None:
+            return 0, None
+        req = urllib.request.Request(f"https://{ip}{path}", method=method, data=body)
+        if ctype:
+            req.add_header("Content-Type", ctype)
+        req.add_header("Authorization", "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode())
+        try:
+            with OPENERS[mode].open(req, timeout=timeout) as r:
+                code, loc, raw = r.status, r.headers.get("Location"), r.read()
+        except urllib.error.HTTPError as e:
+            code, loc, raw = e.code, e.headers.get("Location"), e.read()
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            return 0, None
+        try:
+            self.body = json.loads(raw) if raw else None
+        except ValueError:
+            self.body = None
+        return code, loc
+
+    def inventory(self, ip, user, pw):
+        """Liste der Firmware-Komponenten: [{id, name, version, updateable}] oder None."""
+        self.code = self.api(ip, user, pw, "GET", self.US + "/FirmwareInventory")
+        if not self.ok(self.code) or not isinstance(self.body, dict):
+            return None
+        out = []
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if path and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict):
+                b = self.body
+                out.append({"id": b.get("Id") or path.rsplit("/", 1)[-1],
+                            "name": b.get("Name") or "", "version": b.get("Version") or "",
+                            "updateable": bool(b.get("Updateable")), "path": path})
+        return out
+
+    def us_doc(self, ip, user, pw):
+        return self.body if self.ok(self.api(ip, user, pw, "GET", self.US)) and isinstance(self.body, dict) else None
+
+    @staticmethod
+    def _multipart(params, filename, data):
+        """application/json-Teil „UpdateParameters" + Datei-Teil „UpdateFile" nach Redfish."""
+        boundary = "----vbmcBoundary%d" % int(time.monotonic() * 1000)
+        pre = ("--%s\r\nContent-Disposition: form-data; name=\"UpdateParameters\"\r\n"
+               "Content-Type: application/json\r\n\r\n%s\r\n"
+               "--%s\r\nContent-Disposition: form-data; name=\"UpdateFile\"; filename=\"%s\"\r\n"
+               "Content-Type: application/octet-stream\r\n\r\n" % (
+                   boundary, json.dumps(params), boundary, filename)).encode()
+        post = ("\r\n--%s--\r\n" % boundary).encode()
+        return pre + data + post, "multipart/form-data; boundary=%s" % boundary
+
+    def wait_task(self, ip, user, pw, task_path, timeout=1800):
+        """Verfolgt den Update-Task bis zum Ende. True = fertig, False = Fehler/Zeit abgelaufen."""
+        end = time.monotonic() + timeout
+        last = -1
+        while not self.stopped():
+            code = self.api(ip, user, pw, "GET", task_path, timeout=30)
+            if not self.ok(code) or not isinstance(self.body, dict):
+                # Manche BMCs sind während des BMC-Flashs kurz weg; weiter versuchen
+                if time.monotonic() >= end:
+                    self.log(T("  FEHLER: Task nicht mehr lesbar (HTTP {0})").format(code or T("keine Verbindung")), "err")
+                    return False
+                self.pause(5)
+                continue
+            state = self.body.get("TaskState") or ""
+            pct = self.body.get("PercentComplete")
+            if pct != last and pct is not None:
+                self.log(T("    {0} … {1}%").format(state, pct))
+                last = pct
+            if state in ("Completed",):
+                return True
+            if state in ("Exception", "Killed", "Cancelled", "Interrupted"):
+                self.log_lines([T("  FEHLER: Update fehlgeschlagen ({0})").format(state)] + self.errmsg())
+                return False
+            if time.monotonic() >= end:
+                self.log(T("  FEHLER: Zeitüberschreitung beim Update"), "err")
+                return False
+            self.pause(5)
+        return False
+
+    def start_update(self, ip, user, pw, us, apply_time, targets):
+        """Lädt die Datei hoch bzw. stößt SimpleUpdate an. Gibt den Task-Pfad oder None zurück."""
+        src = self.cfg.get("source")
+        params = {"@Redfish.OperationApplyTime": apply_time}
+        if targets:
+            params["Targets"] = targets
+        if src == "uri":
+            uri = self.cfg.get("uri", "").strip()
+            data = {"ImageURI": uri, "TransferProtocol": self.cfg.get("proto", "HTTP"),
+                    "@Redfish.OperationApplyTime": apply_time}
+            if targets:
+                data["Targets"] = targets
+            code, loc = self.raw(ip, user, pw, "POST", self.US + "/Actions/UpdateService.SimpleUpdate",
+                                 json.dumps(data).encode(), "application/json", timeout=120)
+        else:
+            path = Path(self.cfg.get("file", ""))
+            try:
+                data = path.read_bytes()
+            except OSError as e:
+                self.log(T("  FEHLER: Datei nicht lesbar: {0}").format(e), "err")
+                return None
+            mp_uri = us.get("MultipartHttpPushUri")
+            if mp_uri:
+                body, ctype = self._multipart(params, path.name, data)
+                code, loc = self.raw(ip, user, pw, "POST", mp_uri, body, ctype)
+            else:                                   # einfacher Push: nur die Rohdatei
+                push = us.get("HttpPushUri") or (self.US + "/update")
+                code, loc = self.raw(ip, user, pw, "POST", push, data, "application/octet-stream")
+        if not self.ok(code):
+            self.fail(T("Update starten"), code)
+            return None
+        # Task-Pfad aus Location-Header oder Body
+        if loc:
+            return loc
+        if isinstance(self.body, dict):
+            return self.body.get("@odata.id") or (
+                "/redfish/v1/TaskService/Tasks/" + str(self.body["Id"]) if self.body.get("Id") else None)
+        return None
+
+    def apply_row(self, ip, pw, vendor):
+        user = self.cur_user_set or self.DEFAULT_USER[vendor]
+        self.cur_user = user
+        apply_time = "Immediate" if self.cfg.get("apply", "immediate") == "immediate" else "OnReset"
+        targets = self.cfg.get("targets") or []
+        src = self.cfg.get("source")
+        label = (T("URL {0}").format(self.cfg.get("uri", "")) if src == "uri"
+                 else T("Datei {0}").format(Path(self.cfg.get("file", "")).name))
+        tgt = (", ".join(t.rsplit("/", 1)[-1] for t in targets) if targets else T("automatisch"))
+        if self.dry:
+            self.log(T("  Trockenlauf: würde {0} einspielen (Ziel: {1}, Übernahme: {2})").format(
+                label, tgt, apply_time))
+            return True
+        us = self.us_doc(ip, user, pw)
+        if us is None:
+            self.fail(T("UpdateService lesen"), self.code)
+            return False
+        before = {c["id"]: c["version"] for c in (self.inventory(ip, user, pw) or [])}
+        self.log(T("  {0} wird eingespielt (Übernahme: {1}) …").format(label, apply_time))
+        task = self.start_update(ip, user, pw, us, apply_time, targets)
+        if not task:
+            return False
+        self.log(T("  Task: {0}").format(task))
+        if not self.wait_task(ip, user, pw, task):
+            return False
+        after = {c["id"]: c["version"] for c in (self.inventory(ip, user, pw) or [])}
+        changed = [T("{0}: {1} → {2}").format(k, before.get(k, "?"), v)
+                   for k, v in after.items() if before.get(k) != v]
+        if changed:
+            self.log(T("  Firmware aktualisiert: {0}").format(", ".join(changed)), "ok")
+        elif apply_time == "OnReset":
+            self.log(T("  Hochgeladen, wird beim nächsten Neustart übernommen."), "ok")
+        else:
+            self.log(T("  Update abgeschlossen."), "ok")
+        return True
+
+    def run(self):
+        done, failed = [], []
+        for ip, row_pw in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                failed.append(T("Abbruch"))
+                break
+            if not row_pw:
+                self.log(T('== {0}: kein Passwort').format(ip), "err")
+                failed.append(ip)
+                continue
+            self.log("== " + ip, "head")
+            v = self.force_vendor or self.vendor(ip)
+            if self.dry and v not in self.NAME and v != "hpe_old":
+                self.log(T('  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf').format(v))
+                v = "dell"
+            if v == "offline":
+                self.log(T("  FEHLER: nicht erreichbar"), "err")
+                failed.append(ip)
+                continue
+            if v == "hpe_old":
+                self.log(T("  iLO 3/4: Firmware-Update hier nicht unterstützt (RIBCL), übersprungen."), "err")
+                failed.append(ip)
+                continue
+            if v not in self.NAME:
+                self.log(T("  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"), "err")
+                self.unknown_hint()
+                failed.append(ip)
+                continue
+            self.log(T('  Hersteller: {0}').format(self.NAME[v]))
+            (done if self.apply_row(ip, row_pw, v) else failed).append(ip)
+        self.log("")
+        summary = T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(len(done), len(failed))
+        self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
+        return not failed
+
+
 class ProbeEngine(RedfishClient):
     """Prüft nur lesend, ob sich Bestandsserver (schon konfigurierte BMCs) erreichen und anmelden lassen:
     Port, TLS-Stufe, Hersteller, Login, Modell, Firmware und ob das Konto Administratorrechte hat.
@@ -1254,6 +1464,55 @@ class ServicesEngineThread(QThread):
         self.result.emit(0 if good else 1)
 
 
+
+
+class FirmwareEngineThread(QThread):
+    line = pyqtSignal(str, str)
+    result = pyqtSignal(int)
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good = FirmwareEngine(log=lambda text, kind="": self.line.emit(text, kind),
+                                  stopped=self.isInterruptionRequested, **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good = False
+        self.result.emit(0 if good else 1)
+
+
+class FirmwareReadThread(QThread):
+    """Liest einmalig das Firmware-Inventar eines Referenzgeräts, ändert nichts."""
+    done = pyqtSignal(object, str, str)     # Liste von Komponenten oder None, Hersteller, Fehlertext
+
+    def __init__(self, parent, ip, user, pw, vendor):
+        super().__init__(parent)
+        self.ip, self.user, self.pw, self.vendor = ip, user, pw, vendor
+
+    def run(self):
+        fe = FirmwareEngine(rows=[], cur_user=self.user, cfg={}, dry=False)
+        try:
+            v = self.vendor or fe.vendor(self.ip)
+            if v == "offline":
+                self.done.emit(None, v, T("Gerät nicht erreichbar."))
+                return
+            if v == "hpe_old":
+                self.done.emit(None, v, T("iLO 3/4: Firmware-Update wird hier nicht unterstützt."))
+                return
+            if v not in fe.NAME:
+                self.done.emit(None, v, T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)."))
+                return
+            user = self.user or fe.DEFAULT_USER[v]
+            inv = fe.inventory(self.ip, user, self.pw)
+            if inv is None:
+                self.done.emit(None, v, "\n".join(fe.fail_lines(T("Firmware-Inventar lesen"), fe.code)))
+            else:
+                self.done.emit(inv, v, "")
+        except Exception as e:
+            self.done.emit(None, "", T('Unerwarteter Fehler: {0!r}').format(e))
 
 
 class BiosReadThread(QThread):

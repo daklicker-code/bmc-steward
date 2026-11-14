@@ -40,8 +40,10 @@ Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nu
 | **2b · Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in die Reiter 2–4 über. |
 | **3 · UEFI-Einstellungen** | Liest die tatsächlich vorhandenen UEFI/BIOS-Attribute von einem Referenzgerät und setzt gewünschte Werte auf allen Servern der Liste. Passwort-, TPM- und Löschattribute sind gesperrt. |
 | **4 · Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
-| **5 · UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
-| **6 · Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
+| **5 · Firmware** | Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar eines Referenzgeräts und spielt dann eine lokale Datei (Multipart-/HTTP-Push) oder eine Datei von einer URL (SimpleUpdate) auf alle Server der Liste – mit Live-Fortschritt und Verifikation. Trockenlauf ist Vorgabe; scharfe Läufe verlangen das Eintippen der Serverzahl. |
+| **6 · UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
+| **Testlabor** | Startet eine Flotte virtueller Dell/HPE/Lenovo/Supermicro-BMCs (`tools/vbmc/`), die sich wie echte verhalten – zum Testen und Vorführen ohne Hardware, mit Start/Status/Stopp direkt im Reiter. |
+| **7 · Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
 
 Dazu kommt:
 
@@ -49,6 +51,7 @@ Dazu kommt:
 - **Profile** merken sich wiederkehrende Einstellungen (nie Passwörter, nie die Serverliste).
 - **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
 - **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch.
+- **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus dem Testlabor-Reiter oder eigenständig über die Kommandozeile.
 - **Modular aufgebaut** (Paket `bmc_steward/`), läuft unter Linux und Windows.
 
 ## Schutz vor Fehlbedienung

@@ -131,6 +131,17 @@ class BMC:
         self.attributes = dict(DELL_ATTRS) if vendor == "dell" else {}
         self.bios = dict(BIOS_ATTRS)
         self.extra = {}
+        # Firmware-Inventar (Name -> {version, updateable}) und laufende Update-Tasks
+        self.firmware = {
+            "BMC": {"version": FW[vendor], "updateable": True,
+                    "name": {"dell": "iDRAC", "hpe": "iLO 5", "hpe_old": "iLO 4",
+                             "smc": "BMC", "lenovo": "XCC"}[vendor]},
+            "BIOS": {"version": "1.8.2", "updateable": True, "name": "BIOS/UEFI"},
+            "NIC.1": {"version": "22.5.9", "updateable": True, "name": "NIC Slot 1"},
+            "PSU.1": {"version": "00.0A.0C", "updateable": False, "name": "Power Supply 1"},
+        }
+        self.tasks = {}                 # id -> {state, percent, target, newver}
+        self._task_seq = 0
         self.lock = threading.Lock()
         self._redfish = []              # [(Server, thread)]
         self._ssh = None                # (socket, thread)
@@ -536,6 +547,26 @@ class Handler(BaseHTTPRequestHandler):
                                    "@Redfish.Settings": {"SettingsObject": {"@odata.id": p + "/Settings"}}})
         if p == sysp + "/Bios/Settings":
             return self.send(200, {"@odata.id": p, "Attributes": {}})
+        # ---- UpdateService / Firmware ----
+        if p == "/redfish/v1/UpdateService":
+            return self.send(200, self.updateservice_doc())
+        if p == "/redfish/v1/UpdateService/FirmwareInventory":
+            members = [{"@odata.id": f"/redfish/v1/UpdateService/FirmwareInventory/{k}"}
+                       for k in b.firmware]
+            return self.send(200, {"@odata.id": p, "Members@odata.count": len(members),
+                                   "Members": members})
+        m = re.match(r"^/redfish/v1/UpdateService/FirmwareInventory/(.+)$", p)
+        if m and m.group(1) in b.firmware:
+            fw = b.firmware[m.group(1)]
+            return self.send(200, {"@odata.id": p, "Id": m.group(1), "Name": fw["name"],
+                                   "Version": fw["version"], "Updateable": fw["updateable"],
+                                   "Status": {"State": "Enabled", "Health": "OK"}})
+        m = re.match(r"^/redfish/v1/TaskService/Tasks/(.+)$", p)
+        if m:
+            return self.task_doc(m.group(1))
+        if p == "/redfish/v1/TaskService":
+            return self.send(200, {"@odata.id": p,
+                                   "Tasks": {"@odata.id": "/redfish/v1/TaskService/Tasks"}})
         return self.send(404, rf_error("Nicht gefunden: " + p))
 
     # -- POST --------------------------------------------------------------
@@ -564,6 +595,12 @@ class Handler(BaseHTTPRequestHandler):
             self.read_raw()
             b.extra["cert"] = True
             return self.send(200, {"ok": True})
+        # ---- Firmware: Multipart-/HTTP-Push und SimpleUpdate ----
+        if p in ("/redfish/v1/UpdateService/update-multipart", "/redfish/v1/UpdateService/update",
+                 "/redfish/v1/UpdateService/FirmwareInventory"):
+            return self.firmware_push()
+        if p == "/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate":
+            return self.firmware_simple_update(self.read_json())
         self.read_raw()
         return self.send(404, rf_error("Aktion nicht gefunden: " + p))
 
@@ -648,6 +685,88 @@ class Handler(BaseHTTPRequestHandler):
                                  "lenovo": "Lenovo"}[b.vendor],
                 "SerialNumber": b.serial, "SKU": b.serial, "PowerState": b.power,
                 "Actions": {"#ComputerSystem.Reset": {"target": p + "/Actions/ComputerSystem.Reset"}}}
+
+    # -- UpdateService / Firmware ------------------------------------------
+    def updateservice_doc(self):
+        p = "/redfish/v1/UpdateService"
+        return {"@odata.id": p, "Id": "UpdateService", "ServiceEnabled": True,
+                "HttpPushUri": p + "/update",
+                "MultipartHttpPushUri": p + "/update-multipart",
+                "FirmwareInventory": {"@odata.id": p + "/FirmwareInventory"},
+                "Actions": {"#UpdateService.SimpleUpdate": {
+                    "target": p + "/Actions/UpdateService.SimpleUpdate",
+                    "TransferProtocol@Redfish.AllowableValues": ["HTTP", "HTTPS", "TFTP", "NFS"]}}}
+
+    @staticmethod
+    def _bump(ver):
+        """Letzte Zahl in der Version erhöhen, damit ein Update sichtbar wird."""
+        m = list(re.finditer(r"\d+", ver))
+        if not m:
+            return ver + ".1"
+        last = m[-1]
+        return ver[:last.start()] + str(int(last.group()) + 1) + ver[last.end():]
+
+    def _new_task(self, target):
+        b = self.bmc
+        with b.lock:
+            b._task_seq += 1
+            tid = str(b._task_seq)
+            comp = target if target in b.firmware else "BMC"
+            b.tasks[tid] = {"state": "Running", "percent": 0, "target": comp,
+                            "newver": self._bump(b.firmware[comp]["version"]), "start": time.monotonic()}
+        threading.Thread(target=self._run_task, args=(tid,), daemon=True).start()
+        return tid
+
+    def _run_task(self, tid):
+        b = self.bmc
+        for pct in (10, 30, 55, 80, 100):
+            time.sleep(0.8)
+            t = b.tasks.get(tid)
+            if not t:
+                return
+            t["percent"] = pct
+        t = b.tasks.get(tid)
+        if t:
+            b.firmware[t["target"]]["version"] = t["newver"]   # Flash übernommen
+            t["state"] = "Completed"
+
+    def send_accepted(self, task_id):
+        body = jbody({"@odata.id": f"/redfish/v1/TaskService/Tasks/{task_id}",
+                      "Id": task_id, "TaskState": "Running", "TaskStatus": "OK"})
+        self.send_response(202)
+        self.send_header("Location", f"/redfish/v1/TaskService/Tasks/{task_id}")
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def firmware_push(self):
+        self.read_raw()                 # Datei verwerfen - der Emulator prüft den Inhalt nicht
+        return self.send_accepted(self._new_task("BMC"))
+
+    def firmware_simple_update(self, data):
+        targets = data.get("Targets") or []
+        comp = "BMC"
+        for tgt in targets:
+            key = str(tgt).rstrip("/").rsplit("/", 1)[-1]
+            if key in self.bmc.firmware:
+                comp = key
+                break
+        if not str(data.get("ImageURI") or "").strip():
+            return self.send(400, rf_error("ImageURI fehlt."))
+        return self.send_accepted(self._new_task(comp))
+
+    def task_doc(self, tid):
+        t = self.bmc.tasks.get(tid)
+        if not t:
+            return self.send(404, rf_error("Task nicht gefunden: " + tid))
+        msg = (f"Flash {t['target']} -> {t['newver']}" if t["state"] == "Completed"
+               else f"Updating {t['target']} ({t['percent']}%)")
+        return self.send(200, {"@odata.id": f"/redfish/v1/TaskService/Tasks/{tid}", "Id": tid,
+                               "TaskState": t["state"], "PercentComplete": t["percent"],
+                               "TaskStatus": "OK",
+                               "Messages": [{"Message": msg, "Severity": "OK"}]})
 
     # -- Konten ------------------------------------------------------------
     def resolve_account(self, token):

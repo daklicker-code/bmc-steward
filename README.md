@@ -40,8 +40,10 @@ Everything is organised into tabs; work through them in order or use only what y
 | **2b · Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to tabs 2–4. |
 | **3 · UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
 | **4 · Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
-| **5 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
-| **6 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
+| **5 · Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
+| **6 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
+| **Test lab** | Starts a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) that behave like the real thing, so you can test and demo BMC-Steward without hardware – start, status and stop right from the tab. |
+| **7 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:
 
@@ -49,6 +51,7 @@ On top of that:
 - **Profiles** remember recurring settings (never passwords, never the server list).
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German.
+- **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the Test lab tab or standalone from the command line.
 - **Modular layout** (package `bmc_steward/`), runs on Linux and Windows.
 
 ## Built to forgive mistakes

@@ -102,6 +102,402 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+# --- Firmware- und Testlabor-Reiter ---
+"Das Update läuft über alle Server der Serverliste (Reiter 2); grüne unter ihrer neuen Adresse. Angemeldet wird mit dem Werksbenutzer.": [
+"The update runs on every server in the list (tab 2); green ones at their new address. Login uses the factory user.",
+"La mise à jour s'exécute sur tous les serveurs de la liste (onglet 2) ; les verts à leur nouvelle adresse. Connexion avec l'utilisateur d'usine.",
+"Es Update lauft über alli Server vo de Liste (Reiter 2); grüeni under ihrer neue Adrässe. Aagmäldet wird mit em Werks-Benutzer."
+],
+"Firmware-Inventar (Referenzgerät)": [
+"Firmware inventory (reference device)",
+"Inventaire du firmware (appareil de référence)",
+"Firmware-Inventar (Referänzgrät)"
+],
+"Liest nur lesend die vorhandenen Komponenten und Versionen eines Geräts. Eine Auswahl in der Tabelle bestimmt, welche Komponenten das Update treffen soll (nichts markiert = der Hersteller entscheidet selbst).": [
+"Reads, read-only, the components and versions present on a device. A selection in the table decides which components the update targets (nothing selected = the vendor decides).",
+"Lit, en lecture seule, les composants et versions présents sur un appareil. Une sélection dans le tableau détermine les composants visés par la mise à jour (rien de sélectionné = le fabricant décide).",
+"Liest nume läsend d Komponänte und Versione vomene Grät. E Uswahl i de Tabälle bestimmt, weli Komponänte s Update trifft (nüt markiert = de Herschteller entscheidet sälber)."
+],
+"Adresse eines Geräts zum Auslesen. Vorschläge aus der Serverliste (Reiter 2).": [
+"Address of a device to read from. Suggestions from the server list (tab 2).",
+"Adresse d'un appareil à lire. Suggestions depuis la liste des serveurs (onglet 2).",
+"Adrässe vomene Grät zum Uslääse. Vorschläg us de Serverliste (Reiter 2)."
+],
+"Inventar lesen": [
+"Read inventory",
+"Lire l'inventaire",
+"Inventar läse"
+],
+"Firmware-Quelle": [
+"Firmware source",
+"Source du firmware",
+"Firmware-Quälle"
+],
+"Datei hochladen (Multipart-/HTTP-Push)": [
+"Upload file (multipart/HTTP push)",
+"Téléverser un fichier (push multipart/HTTP)",
+"Datei ufelade (Multipart-/HTTP-Push)"
+],
+"Von URL laden (SimpleUpdate)": [
+"Load from URL (SimpleUpdate)",
+"Charger depuis une URL (SimpleUpdate)",
+"Vo URL lade (SimpleUpdate)"
+],
+"Firmware-Datei wählen …": [
+"Choose firmware file …",
+"Choisir un fichier firmware …",
+"Firmware-Datei uswähle …"
+],
+"z. B. http://10.20.0.9/firmware/idrac_7.10.exe": [
+"e.g. http://10.20.0.9/firmware/idrac_7.10.exe",
+"p. ex. http://10.20.0.9/firmware/idrac_7.10.exe",
+"z. B. http://10.20.0.9/firmware/idrac_7.10.exe"
+],
+"URL": [
+"URL",
+"URL",
+"URL"
+],
+"Der BMC lädt die Datei selbst von dieser Adresse.": [
+"The BMC downloads the file from this address itself.",
+"Le BMC télécharge lui-même le fichier depuis cette adresse.",
+"De BMC lädt d Datei sälber vo dere Adrässe."
+],
+"Protokoll": [
+"Protocol",
+"Protocole",
+"Protokoll"
+],
+"Übertragungsweg, mit dem der BMC die Datei holt.": [
+"Transfer method the BMC uses to fetch the file.",
+"Méthode de transfert utilisée par le BMC pour récupérer le fichier.",
+"Übertragigswäg, mit dem de BMC d Datei holt."
+],
+"Sofort übernehmen (BMC startet ggf. neu)": [
+"Apply immediately (BMC may restart)",
+"Appliquer immédiatement (le BMC peut redémarrer)",
+"Sofort übernäh (BMC startet eventuell neu)"
+],
+"Erst beim nächsten Neustart": [
+"Only on the next restart",
+"Seulement au prochain redémarrage",
+"Erst bim nächste Neustart"
+],
+"Übernahme": [
+"Apply",
+"Application",
+"Übernahm"
+],
+"Sofort: der BMC flasht und startet ggf. neu. Beim Neustart: wird nur hochgeladen und erst beim nächsten Neustart wirksam.": [
+"Immediately: the BMC flashes and may restart. On restart: only uploaded, takes effect at the next restart.",
+"Immédiatement : le BMC flashe et peut redémarrer. Au redémarrage : seulement téléversé, actif au prochain redémarrage.",
+"Sofort: de BMC flasht und startet eventuell neu. Bim Neustart: wird nume ufeglade und erst bim nächste Neustart wirksam."
+],
+"Achtung: Firmware-Updates sind heikel. Ein unterbrochener BMC-Flash kann einen Server unbrauchbar machen. Nur passende Pakete des Herstellers verwenden, Strom sichern und immer zuerst ein einzelnes Gerät testen.": [
+"Caution: firmware updates are delicate. An interrupted BMC flash can brick a server. Use only matching vendor packages, secure the power, and always test a single device first.",
+"Attention : les mises à jour de firmware sont délicates. Un flash du BMC interrompu peut rendre un serveur inutilisable. N'utilisez que des paquets adaptés du fabricant, sécurisez l'alimentation et testez toujours un seul appareil d'abord.",
+"Achtung: Firmware-Updates sind heikel. En underbrochene BMC-Flash cha en Server unbruuchbar mache. Nume passendi Pakete vom Herschteller näh, de Strom absichere und immer zerscht ei einzigs Grät teste."
+],
+"Firmware-Datei wählen": [
+"Choose firmware file",
+"Choisir un fichier firmware",
+"Firmware-Datei uswähle"
+],
+"Firmware (*.exe *.bin *.fwpkg *.rom *.d7 *.pm *.pldm *.img);;Alle Dateien (*)": [
+"Firmware (*.exe *.bin *.fwpkg *.rom *.d7 *.pm *.pldm *.img);;All files (*)",
+"Firmware (*.exe *.bin *.fwpkg *.rom *.d7 *.pm *.pldm *.img);;Tous les fichiers (*)",
+"Firmware (*.exe *.bin *.fwpkg *.rom *.d7 *.pm *.pldm *.img);;Alli Dateie (*)"
+],
+"Lese Inventar …": [
+"Reading inventory …",
+"Lecture de l'inventaire …",
+"Lise s Inventar …"
+],
+"Komponente": [
+"Component",
+"Composant",
+"Komponänte"
+],
+"Version": [
+"Version",
+"Version",
+"Version"
+],
+"Aktualisierbar": [
+"Updateable",
+"Actualisable",
+"Aktualisierbar"
+],
+"Scharf: Firmware wirklich einspielen": [
+"Live: really flash firmware",
+"Réel : flasher vraiment le firmware",
+"Scharf: Firmware würkli iispiele"
+],
+"Firmware": [
+"Firmware",
+"Firmware",
+"Firmware"
+],
+"{0} Komponenten gelesen ({1}). Zeilen markieren, um das Update auf sie zu begrenzen.": [
+"{0} components read ({1}). Select rows to limit the update to them.",
+"{0} composants lus ({1}). Sélectionnez des lignes pour y limiter la mise à jour.",
+"{0} Komponänte gläse ({1}). Zeile markiere, zum s Update uf si beschränke."
+],
+"Bitte eine Firmware-Datei wählen.": [
+"Please choose a firmware file.",
+"Veuillez choisir un fichier firmware.",
+"Bitte e Firmware-Datei uswähle."
+],
+"Bitte eine URL eintragen.": [
+"Please enter a URL.",
+"Veuillez saisir une URL.",
+"Bitte e URL iitrage."
+],
+"Datei {0}": [
+"file {0}",
+"fichier {0}",
+"Datei {0}"
+],
+"URL {0}": [
+"URL {0}",
+"URL {0}",
+"URL {0}"
+],
+"Es wird Firmware auf die BMCs geschrieben. Ein unterbrochener Flash kann einen Server unbrauchbar machen. Quelle: {0}, Übernahme: {1}.": [
+"Firmware is written to the BMCs. An interrupted flash can brick a server. Source: {0}, apply: {1}.",
+"Du firmware est écrit sur les BMC. Un flash interrompu peut rendre un serveur inutilisable. Source : {0}, application : {1}.",
+"Es wird Firmware uf d BMCs gschribe. En underbrochene Flash cha en Server unbruuchbar mache. Quälle: {0}, Übernahm: {1}."
+],
+"sofort": [
+"immediately",
+"immédiatement",
+"sofort"
+],
+"beim Neustart": [
+"on restart",
+"au redémarrage",
+"bim Neustart"
+],
+"Firmware wirklich einspielen?": [
+"Really flash firmware?",
+"Vraiment flasher le firmware ?",
+"Firmware würkli iispiele?"
+],
+"Fehler: {0}": [
+"Error: {0}",
+"Erreur : {0}",
+"Fähler: {0}"
+],
+"Auf {0} Servern wird jetzt wirklich Firmware eingespielt.": [
+"Firmware will now really be flashed on {0} servers.",
+"Le firmware va maintenant réellement être flashé sur {0} serveurs.",
+"Uf {0} Server wird jetzt würkli Firmware iigspielt."
+],
+"Startet virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs verhalten - zum Testen und Vorführen ohne Hardware. Die hier gezeigten Adressen trägt man im Haupt-Reiter als IP:PORT ein.": [
+"Starts virtual Dell/HPE/Lenovo/Supermicro servers that behave like real BMCs - for testing and demos without hardware. Enter the addresses shown here in the main tab as IP:PORT.",
+"Démarre des serveurs virtuels Dell/HPE/Lenovo/Supermicro qui se comportent comme de vrais BMC - pour tester et faire des démos sans matériel. Saisissez les adresses affichées ici dans l'onglet principal sous la forme IP:PORT.",
+"Startet virtuelli Dell/HPE/Lenovo/Supermicro-Server, wo sich wie echti BMCs verhalte - zum Teste und Vorführe ohni Hardware. D Adrässe wo da aazeigt werdet, treit me im Haupt-Reiter als IP:PORT ii."
+],
+"Flotte zusammenstellen": [
+"Compose fleet",
+"Composer la flotte",
+"Flotte zämestelle"
+],
+"Wie viele Server je angehaktem Hersteller.": [
+"How many servers per ticked vendor.",
+"Combien de serveurs par fabricant coché.",
+"Wie vill Server pro aaghäggte Herschteller."
+],
+"Anzahl je Hersteller": [
+"Count per vendor",
+"Nombre par fabricant",
+"Aazahl pro Herschteller"
+],
+"Basis für die automatischen Loopback-Adressen, z. B. 127.9.0 -> 127.9.0.11, .12, ...": [
+"Base for the automatic loopback addresses, e.g. 127.9.0 -> 127.9.0.11, .12, ...",
+"Base pour les adresses loopback automatiques, p. ex. 127.9.0 -> 127.9.0.11, .12, ...",
+"Basis für di automatische Loopback-Adrässe, z. B. 127.9.0 -> 127.9.0.11, .12, ..."
+],
+"Basis-Adresse": [
+"Base address",
+"Adresse de base",
+"Basis-Adrässe"
+],
+"Redfish-Port. Port 443 bräuchte Root; mit 8443 geht es ohne.": [
+"Redfish port. Port 443 would need root; 8443 works without.",
+"Port Redfish. Le port 443 nécessiterait root ; 8443 fonctionne sans.",
+"Redfish-Port. Port 443 bruichti Root; mit 8443 goht's ohni."
+],
+"Redfish-Port": [
+"Redfish port",
+"Port Redfish",
+"Redfish-Port"
+],
+"UEFI-Konsole aktivieren (echtes SSH + IPMI, braucht Root)": [
+"Enable UEFI console (real SSH + IPMI, needs root)",
+"Activer la console UEFI (SSH + IPMI réels, nécessite root)",
+"UEFI-Konsole aktiviere (echts SSH + IPMI, bruucht Root)"
+],
+"Zusätzlich SSH (22), IPMI-SOL (623) und Redfish auf 443. Diese Ports verlangen Root-Rechte und die Pakete paramiko + pyghmi. Der Start läuft dann über eine Rechteabfrage (pkexec).": [
+"Additionally SSH (22), IPMI-SOL (623) and Redfish on 443. These ports need root rights and the packages paramiko + pyghmi. The start then goes through a privilege prompt (pkexec).",
+"En plus SSH (22), IPMI-SOL (623) et Redfish sur 443. Ces ports nécessitent des droits root et les paquets paramiko + pyghmi. Le démarrage passe alors par une demande de privilèges (pkexec).",
+"Zuesätzlich SSH (22), IPMI-SOL (623) und Redfish uf 443. Die Ports bruuche Root-Rächt und d Pakete paramiko + pyghmi. De Start lauft denn über e Rächtefrog (pkexec)."
+],
+"Flotte starten": [
+"Start fleet",
+"Démarrer la flotte",
+"Flotte starte"
+],
+"Flotte stoppen": [
+"Stop fleet",
+"Arrêter la flotte",
+"Flotte stoppe"
+],
+"Ausgabe der Flotte (Adressen, Werks-Logins, Statusmeldungen) …": [
+"Fleet output (addresses, factory logins, status messages) …",
+"Sortie de la flotte (adresses, identifiants d'usine, messages d'état) …",
+"Usgab vo de Flotte (Adrässe, Werks-Logins, Status-Mäldige) …"
+],
+"Flotte läuft. Adressen stehen unten; mit „Flotte stoppen“ beenden.": [
+"Fleet is running. Addresses are below; stop with “Stop fleet”.",
+"La flotte tourne. Les adresses sont ci-dessous ; arrêtez avec « Arrêter la flotte ».",
+"D Flotte lauft. D Adrässe stönd unde; mit „Flotte stoppe“ beände."
+],
+"Flotte gestoppt.": [
+"Fleet stopped.",
+"Flotte arrêtée.",
+"Flotte gstoppt."
+],
+"tools/vbmc/vbmc.py nicht gefunden. Der Reiter funktioniert nur, wenn BMC-Steward aus dem Quellcode läuft.": [
+"tools/vbmc/vbmc.py not found. This tab only works when BMC-Steward runs from source.",
+"tools/vbmc/vbmc.py introuvable. Cet onglet ne fonctionne que si BMC-Steward s'exécute depuis les sources.",
+"tools/vbmc/vbmc.py nöd gfunde. De Reiter funktioniert nume, wenn BMC-Steward us em Quällcode lauft."
+],
+"Bereit.": [
+"Ready.",
+"Prêt.",
+"Parat."
+],
+"Bitte mindestens einen Hersteller anhaken.": [
+"Please tick at least one vendor.",
+"Veuillez cocher au moins un fabricant.",
+"Bitte mindestens ei Herschteller aahögge."
+],
+"Für die Konsole sind Root-Rechte nötig; pkexec ist nicht verfügbar. Bitte im Terminal starten:": [
+"The console needs root rights; pkexec is not available. Please start it in a terminal:",
+"La console nécessite des droits root ; pkexec n'est pas disponible. Veuillez démarrer dans un terminal :",
+"Für d Konsole bruucht's Root-Rächt; pkexec isch nöd verfüegbar. Bitte im Terminal starte:"
+],
+"automatisch": [
+"automatic",
+"automatique",
+"automatisch"
+],
+"Update starten": [
+"Start update",
+"Démarrer la mise à jour",
+"Update starte"
+],
+"UpdateService lesen": [
+"Read UpdateService",
+"Lire UpdateService",
+"UpdateService läse"
+],
+"  FEHLER: Zeitüberschreitung beim Update": [
+"  ERROR: timeout during update",
+"  ERREUR : délai dépassé pendant la mise à jour",
+"  FÄHLER: Zitüberschritig bim Update"
+],
+"  {0} wird eingespielt (Übernahme: {1}) …": [
+"  {0} is being applied (apply: {1}) …",
+"  {0} en cours d'application (application : {1}) …",
+"  {0} wird iigspielt (Übernahm: {1}) …"
+],
+"  Task: {0}": [
+"  Task: {0}",
+"  Tâche : {0}",
+"  Task: {0}"
+],
+"{0}: {1} → {2}": [
+"{0}: {1} → {2}",
+"{0} : {1} → {2}",
+"{0}: {1} → {2}"
+],
+"  Hochgeladen, wird beim nächsten Neustart übernommen.": [
+"  Uploaded, will be applied at the next restart.",
+"  Téléversé, sera appliqué au prochain redémarrage.",
+"  Ufeglade, wird bim nächste Neustart übernoh."
+],
+"  Update abgeschlossen.": [
+"  Update completed.",
+"  Mise à jour terminée.",
+"  Update abgschlosse."
+],
+"  iLO 3/4: Firmware-Update hier nicht unterstützt (RIBCL), übersprungen.": [
+"  iLO 3/4: firmware update not supported here (RIBCL), skipped.",
+"  iLO 3/4 : mise à jour du firmware non prise en charge ici (RIBCL), ignorée.",
+"  iLO 3/4: Firmware-Update da nöd understützt (RIBCL), übersprunge."
+],
+"  Trockenlauf: würde {0} einspielen (Ziel: {1}, Übernahme: {2})": [
+"  Dry run: would apply {0} (target: {1}, apply: {2})",
+"  Simulation : appliquerait {0} (cible : {1}, application : {2})",
+"  Troggelauf: würd {0} iispiele (Ziel: {1}, Übernahm: {2})"
+],
+"  Firmware aktualisiert: {0}": [
+"  Firmware updated: {0}",
+"  Firmware mis à jour : {0}",
+"  Firmware aktualisiert: {0}"
+],
+"    {0} … {1}%": [
+"    {0} … {1}%",
+"    {0} … {1}%",
+"    {0} … {1}%"
+],
+"  FEHLER: Task nicht mehr lesbar (HTTP {0})": [
+"  ERROR: task no longer readable (HTTP {0})",
+"  ERREUR : tâche illisible (HTTP {0})",
+"  FÄHLER: Task nüme läsbar (HTTP {0})"
+],
+"  FEHLER: Datei nicht lesbar: {0}": [
+"  ERROR: file not readable: {0}",
+"  ERREUR : fichier illisible : {0}",
+"  FÄHLER: Datei nöd läsbar: {0}"
+],
+"  FEHLER: Update fehlgeschlagen ({0})": [
+"  ERROR: update failed ({0})",
+"  ERREUR : échec de la mise à jour ({0})",
+"  FÄHLER: Update fählgschlage ({0})"
+],
+"iLO 3/4: Firmware-Update wird hier nicht unterstützt.": [
+"iLO 3/4: firmware update is not supported here.",
+"iLO 3/4 : la mise à jour du firmware n'est pas prise en charge ici.",
+"iLO 3/4: Firmware-Update wird da nöd understützt."
+],
+"Firmware-Inventar lesen": [
+"Read firmware inventory",
+"Lire l'inventaire du firmware",
+"Firmware-Inventar läse"
+],
+"5 · Firmware": [
+"5 · Firmware",
+"5 · Firmware",
+"5 · Firmware"
+],
+"6 · UEFI-Konsole": [
+"6 · UEFI console",
+"6 · Console UEFI",
+"6 · UEFI-Konsole"
+],
+"7 · Hilfe": [
+"7 · Help",
+"7 · Aide",
+"7 · Hilf"
+],
+"Testlabor": [
+"Test lab",
+"Labo de test",
+"Teschtlabor"
+],
 "Tesseract brauchte zu lange.": [
 "Tesseract took too long.",
 "Tesseract a pris trop de temps.",
