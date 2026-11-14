@@ -433,28 +433,9 @@ def scan_decode(jpeg, mode, dbg=None):
         gray = grow(gray0)
         votes = Counter()
         out, errs = [], []
-        # 1. Textzeile im Foto suchen und gezielt lesen (hilft bei Hintergrund mit Muster)
-        line = locate_line(gray0)
-        if dbg:
-            dbg.add("Textzeile: " + (f"gefunden, Ausschnitt {line.width()}x{line.height()}" if line else "nicht gefunden"))
-        for name, im in (line_variants(line) if line else ()):
-            path = os.path.join(d, name + ".png")
-            im.save(path, "PNG")
-            if dbg:
-                dbg.image(name + ".png", im)
-            for psm in ("7", "8", "13"):
-                found, err = tesseract_run(exe, path, psm)
-                if dbg:
-                    dbg.add(f"tesseract {name} psm {psm}: Kandidaten {dbg.cands(found)}"
-                            + (f", Fehler: {err}" if err else ""))
-                if err and err not in errs:
-                    errs.append(err)
-                for t in found:
-                    t = t.strip(" |_—-~“”\"'`.,;:")
-                    if plausible(t) and len(t) <= 200:
-                        votes[t] += 1
-                        if t not in out:
-                            out.append(t)
+        # Der gelbe Rahmen fasst die Zeile bereits eng ein: der ganze Ausschnitt wird gelesen.
+        # (Ein früheres Zuschneiden auf ein erkanntes „Textband" schnitt die Zeichenköpfe ab und
+        #  machte aus sauberen Ziffern Matsch – daher entfernt.)
         bw, thr = binarize(gray)
         if dbg:
             dbg.add(f"Vorbereitung: Graustufen {gray.width()}x{gray.height()} (Faktor {scale}), Otsu-Schwelle {thr}")
@@ -481,7 +462,8 @@ def scan_decode(jpeg, mode, dbg=None):
                 if err and err not in errs:
                     errs.append(err)
                 for t in found:
-                    if len(t) <= 200:
+                    t = t.strip(" |_—-~“”\"'`.,;:")       # Randmüll weg (tesseract setzt gern ein führendes _ oder —)
+                    if plausible(t) and len(t) <= 200:
                         votes[t] += 1
                         if t not in out:
                             out.append(t)
