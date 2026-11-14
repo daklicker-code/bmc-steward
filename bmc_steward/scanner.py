@@ -43,7 +43,7 @@ SCAN_HTML = """<!doctype html>
  .seg label{flex:1;text-align:center;padding:7px 4px;border:1px solid #556;border-radius:8px;font-size:15px}
  .seg input{display:none}
  .seg label:has(input:checked){background:#2f7fd1;border-color:#2f7fd1;font-weight:bold}
- #area{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;background:#000;border-radius:8px;overflow:hidden}
+ #area{flex:none;display:flex;align-items:center;justify-content:center;position:relative;background:#000;border-radius:8px;overflow:hidden}
  #wrap{position:relative;background:#000;overflow:hidden;touch-action:manipulation}
  #v{display:block;width:100%;height:100%;object-fit:cover}
  #box{position:absolute;border:1px solid #ffd54a;box-shadow:0 0 0 9999px rgba(0,0,0,.6);pointer-events:none;box-sizing:border-box}
@@ -93,17 +93,17 @@ const L=de?{shot:"Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …",no
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
 $("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
 say(L.tip);$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
-const SIZE={s:[.8,.28],m:[.96,.46],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
-const BAND=0.46;      // Höhe des Vorschau-Bandes als Anteil der Breite; das Kamerabild wird oben/unten beschnitten
+const SIZE={s:[.82,.5],m:[.96,.75],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
+const BAND=0.30;      // Höhe des Kamerastreifens als Anteil der Breite; kurzer Streifen, oben/unten beschnitten, keine schwarzen Ränder
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
 function fit(){return false}      // immer „cover": das Band zeigt einen breiten Streifen, nicht das ganze Hochkantbild
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
- const AW=$("area").clientWidth,AH=$("area").clientHeight;
- const w=AW,h=Math.min(AH,Math.round(AW*BAND));
+ const AW=$("area").clientWidth, h=Math.round(AW*BAND);
  $("v").style.objectFit="cover";
- $("wrap").style.width=w+"px";$("wrap").style.height=h+"px";box();
+ $("area").style.height=h+"px";                 // Fläche umschließt den Streifen -> keine schwarzen Balken
+ $("wrap").style.width=AW+"px";$("wrap").style.height=h+"px";box();
 }
 function geo(){
  const v=$("v"),W=$("wrap").clientWidth,H=$("wrap").clientHeight,s=(fit()?Math.min:Math.max)(W/v.videoWidth,H/v.videoHeight);
@@ -206,6 +206,7 @@ def tesseract_run(exe, path, psm):
     found = []
     for line in r.stdout.splitlines():
         line = " ".join(line.split())
+        line = line.replace("—", "-").replace("–", "-").replace("‐", "-").replace("‑", "-")  # OCR-Gedankenstriche -> Bindestrich
         if plausible(line):
             found.append(line)
         found.extend(w for w in line.split(" ") if plausible(w) and w != line)
