@@ -38,6 +38,18 @@ except ImportError:
     pyte = None
 
 
+try:                                    # SSH-Textkonsole (Dell/HPE/Lenovo), plattformunabhängig
+    import paramiko
+except ImportError:
+    paramiko = None
+
+
+try:                                    # IPMI-Serial-over-LAN (Supermicro), plattformunabhängig
+    from pyghmi.ipmi import console as ipmiconsole
+except ImportError:
+    ipmiconsole = None
+
+
 
 # Pfad der HTML5-Konsole je Hersteller (nach der Anmeldung); Lenovo: Startseite, dort „Remote Console“
 CONSOLE_PATH = {"dell": "/console", "hpe": "/irc.html", "hpe_old": "/irc.html",
@@ -287,101 +299,153 @@ class TermView(QWidget):
 
 
 
-class SerialSession:
-    """Startet ipmitool (SOL) oder ssh (über sshpass) in einem Pseudo-Terminal und füllt eine TermView."""
+class SerialSession(QObject):
+    """Textkonsole ohne externe Programme: SSH über paramiko (Dell/HPE/Lenovo),
+    IPMI-Serial-over-LAN über pyghmi (Supermicro). Füllt eine TermView.
+    Läuft unter Linux und Windows gleich."""
+
+    _feed = pyqtSignal(bytes)       # Daten vom BMC -> TermView (immer im GUI-Thread)
+    _done = pyqtSignal(object)      # Verbindung von der Gegenseite beendet (Code oder None)
 
     def __init__(self, view, on_end):
+        super().__init__()
         self.view, self.on_end = view, on_end
-        self.proc = self.master = self.notifier = self.timer = None
-        self.deact = None
+        self.proc = None            # Sitzungsobjekt, solange verbunden (dient als „läuft"-Flag)
+        self.reader = None
+        self._write = None          # Funktion zum Senden von Bytes an den BMC
+        self._close = None          # Funktion zum Schließen der Verbindung
+        self._feed.connect(self.view.feed)
+        self._done.connect(self._finish)
 
     @staticmethod
     def missing(method, vendor):
-        """Fehlende Programme für das Verfahren; leer = alles da."""
-        need = ["ipmitool"] if method == "ipmitool" else ["ssh", "sshpass"]
-        return [n for n in need if not shutil.which(n)]
+        """Fehlende Python-Pakete für das Verfahren; leere Liste = alles da."""
+        if method == "ipmitool":
+            return [] if ipmiconsole is not None else ["python-pyghmi"]
+        return [] if paramiko is not None else ["python-paramiko"]
 
     def start(self, method, ip, user, pw, vendor):
-        import fcntl
-        import pty
-        import termios
         host = ip.strip("[]")
-        env = dict(os.environ, TERM="xterm", LANG="C.UTF-8")
         if method == "ipmitool":
-            argv = ["ipmitool", "-I", "lanplus", "-H", host, "-U", user, "-E", "sol", "activate"]
-            env["IPMI_PASSWORD"] = pw                           # nicht in der Prozessliste sichtbar
-            self.deact = (["ipmitool", "-I", "lanplus", "-H", host, "-U", user, "-E", "sol", "deactivate"], env)
+            self._start_sol(host, user, pw)
         else:
-            argv = ["sshpass", "-e", "ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new",
-                    "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no",
-                    "-o", "ConnectTimeout=10"]
-            if vendor == "hpe_old":                             # iLO 3/4 sprechen nur alte SSH-Verfahren
-                argv += ["-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
-                         "-o", "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1",
-                         "-o", "Ciphers=+aes128-cbc,aes256-cbc"]
-            argv += [f"{user}@{host}", SSH_SOL_CMD[vendor]]
-            env["SSHPASS"] = pw
-            self.deact = None
-        self.master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", self.view.rows, self.view.cols, 0, 0))
-        self.proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, env=env,
-                                     start_new_session=True, close_fds=True)
-        os.close(slave)
-        self.notifier = QSocketNotifier(self.master, QSocketNotifier.Type.Read)
-        self.notifier.activated.connect(self.readable)
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.poll)
-        self.timer.start(500)
+            self._start_ssh(host, user, pw, vendor)
 
-    def readable(self, *_):
+    # ---- SSH (paramiko) ----
+    def _start_ssh(self, host, user, pw, vendor):
+        cli = paramiko.SSHClient()
+        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kw = dict(hostname=host, username=user, password=pw, timeout=10,
+                  allow_agent=False, look_for_keys=False, banner_timeout=15, auth_timeout=15)
+        if vendor == "hpe_old":                 # iLO 3/4 sprechen nur alte SSH-Verfahren
+            kw["disabled_algorithms"] = {"pubkeys": ["rsa-sha2-256", "rsa-sha2-512"]}
         try:
-            data = os.read(self.master, 65536)
-        except OSError:
-            data = b""
-        if data:
-            self.view.feed(data)
-        else:
-            self.poll()
-
-    def poll(self):
-        if self.proc and self.proc.poll() is not None:
-            self.stop(ended=True)
-
-    def write(self, data):
-        if self.master is not None:
+            cli.connect(**kw)
+            tr = cli.get_transport()
+            chan = tr.open_session(timeout=10)
+            chan.get_pty(term="xterm", width=self.view.cols, height=self.view.rows)
+            chan.exec_command(SSH_SOL_CMD[vendor])
+        except Exception as e:
             try:
-                os.write(self.master, data)
-            except OSError:
+                cli.close()
+            except Exception:
                 pass
+            raise OSError(str(e))
+        self.proc = cli
+        self._write = lambda d: chan.sendall(d)
+
+        def _close():
+            try:
+                chan.close()
+            finally:
+                cli.close()
+        self._close = _close
+        self.reader = _ReaderThread(lambda: self._ssh_loop(chan))
+        self.reader.start()
+
+    def _ssh_loop(self, chan):
+        code = None
+        try:
+            while True:
+                data = chan.recv(65536)
+                if not data:
+                    break
+                self._feed.emit(data)
+        except Exception:
+            pass
+        finally:
+            try:
+                code = chan.recv_exit_status()
+            except Exception:
+                code = None
+        self._done.emit(code)
+
+    # ---- IPMI-SOL (pyghmi) ----
+    def _start_sol(self, host, user, pw):
+        def out(data):                           # wird vom pyghmi-Thread gerufen
+            if isinstance(data, str):
+                data = data.encode("latin-1", "replace")
+            if isinstance(data, (bytes, bytearray)):
+                self._feed.emit(bytes(data))
+        try:
+            sol = ipmiconsole.Console(bmc=host, userid=user, password=pw,
+                                      iohandler=out, force=True)
+        except Exception as e:
+            raise OSError(str(e))
+        self.proc = sol
+        self._write = lambda d: sol.send_data(d)
+        self._close = lambda: sol.close()
+        self.reader = _ReaderThread(lambda: self._sol_loop(sol))
+        self.reader.start()
+
+    def _sol_loop(self, sol):
+        try:
+            sol.main_loop()
+        except Exception:
+            pass
+        self._done.emit(None)
+
+    # ---- gemeinsam ----
+    def write(self, data):
+        if self._write is not None:
+            try:
+                self._write(data)
+            except Exception:
+                pass
+
+    def _finish(self, code):
+        """Gegenseite hat beendet (aus dem Lese-Thread gemeldet)."""
+        if self.proc is None:                    # schon per stop() getrennt
+            return
+        self.proc = None
+        self._write = self._close = None
+        self.on_end(code)
 
     def stop(self, ended=False):
-        if self.timer:
-            self.timer.stop()
-        if self.notifier:
-            self.notifier.setEnabled(False)
-        if self.proc and self.proc.poll() is None:
-            if self.deact:                                       # SOL-Sitzung am BMC freigeben
-                try:
-                    subprocess.run(self.deact[0], env=self.deact[1], timeout=6, capture_output=True)
-                except (OSError, subprocess.SubprocessError):
-                    pass
+        """Vom Benutzer getrennt: schließt die Verbindung, ohne on_end auszulösen."""
+        self.proc = None
+        if self._close:
             try:
-                os.killpg(self.proc.pid, signal.SIGTERM)
-                self.proc.wait(timeout=3)
-            except (OSError, subprocess.SubprocessError):
-                try:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
-                except OSError:
-                    pass
-        if self.master is not None:
-            try:
-                os.close(self.master)
-            except OSError:
+                self._close()
+            except Exception:
                 pass
-        code = self.proc.returncode if self.proc else None
-        self.proc = self.master = self.notifier = self.timer = None
+        self._write = self._close = None
+        if self.reader:
+            self.reader.wait(3000)
+            self.reader = None
         if ended:
-            self.on_end(code)
+            self.on_end(None)
+
+
+class _ReaderThread(QThread):
+    """Führt eine blockierende Lese-/Sitzungsschleife im Hintergrund aus."""
+
+    def __init__(self, target):
+        super().__init__()
+        self._target = target
+
+    def run(self):
+        self._target()
 
 
 
@@ -437,8 +501,8 @@ class ConsoleMixin:
         self.con_mode.currentIndexChanged.connect(self.console_mode_changed)
         self.con_method = QComboBox()
         self.con_method.addItem(T("Automatisch"), "auto")
-        self.con_method.addItem("IPMI-SOL (ipmitool)", "ipmitool")
-        self.con_method.addItem("SSH (sshpass)", "ssh")
+        self.con_method.addItem("IPMI-SOL", "ipmitool")
+        self.con_method.addItem("SSH", "ssh")
         self.con_term = QComboBox()
         self.con_term.addItem("UTF-8 / VT-UTF8", False)
         self.con_term.addItem("ANSI (CP437)", True)
@@ -477,10 +541,10 @@ class ConsoleMixin:
         pk = QGroupBox(T("Benötigte Pakete"))
         pl = QVBoxLayout(pk)
         row = QHBoxLayout()
-        pkgs = [("QtWebEngine", WEBENGINE, "python-pyqt6-webengine")]
-        if not WINDOWS:
-            pkgs += [("pyte", bool(pyte), "python-pyte"), ("ipmitool", bool(shutil.which("ipmitool")), "ipmitool"),
-                     ("sshpass", bool(shutil.which("sshpass")), "sshpass"), ("ssh", bool(shutil.which("ssh")), "openssh")]
+        pkgs = [("QtWebEngine", WEBENGINE, "python-pyqt6-webengine"),
+                ("pyte", bool(pyte), "python-pyte"),
+                ("paramiko", paramiko is not None, "python-paramiko"),
+                ("pyghmi", ipmiconsole is not None, "python-pyghmi")]
         lacking = []
         for name, ok, pkg in pkgs:
             lab = QLabel(("✔ " if ok else "❗ ") + name)
@@ -492,12 +556,17 @@ class ConsoleMixin:
         row.addStretch()
         pl.addLayout(row)
         if lacking:
-            hint = QLabel(T("Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):")
-                          + "\n    sudo pacman -S " + " ".join(lacking) + "      (Arch/CachyOS)")
+            if WINDOWS:
+                pip = {"python-pyqt6-webengine": "PyQt6-WebEngine", "python-pyte": "pyte",
+                       "python-paramiko": "paramiko", "python-pyghmi": "pyghmi"}
+                cmd = "    pip install " + " ".join(pip.get(p, p) for p in lacking)
+            else:
+                cmd = "    sudo pacman -S " + " ".join(lacking) + "      (Arch/CachyOS)"
+            hint = QLabel(T("Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):") + "\n" + cmd)
             hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             pl.addWidget(hint)
         pk.setToolTip(T("✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\n"
-                        "Bild: QtWebEngine · Text: pyte + ipmitool (Supermicro) bzw. ssh + sshpass (Dell/HPE/Lenovo)."))
+                        "Bild: QtWebEngine · Text: pyte + pyghmi (Supermicro-SOL) bzw. paramiko (SSH, Dell/HPE/Lenovo)."))
 
         self.con_connect = QPushButton(T("Verbinden"))
         self.con_connect.setMinimumHeight(30)
@@ -783,21 +852,19 @@ class ConsoleMixin:
 
     # ---------- Textkonsole ----------
     def console_open_serial(self, ip, user, pw, vendor):
-        if WINDOWS:
-            self.console_fail(T("Die Textkonsole läuft nur unter Linux."))
-            return
         if not pyte:
-            self.console_fail(T("Für die Textkonsole fehlt „pyte“: sudo pacman -S python-pyte  (Arch/CachyOS) "
-                                "bzw. pip install pyte"))
+            self.console_fail(T("Für die Textkonsole fehlt „pyte“: pip install pyte "
+                                "(unter Arch/CachyOS: sudo pacman -S python-pyte)"))
             return
         method = self.con_method.currentData()
         if method == "auto":
-            method = "ipmitool" if vendor == "smc" or vendor not in SSH_SOL_CMD or not shutil.which("sshpass") \
-                else "ssh"
+            method = "ipmitool" if vendor == "smc" or vendor not in SSH_SOL_CMD else "ssh"
         lacking = SerialSession.missing(method, vendor)
         if lacking:
-            self.console_fail(T("Es fehlt: {0}. Installation: sudo pacman -S {1}  (Arch/CachyOS)").format(
-                ", ".join(lacking), " ".join(lacking)))
+            pip = {"python-paramiko": "paramiko", "python-pyghmi": "pyghmi"}
+            names = [pip.get(p, p) for p in lacking] if WINDOWS else lacking
+            how = ("pip install " if WINDOWS else "sudo pacman -S ") + " ".join(names)
+            self.console_fail(T("Es fehlt: {0}. Installation: {1}").format(", ".join(names), how))
             return
         if method == "ssh" and vendor not in SSH_SOL_CMD:
             self.console_fail(T("Für diesen Hersteller gibt es kein SSH-Verfahren, bitte IPMI-SOL wählen."))
@@ -815,7 +882,7 @@ class ConsoleMixin:
         self.term.setFocus()
         self.console_set_status(T("Textkonsole verbunden ({0}). In das schwarze Feld klicken, dann tippen. "
                                   "Bleibt es schwarz, ist im UEFI die „Console Redirection“ aus oder die Größe falsch.")
-                                .format("ipmitool" if method == "ipmitool" else "SSH"))
+                                .format("IPMI-SOL" if method == "ipmitool" else "SSH"))
 
     def console_send(self, data):
         if self.con_serial.proc:

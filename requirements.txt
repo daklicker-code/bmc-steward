@@ -1,5 +1,7 @@
 # BMC-Steward: benoetigt zusaetzlich Python 3.9+ (unter Linux fuer den DHCP-Reiter dnsmasq)
 PyQt6>=6.4
 # Optional fuer die UEFI-Konsole (Reiter 5):
-# PyQt6-WebEngine
-# pyte
+# PyQt6-WebEngine     # Bild: eingebettete Web-Konsole
+# pyte                # Text: Terminal-Darstellung
+# paramiko            # Text: SSH-Konsole (Dell/HPE/Lenovo)
+# pyghmi              # Text: IPMI-Serial-over-LAN (Supermicro)

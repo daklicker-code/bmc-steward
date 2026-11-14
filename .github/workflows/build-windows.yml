@@ -19,11 +19,11 @@ jobs:
       - name: Abhängigkeiten
         run: |
           pip install -r requirements.txt
-          pip install PyQt6-WebEngine pyte
+          pip install PyQt6-WebEngine pyte paramiko pyghmi
           pip install pyinstaller
 
       - name: EXE bauen
-        run: pyinstaller --onefile --windowed --name bmc-steward bmc-steward.py
+        run: pyinstaller --onefile --windowed --name bmc-steward --collect-submodules pyghmi bmc-steward.py
 
       - name: Artefakt hochladen
         uses: actions/upload-artifact@v4
