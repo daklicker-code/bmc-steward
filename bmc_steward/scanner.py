@@ -51,18 +51,16 @@ SCAN_HTML = """<!doctype html>
  button.main{width:100%;flex:none;background:#d9534f;border-color:#d9534f;font-weight:bold}
  button.ok{background:#3fa45b;border-color:#3fa45b;font-weight:bold;white-space:nowrap}
  button.small{padding:6px 12px}
- #res{flex:none;display:flex;gap:6px;overflow-x:auto}
- #res:empty{display:none}
- #res button{white-space:nowrap;font-family:ui-monospace,monospace;padding:6px 10px}
  #msg{flex:none;min-height:1.3em;font-size:14px;line-height:1.3;max-height:2.7em;overflow:hidden}
  #ctl{flex:none;display:flex;gap:8px;align-items:center}
  #ctl:empty{display:none}
  #ctl input[type=range]{flex:1}
- #row{flex:none;display:flex;gap:6px}
- #val{flex:1;min-width:0}
+ #row{flex:none;display:flex;flex-direction:column;gap:8px}
+ #val{width:100%;box-sizing:border-box}
+ #send{align-self:center;min-width:55%}
  #cmp{display:none;flex:none;flex-direction:column;gap:3px;align-items:stretch}
  #prev{display:block;width:100%;max-height:20vh;object-fit:contain;border-radius:6px;border:1px solid #556;background:#000}
- #big{font-family:ui-monospace,monospace;font-size:1.7rem;font-weight:bold;letter-spacing:.04em;word-break:break-all;text-align:center;line-height:1.1;min-height:1.2em}
+ #big{font-family:ui-monospace,monospace;font-size:1.7rem;font-weight:bold;letter-spacing:.22em;word-break:break-all;text-align:center;line-height:1.15;min-height:1.2em}
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
 <div class="seg">
@@ -78,7 +76,6 @@ SCAN_HTML = """<!doctype html>
 <div id="ctl"><input type="range" id="zoom" style="display:none"><button class="small" id="torch" style="display:none">💡</button></div>
 <button class="main" id="shot">Aufnehmen</button>
 <div id="cmp"><img id="prev" alt=""><div id="big"></div></div>
-<div id="res"></div>
 <div id="row"><input type="text" id="val" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
  placeholder="Passwort"><button class="ok" id="send">Übernehmen</button></div>
 <div id="msg"></div>
@@ -142,15 +139,14 @@ $("shot").onclick=async()=>{
   k=Math.min(1,3200/Math.max(sw,sh)),c=document.createElement("canvas");
  c.width=Math.max(1,Math.round(sw*k));c.height=Math.max(1,Math.round(sh*k));
  c.getContext("2d").drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);
- say(L.busy);$("res").innerHTML="";
+ say(L.busy);
  c.toBlob(async b=>{
   if(prevUrl)URL.revokeObjectURL(prevUrl);prevUrl=URL.createObjectURL(b);$("prev").src=prevUrl;$("cmp").style.display="flex";$("big").textContent="";
   try{
    const r=await fetch(base+"decode?mode="+pick("m"),{method:"POST",body:b,headers:{"X-Client":JSON.stringify({win:[innerWidth,innerHeight],video:[v.videoWidth,v.videoHeight],wrap:[Math.round($("wrap").clientWidth),Math.round($("wrap").clientHeight)],crop:[sx,sy,sw,sh],out:[c.width,c.height],size:pick("c"),zoom:$("zoom")?$("zoom").value:null})}}),j=await r.json();
    if(j.error){say(j.error,"err");return}
    if(!j.texts.length){say(L.none+(j.info||""),"err");return}
-   say("");$("big").textContent=j.texts[0];
-   j.texts.forEach((t,i)=>{const e=document.createElement("button");e.textContent=t;e.onclick=()=>{$("val").value=t;$("big").textContent=t};$("res").appendChild(e);if(!i)$("val").value=t});
+   say("");$("big").textContent=j.texts[0];$("val").value=j.texts[0];   // nur der beste Treffer
   }catch(e){say(L.fail+e,"err")}
  },"image/jpeg",0.95);
 };
@@ -158,7 +154,7 @@ $("send").onclick=async()=>{
  const t=$("val").value.trim();if(!t){say(L.empty,"err");return}
  try{
   const r=await fetch(base+"set",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:t})}),j=await r.json();
-  if(j.ok){$("val").value="";$("res").innerHTML="";$("cmp").style.display="none";$("big").textContent="";if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null}say(L.sent+j.row,"good")}else say(L.nosend,"err");
+  if(j.ok){$("val").value="";$("cmp").style.display="none";$("big").textContent="";if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null}say(L.sent+j.row,"good")}else say(L.nosend,"err");
  }catch(e){say(L.fail+e,"err")}
 };
 cam();
