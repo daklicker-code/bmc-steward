@@ -28,18 +28,28 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 
 </details>
 
-## Features
+## What BMC-Steward does
 
-- Modular layout (package `bmc_steward/`), runs on Linux and Windows
-- Built-in DHCP server for a separate staging switch (dnsmasq on Linux, built-in on Windows)
-- Server list with validation, CSV import/export, profiles for recurring settings
-- Dry run that shows every call without changing anything
-- Servers can be configured one by one; finished rows turn green and are skipped
-- Optional UEFI/BIOS settings, read from a real reference device
-- Optional management services across the list: NTP, syslog, LDAP/AD with group-to-role mapping, HTTPS certificate import
-- Existing servers (tab 2b): enter address, port, user and password per server and run a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights); successful servers are handed over to tabs 2–4
-- UEFI console (tab 5): shows a server's UEFI/BIOS through the BMC, as embedded HTML5 console, text console (SOL/SSH) or in the default browser; untested on real hardware
-- Interface in German, English, French and Swiss German
+Everything is organised into tabs; work through them in order or use only what you need.
+
+| Tab | What it does |
+|---|---|
+| **1 · DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list with one click. |
+| **2 · Configure servers** | The core: creates the new administrator, sets the hostname and switches the BMC to a static IP (address, subnet mask, gateway). Servers can be done one after another; finished rows turn green and are skipped on the next run. |
+| **↳ Phone scanner** | Opens a camera-based input from tab 2: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
+| **2b · Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to tabs 2–4. |
+| **3 · UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
+| **4 · Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
+| **5 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
+| **6 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
+
+On top of that:
+
+- **Dry run** shows every call without changing anything (the default).
+- **Profiles** remember recurring settings (never passwords, never the server list).
+- **CSV import/export** of the server list, straight from an Excel export too.
+- **Multilingual:** German, English, French, Swiss German.
+- **Modular layout** (package `bmc_steward/`), runs on Linux and Windows.
 
 ## Built to forgive mistakes
 
