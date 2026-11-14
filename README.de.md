@@ -28,19 +28,28 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 
 </details>
 
-## Funktionen
+## Was BMC-Steward kann
 
-- Modular aufgebaut (Paket `bmc_steward/`), läuft unter Linux und Windows
-- Eingebauter DHCP-Server für einen getrennten Staging-Switch (unter Linux dnsmasq, unter Windows
-  eingebaut)
-- Serverliste mit Prüfung der Eingaben, CSV-Import und -Export, Profile für wiederkehrende Einstellungen
-- Trockenlauf, der jeden Aufruf zeigt, ohne etwas zu ändern
-- Server lassen sich einzeln nacheinander konfigurieren; fertige Zeilen werden grün und übersprungen
-- Optional UEFI/BIOS-Einstellungen, gelesen von einem echten Referenzgerät
-- Optionale Verwaltungsdienste für die ganze Liste: NTP, Syslog, LDAP/AD mit Gruppen-Rollen-Zuordnung, HTTPS-Zertifikat-Import
-- Bestandsserver (Reiter 2b): Adresse, Port, Benutzer und Passwort je Server eintragen und die Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte); erfolgreiche Server gehen in die Reiter 2–4 über
-- UEFI-Konsole (Reiter 5): zeigt das UEFI/BIOS eines Servers über den BMC, als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser; an echter Hardware noch ungetestet
-- Oberfläche in Deutsch, Englisch, Französisch und Schweizerdeutsch
+Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nur, was man braucht.
+
+| Reiter | Funktion |
+|---|---|
+| **1 · DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern per Klick in die Serverliste. |
+| **2 · Server konfigurieren** | Das Kernstück: legt den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf eine feste IP (Adresse, Subnetzmaske, Gateway) um. Server lassen sich nacheinander abarbeiten; fertige Zeilen werden grün und beim nächsten Lauf übersprungen. |
+| **↳ Handy-Scanner** | Öffnet aus Reiter 2 eine kameragestützte Eingabe: Das Handy (im selben Netz oder per USB-Tethering/Hotspot verbunden) scannt Barcode oder Text (OCR) vom Geräteaufkleber, der Wert landet direkt im Passwortfeld. Es wird kein Foto auf dem Handy gespeichert, die Verbindung läuft verschlüsselt über einen geheimen Link. |
+| **2b · Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in die Reiter 2–4 über. |
+| **3 · UEFI-Einstellungen** | Liest die tatsächlich vorhandenen UEFI/BIOS-Attribute von einem Referenzgerät und setzt gewünschte Werte auf allen Servern der Liste. Passwort-, TPM- und Löschattribute sind gesperrt. |
+| **4 · Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
+| **5 · UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
+| **6 · Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
+
+Dazu kommt:
+
+- **Trockenlauf** zeigt jeden Aufruf, ohne etwas zu ändern (voreingestellt).
+- **Profile** merken sich wiederkehrende Einstellungen (nie Passwörter, nie die Serverliste).
+- **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
+- **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch.
+- **Modular aufgebaut** (Paket `bmc_steward/`), läuft unter Linux und Windows.
 
 ## Schutz vor Fehlbedienung
 
