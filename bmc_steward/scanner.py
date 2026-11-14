@@ -728,12 +728,13 @@ class ScannerDialog(QDialog):
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumHeight(90)
-        tools = scan_tools()
-        missing = [n for n, ok in tools.items() if not ok and n != "qrencode"]
-        hint = QLabel(T("Hilfsprogramme am PC: Barcode braucht zbar, Texterkennung braucht tesseract.") + (
-            "\n" + T("Es fehlt: {0}").format(", ".join(missing)) + "\nsudo pacman -S zbar tesseract tesseract-data-eng"
-            if missing else ""))
-        hint.setWordWrap(True)
+        self.tools_lbl = QLabel()
+        self.tools_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self.tools_lbl.setWordWrap(True)
+        self.tools_recheck = QPushButton(T("erneut prüfen"))
+        self.tools_recheck.setToolTip(T("Nach dem Installieren eines Pakets erneut prüfen – ohne Neustart."))
+        self.tools_recheck.clicked.connect(self.refresh_tools)
+        self.refresh_tools()
         intro = QLabel(T("Das Handy zeigt nur die Kamera. Bilder werden nicht auf dem Handy gespeichert: Der PC liest "
                          "den Text und verwirft das Bild sofort. Der Wert landet im Feld „Passwort“ der markierten "
                          "Zeile (sonst der ersten ohne Passwort); danach springt die Markierung eine Zeile weiter."))
@@ -763,11 +764,38 @@ class ScannerDialog(QDialog):
         lay.addLayout(row2)
         lay.addLayout(row3)
         lay.addWidget(self.wait_bar)
-        for w in (self.qr_wifi, self.wifi_info, self.qr, self.url, self.state, hint, self.log):
+        for w in (self.qr_wifi, self.wifi_info, self.qr, self.url, self.state):
             lay.addWidget(w)
+        toolsrow = QHBoxLayout()
+        toolsrow.addWidget(self.tools_lbl, 1)
+        toolsrow.addWidget(self.tools_recheck, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(toolsrow)
+        lay.addWidget(self.log)
         self.way.currentIndexChanged.connect(self.fill_ifaces)
         self.state.setText(T("Gestoppt"))
         self.fill_ifaces()
+
+    def refresh_tools(self):
+        """Prüft je Hilfsprogramm, ob es am PC installiert ist, und zeigt ✓/✗ mit Zweck."""
+        roles = {"openssl": T("HTTPS-Zertifikat (zum Starten nötig)"),
+                 "zbarimg": T("Barcode (Paket „zbar“)"),
+                 "tesseract": T("Texterkennung (OCR)"),
+                 "qrencode": T("QR-Code zum Verbinden")}
+        pkg = {"openssl": "openssl", "zbarimg": "zbar",
+               "tesseract": "tesseract tesseract-data-eng", "qrencode": "qrencode"}
+        order = ("openssl", "zbarimg", "tesseract", "qrencode")
+        t = scan_tools()
+        rows = []
+        for k in order:
+            mark = ('<span style="color:#3fa45b">✓</span>' if t.get(k)
+                    else '<span style="color:#d9534f">✗</span>')
+            rows.append(f"{mark} <code>{k}</code> – {html.escape(roles[k])}")
+        text = "<b>" + html.escape(T("Hilfsprogramme am PC")) + "</b><br>" + "<br>".join(rows)
+        missing = [k for k in order if not t.get(k)]
+        if missing:
+            cmd = "sudo pacman -S " + " ".join(dict.fromkeys(pkg[k] for k in missing))
+            text += "<br><br>" + html.escape(T("Fehlt etwas? Unter CachyOS:")) + f"<br><code>{html.escape(cmd)}</code>"
+        self.tools_lbl.setText(text)
 
     def say(self, text):
         self.log.append(html.escape(text))
