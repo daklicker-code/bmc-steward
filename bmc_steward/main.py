@@ -17,7 +17,7 @@ import tempfile
 import time
 from . import i18n
 from .i18n import BIOS_PROFILES, HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
-from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, mask, netmask, row_errors
+from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
 from .branding import app_icon, logo_png_data_uri
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread, VendorProbeThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
@@ -1707,7 +1707,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             nets = [i.network for i in self.local_ifaces()]
             lines, far = [], 0
             for cur, _, new, _, _, host in todo:
-                off = not any(ipv4(cur) in net for net in nets)
+                cur_ip = ipv4_port(cur)      # Testlabor-Adressen haben Form IP:Port
+                off = cur_ip is None or not any(cur_ip in net for net in nets)
                 far += off
                 lines.append(f"{cur} → {new} ({host})" + ("  ⚠" if off else ""))
             info = "\n".join(lines[:15])
