@@ -30,7 +30,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 
 ## Funktionen
 
-- Eine einzige Python-Datei, läuft unter Linux und Windows
+- Modular aufgebaut (Paket `bmc_steward/`), läuft unter Linux und Windows
 - Eingebauter DHCP-Server für einen getrennten Staging-Switch (unter Linux dnsmasq, unter Windows
   eingebaut)
 - Serverliste mit Prüfung der Eingaben, CSV-Import und -Export, Profile für wiederkehrende Einstellungen
