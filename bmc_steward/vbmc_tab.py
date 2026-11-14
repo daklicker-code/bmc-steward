@@ -10,7 +10,7 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QProcess, QTimer, Qt
 
 from .i18n import HERE, T
-from .core import WINDOWS
+from .core import WINDOWS, local_network
 
 # Reihenfolge und Beschriftung der wählbaren virtuellen Hersteller
 VBMC_VENDORS = [("dell", "Dell (iDRAC)"), ("hpe", "HPE (iLO 5/6)"),
@@ -206,6 +206,16 @@ class VbmcTabMixin:
         existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
         base = self.vbmc_base.text().strip() or "127.9.0"
         port = self.vbmc_port.value()
+        # Echtes Netz erkennen (Gateway/Subnetz der FritzBox); sonst Loopback als Fallback
+        net = local_network()
+        if net:
+            mask, gw, new_prefix, new_port = net["mask"], net["gateway"], net["prefix"], ""
+            if not self.def_mask.text().strip():
+                self.def_mask.setText(mask)
+            if not self.def_gw.text().strip():
+                self.def_gw.setText(gw)
+        else:
+            mask, gw, new_prefix, new_port = "255.255.255.0", "", base, f":{port}"
         added = 0
         for i, (vendor, addr) in enumerate(servers):
             if addr in existing:
@@ -215,16 +225,24 @@ class VbmcTabMixin:
             r = self.table.rowCount() - 1
             self.table.item(r, 0).setText(addr)                        # Aktuelle IP (mit :Port)
             self.table.item(r, 1).setText(pw)                          # Werks-Passwort
-            self.table.item(r, 2).setText(f"{base}.{51 + i}:{port}")   # vorgeschlagene neue IP
-            self.table.item(r, 3).setText("255.255.255.0")
+            # Neue IP: Präfix vorgefüllt, letzte Ziffer bleibt offen (beim Fallback komplett)
+            self.table.item(r, 2).setText(f"{new_prefix}.{str(51 + i) + new_port if not net else ''}")
+            self.table.item(r, 3).setText(mask)                        # Subnetzmaske
+            self.table.item(r, 4).setText(gw)                          # Gateway
             self.table.item(r, 5).setText(f"vsrv-{vendor}-{i + 1}")    # Hostname-Vorschlag
             added += 1
         self.update_count()
         self.touch()
         self.tabs.setCurrentIndex(1)
-        if added:
-            self.status.setText(T("{0} virtuelle Server übernommen. Oben Benutzer/Passwort setzen und mit "
-                                  "Trockenlauf testen.").format(added))
+        if not added:
+            return
+        if net:
+            self.status.setText(T("{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ "
+                                  "nur noch die letzte Ziffer eintragen und oben Benutzer/Passwort setzen.").format(
+                                  added, gw or "?", mask))
+        else:
+            self.status.setText(T("{0} Server übernommen (kein echtes Netz erkannt, Loopback genutzt). Oben "
+                                  "Benutzer/Passwort setzen und testen.").format(added))
 
     def vbmc_shutdown(self):
         """Beim Schließen des Programms die Flotte mitnehmen."""

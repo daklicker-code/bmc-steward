@@ -3,11 +3,13 @@ from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase,
 import ipaddress
 import os
 import re
+import socket
+import subprocess
 from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "2.2.1"
+__version__ = "2.2.2"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -54,6 +56,77 @@ def ipv4(text):
         return ipaddress.IPv4Address(text)
     except ValueError:
         return None
+
+
+def local_ipv4():
+    """Lokale IPv4 des Standard-Interfaces (ohne etwas zu senden) oder None."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        return ip if not ip.startswith("127.") else None
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _run(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=4).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _default_gateway(prefix):
+    """Standard-Gateway des aktiven Netzes; Fallback <prefix>.1 (z. B. FritzBox 192.168.178.1)."""
+    if WINDOWS:
+        out = _run(["ipconfig"])
+        gw = ""
+        for line in out.splitlines():
+            if "Gateway" in line or "Standardgateway" in line:
+                m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                if m:
+                    gw = m.group(1)
+        if gw:
+            return gw
+    else:
+        out = _run(["ip", "route", "show", "default"])
+        m = re.search(r"default via (\d{1,3}(?:\.\d{1,3}){3})", out)
+        if m:
+            return m.group(1)
+    return f"{prefix}.1" if prefix else ""
+
+
+def _netmask_for(ip):
+    """Subnetzmaske des Interfaces mit dieser IP; Fallback 255.255.255.0."""
+    if WINDOWS:
+        out, take = _run(["ipconfig"]), False
+        for line in out.splitlines():
+            if ip in line:
+                take = True
+            if take and ("Subnet Mask" in line or "Subnetzmaske" in line):
+                m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+                if m:
+                    return m.group(1)
+    else:
+        out = _run(["ip", "-o", "-f", "inet", "addr", "show"])
+        m = re.search(re.escape(ip) + r"/(\d{1,2})", out)
+        if m:
+            try:
+                return str(ipaddress.IPv4Network(f"0.0.0.0/{m.group(1)}").netmask)
+            except ValueError:
+                pass
+    return "255.255.255.0"
+
+
+def local_network():
+    """Erkennt das aktive Netz: {ip, prefix, mask, gateway} oder None (z. B. nur Loopback)."""
+    ip = local_ipv4()
+    if not ip:
+        return None
+    prefix = ip.rsplit(".", 1)[0]
+    return {"ip": ip, "prefix": prefix, "mask": _netmask_for(ip), "gateway": _default_gateway(prefix)}
 
 
 def ipv4_port(text):

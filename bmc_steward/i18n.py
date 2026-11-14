@@ -102,6 +102,16 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen und oben Benutzer/Passwort setzen.": [
+"{0} servers added. Network detected (gateway {1}, mask {2}); for “New IP” just enter the last digit and set user/password above.",
+"{0} serveurs ajoutés. Réseau détecté (passerelle {1}, masque {2}) ; pour « Nouvelle IP », saisissez juste le dernier chiffre et renseignez l'utilisateur/mot de passe ci-dessus.",
+"{0} Server übernoh. Netz erkennt (Gateway {1}, Maske {2}); bi „Neui IP“ nume no di letscht Ziffer iitrage und obe Benutzer/Passwort setze."
+],
+"{0} Server übernommen (kein echtes Netz erkannt, Loopback genutzt). Oben Benutzer/Passwort setzen und testen.": [
+"{0} servers added (no real network detected, using loopback). Set user/password above and test.",
+"{0} serveurs ajoutés (aucun réseau réel détecté, loopback utilisé). Renseignez l'utilisateur/mot de passe ci-dessus et testez.",
+"{0} Server übernoh (kei echts Netz erkennt, Loopback bruucht). Obe Benutzer/Passwort setze und teste."
+],
 "Adressen in Serverliste übernehmen (Reiter 2)": [
 "Add addresses to the server list (tab 2)",
 "Ajouter les adresses à la liste des serveurs (onglet 2)",
