@@ -7,7 +7,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -56,6 +56,17 @@ def ipv4(text):
         return None
 
 
+def ipv4_port(text):
+    """Akzeptiert „IP" oder „IP:Port" (z. B. für virtuelle Testserver auf 8443).
+    Gibt die IPv4-Adresse (ohne Port) zurück oder None, wenn IP oder Port ungültig sind."""
+    host, sep, port = text.rpartition(":")
+    if sep and host:
+        if not (port.isdigit() and 1 <= int(port) <= 65535):
+            return None
+        return ipv4(host)
+    return ipv4(text)
+
+
 
 
 def netmask(text):
@@ -77,14 +88,14 @@ def row_errors(v):
     for c in (0, 2, 3, 4, 5):
         if not v[c]:
             e[c] = ""
-    if v[0] and not ipv4(v[0]):
-        e[0] = T("Keine gültige IPv4-Adresse")
+    if v[0] and not ipv4_port(v[0]):
+        e[0] = T("Keine gültige IPv4-Adresse (optional mit :Port)")
     if "," in v[1]:
         e[1] = T("Kommas im Passwort werden nicht unterstützt")
-    new, gw = ipv4(v[2]), ipv4(v[4])
+    new, gw = ipv4_port(v[2]), ipv4(v[4])
     mask = netmask(v[3])
     if v[2] and not new:
-        e[2] = T("Keine gültige IPv4-Adresse")
+        e[2] = T("Keine gültige IPv4-Adresse (optional mit :Port)")
     if v[3] and not mask:
         e[3] = T("Keine gültige Subnetzmaske (z. B. 255.255.255.0 oder /24)")
     if v[4] and not gw:

@@ -102,6 +102,26 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Adressen in Serverliste übernehmen (Reiter 2)": [
+"Add addresses to the server list (tab 2)",
+"Ajouter les adresses à la liste des serveurs (onglet 2)",
+"Adrässe i d Serverliste übernäh (Reiter 2)"
+],
+"Trägt die laufenden virtuellen Server mit Adresse (inkl. :Port) und Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor.": [
+"Enters the running virtual servers into the server list with their address (incl. :port) and factory password, and suggests new addresses.",
+"Ajoute les serveurs virtuels en cours à la liste avec leur adresse (y c. :port) et le mot de passe d'usine, et propose de nouvelles adresses.",
+"Treit di laufende virtuelle Server mit Adrässe (inkl. :Port) und Werks-Passwort i d Liste ii und schlaht neui Adrässe vor."
+],
+"{0} virtuelle Server übernommen. Oben Benutzer/Passwort setzen und mit Trockenlauf testen.": [
+"{0} virtual servers added. Set user/password above and test with a dry run.",
+"{0} serveurs virtuels ajoutés. Renseignez l'utilisateur/mot de passe ci-dessus et testez en simulation.",
+"{0} virtuelli Server übernoh. Obe Benutzer/Passwort setze und mit em Troggelauf teste."
+],
+"Keine gültige IPv4-Adresse (optional mit :Port)": [
+"Not a valid IPv4 address (optional :port)",
+"Adresse IPv4 non valide (port facultatif après « : »)",
+"Kei gültigi IPv4-Adrässe (optional mit :Port)"
+],
 # --- Firmware- und Testlabor-Reiter ---
 "Das Update läuft über alle Server der Serverliste (Reiter 2); grüne unter ihrer neuen Adresse. Angemeldet wird mit dem Werksbenutzer.": [
 "The update runs on every server in the list (tab 2); green ones at their new address. Login uses the factory user.",

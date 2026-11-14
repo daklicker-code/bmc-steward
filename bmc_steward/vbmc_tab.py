@@ -79,9 +79,15 @@ class VbmcTabMixin:
         self.vbmc_stop_btn = QPushButton(T("Flotte stoppen"))
         self.vbmc_stop_btn.setEnabled(False)
         self.vbmc_stop_btn.clicked.connect(self.vbmc_stop)
+        self.vbmc_adopt_btn = QPushButton(T("Adressen in Serverliste übernehmen (Reiter 2)"))
+        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_adopt_btn.setToolTip(T("Trägt die laufenden virtuellen Server mit Adresse (inkl. :Port) und "
+                                         "Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor."))
+        self.vbmc_adopt_btn.clicked.connect(self.vbmc_adopt)
         btns = QHBoxLayout()
         btns.addWidget(self.vbmc_start_btn)
         btns.addWidget(self.vbmc_stop_btn)
+        btns.addWidget(self.vbmc_adopt_btn)
         btns.addStretch()
 
         self.vbmc_status = QLabel()
@@ -128,14 +134,17 @@ class VbmcTabMixin:
             self.vbmc_set_status(T("Bitte mindestens einen Hersteller anhaken."), True)
             return
 
-        args = [str(self.vbmc_script), *specs,
-                "--base", self.vbmc_base.text().strip() or "127.9.0",
-                "--port", str(self.vbmc_port.value())]
-        program, pre = sys.executable, []
+        # Adressen vorab berechnen (wie vbmc: base.(11+index)) - für den Übernahme-Knopf
+        base = self.vbmc_base.text().strip() or "127.9.0"
+        port = self.vbmc_port.value()
+        self.vbmc_servers = [(v, f"{base}.{11 + i}:{port}") for i, v in enumerate(specs)]
+
+        args = [str(self.vbmc_script), *specs, "--base", base, "--port", str(port)]
+        program, pre = sys.executable, ["-u"]       # -u: Ausgabe sofort, Liste erscheint live
         if self.vbmc_console.isChecked():
             args.append("--console")
             if not WINDOWS and shutil.which("pkexec"):
-                program, pre = "pkexec", [sys.executable]   # grafische Rechteabfrage
+                program, pre = "pkexec", [sys.executable, "-u"]   # grafische Rechteabfrage
             else:
                 cmd = "sudo python3 " + " ".join([str(self.vbmc_script), *specs,
                       "--base", self.vbmc_base.text().strip() or "127.9.0",
@@ -154,6 +163,7 @@ class VbmcTabMixin:
 
         self.vbmc_start_btn.setEnabled(False)
         self.vbmc_stop_btn.setEnabled(True)
+        self.vbmc_adopt_btn.setEnabled(True)
         for w in (*self.vbmc_checks.values(), self.vbmc_count, self.vbmc_base,
                   self.vbmc_port, self.vbmc_console):
             w.setEnabled(False)
@@ -177,10 +187,44 @@ class VbmcTabMixin:
     def vbmc_finished(self, *_):
         self.vbmc_start_btn.setEnabled(self.vbmc_script is not None)
         self.vbmc_stop_btn.setEnabled(False)
+        self.vbmc_adopt_btn.setEnabled(False)
         for w in (*self.vbmc_checks.values(), self.vbmc_count, self.vbmc_base,
                   self.vbmc_port, self.vbmc_console):
             w.setEnabled(True)
         self.vbmc_set_status(T("Flotte gestoppt."))
+
+    # Werks-Logins der virtuellen Server (müssen zu tools/vbmc/vbmc.py passen)
+    FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
+               "hpe_old": ("Administrator", "Admin123!"), "smc": ("ADMIN", "ADMIN"),
+               "lenovo": ("USERID", "PASSW0RD")}
+
+    def vbmc_adopt(self):
+        """Laufende virtuelle Server in die Serverliste (Reiter 2) eintragen."""
+        servers = getattr(self, "vbmc_servers", [])
+        if not servers:
+            return
+        existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
+        base = self.vbmc_base.text().strip() or "127.9.0"
+        port = self.vbmc_port.value()
+        added = 0
+        for i, (vendor, addr) in enumerate(servers):
+            if addr in existing:
+                continue
+            _user, pw = self.FACTORY.get(vendor, ("", ""))
+            self.add_row()
+            r = self.table.rowCount() - 1
+            self.table.item(r, 0).setText(addr)                        # Aktuelle IP (mit :Port)
+            self.table.item(r, 1).setText(pw)                          # Werks-Passwort
+            self.table.item(r, 2).setText(f"{base}.{51 + i}:{port}")   # vorgeschlagene neue IP
+            self.table.item(r, 3).setText("255.255.255.0")
+            self.table.item(r, 5).setText(f"vsrv-{vendor}-{i + 1}")    # Hostname-Vorschlag
+            added += 1
+        self.update_count()
+        self.touch()
+        self.tabs.setCurrentIndex(1)
+        if added:
+            self.status.setText(T("{0} virtuelle Server übernommen. Oben Benutzer/Passwort setzen und mit "
+                                  "Trockenlauf testen.").format(added))
 
     def vbmc_shutdown(self):
         """Beim Schließen des Programms die Flotte mitnehmen."""
