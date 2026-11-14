@@ -25,9 +25,13 @@ Es ist ein eigenständiges Entwickler-/Test-Werkzeug und nicht Teil der Anwendun
 
 * Python 3.9+ und `openssl` (für das selbstsignierte Zertifikat; wird einmalig
   erzeugt und unter `~/.cache/vbmc/` abgelegt).
-* Nur für `--console` zusätzlich: `paramiko` und `pyghmi`
-  (`sudo pacman -S python-paramiko python-pyghmi` bzw. `pip install paramiko pyghmi`)
-  sowie erhöhte Rechte, weil BMC-Steward die Standardports 22/623/443 anspricht.
+* Nur für `--console` zusätzlich: `paramiko` und `pyghmi` sowie erhöhte Rechte,
+  weil BMC-Steward die Standardports 22/623/443 anspricht. Da `--console` mit
+  `sudo` läuft, müssen beide Pakete für **root** sichtbar sein (systemweit):
+  * `paramiko` ist in den Repos: `sudo pacman -S python-paramiko`
+  * `pyghmi` liegt auf Arch/CachyOS im AUR: `yay -S python-pyghmi`
+    (oder ohne AUR-Helfer `sudo pip install --break-system-packages pyghmi`)
+  * Prüfen: `sudo python3 -c "import paramiko, pyghmi; print('ok')"`
 
 Der Grundbetrieb (nur Redfish) braucht keine Zusatzpakete und keine root-Rechte:
 Die Server laufen auf `127.x`-Adressen mit hohem Port (Vorgabe **8443**).
