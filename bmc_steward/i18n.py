@@ -102,6 +102,16 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen. Werks-Login(s): {3}.": [
+"{0} servers added. Network detected (gateway {1}, mask {2}); for “New IP” just enter the last digit. Factory login(s): {3}.",
+"{0} serveurs ajoutés. Réseau détecté (passerelle {1}, masque {2}) ; pour « Nouvelle IP », saisissez juste le dernier chiffre. Identifiant(s) d'usine : {3}.",
+"{0} Server übernoh. Netz erkennt (Gateway {1}, Maske {2}); bi „Neui IP“ nume no di letscht Ziffer iitrage. Werks-Login(s): {3}."
+],
+"{0} Server übernommen (Loopback). Oben neuen Benutzer/Passwort setzen. Werks-Login(s): {1}.": [
+"{0} servers added (loopback). Set the new user/password above. Factory login(s): {1}.",
+"{0} serveurs ajoutés (loopback). Renseignez le nouvel utilisateur/mot de passe ci-dessus. Identifiant(s) d'usine : {1}.",
+"{0} Server übernoh (Loopback). Obe de neu Benutzer/Passwort setze. Werks-Login(s): {1}."
+],
 "Neue IP: echtes Netz (Router) – zum Üben": [
 "New IP: real network (router) – for practice",
 "Nouvelle IP : réseau réel (routeur) – pour s'entraîner",

@@ -223,33 +223,41 @@ class VbmcTabMixin:
                 self.def_gw.setText(gw)
         else:
             mask, gw, new_prefix, new_port = "255.255.255.0", "", base, f":{port}"
-        added = 0
+        # Leere Zeilen (z. B. die leere Startzeile) entfernen, damit die Daten oben beginnen
+        for r in reversed(range(self.table.rowCount())):
+            if not any(self.cell(r, c) for c in (0, 2, 5)):
+                self.table.removeRow(r)
+        added, logins = 0, {}
         for i, (vendor, addr) in enumerate(servers):
             if addr in existing:
                 continue
-            _user, pw = self.FACTORY.get(vendor, ("", ""))
+            user, pw = self.FACTORY.get(vendor, ("", ""))
+            logins[vendor] = (user, pw)
             self.add_row()
             r = self.table.rowCount() - 1
             self.table.item(r, 0).setText(addr)                        # Aktuelle IP (mit :Port)
-            self.table.item(r, 1).setText(pw)                          # Werks-Passwort
+            # Passwort (Default) bewusst NICHT in die Liste schreiben - gehört ins Werkspasswort-Feld oben
             # Neue IP: Präfix vorgefüllt, letzte Ziffer bleibt offen (beim Fallback komplett)
             self.table.item(r, 2).setText(f"{new_prefix}.{str(51 + i) + new_port if not net else ''}")
             self.table.item(r, 3).setText(mask)                        # Subnetzmaske
             self.table.item(r, 4).setText(gw)                          # Gateway
             self.table.item(r, 5).setText(f"vsrv-{vendor}-{i + 1}")    # Hostname-Vorschlag
             added += 1
+        # Kein Passwort automatisch setzen (auch nicht global) - das Werks-Login kommt oben
+        # ins Passwortfeld; die Logins stehen im Status und im Testlabor-Log.
         self.update_count()
         self.touch()
         self.tabs.setCurrentIndex(1)
         if not added:
             return
+        hint = ", ".join(f"{v}: {u}/{p}" for v, (u, p) in logins.items())
         if net:
-            self.status.setText(T("{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ "
-                                  "nur noch die letzte Ziffer eintragen und oben Benutzer/Passwort setzen.").format(
-                                  added, gw or "?", mask))
+            self.status.setText(T("{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur "
+                                  "noch die letzte Ziffer eintragen. Werks-Login(s): {3}.").format(
+                                  added, gw or "?", mask, hint))
         else:
-            self.status.setText(T("{0} Server übernommen (kein echtes Netz erkannt, Loopback genutzt). Oben "
-                                  "Benutzer/Passwort setzen und testen.").format(added))
+            self.status.setText(T("{0} Server übernommen (Loopback). Oben neuen Benutzer/Passwort setzen. "
+                                  "Werks-Login(s): {1}.").format(added, hint))
 
     def vbmc_shutdown(self):
         """Beim Schließen des Programms die Flotte mitnehmen."""
