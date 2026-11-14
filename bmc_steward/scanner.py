@@ -65,8 +65,8 @@ SCAN_HTML = """<!doctype html>
  .err{color:#ff8a80}.good{color:#7ddf94}
 </style></head><body>
 <div class="seg">
- <label><input type="radio" name="m" value="barcode" checked><span id="t_bc">Barcode</span></label>
- <label><input type="radio" name="m" value="ocr"><span id="t_ocr">Text (OCR)</span></label>
+ <label><input type="radio" name="m" value="barcode"><span id="t_bc">Barcode</span></label>
+ <label><input type="radio" name="m" value="ocr" checked><span id="t_ocr">Text (OCR)</span></label>
 </div>
 <div id="area"><div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div><img id="prev" alt=""></div>
 <div class="seg">
@@ -93,7 +93,7 @@ const L=de?{shot:"Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …",no
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
 $("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
 say(L.tip);$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
-const SIZE={s:[.62,.5],m:[.9,.82],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
+const SIZE={s:[.8,.28],m:[.96,.46],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
 const BAND=0.46;      // Höhe des Vorschau-Bandes als Anteil der Breite; das Kamerabild wird oben/unten beschnitten
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
