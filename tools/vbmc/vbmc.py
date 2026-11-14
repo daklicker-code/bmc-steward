@@ -37,6 +37,7 @@ import base64
 import json
 import os
 import re
+import signal
 import socket
 import ssl
 import subprocess
@@ -1093,13 +1094,17 @@ def main():
               "Redfish-Konfig im Haupt-Reiter weiter als IP:PORT.")
     print("\nBeenden mit Strg-C." + ("" if args.interactive else "  (Steuerkonsole: --interactive)"))
 
+    # SIGTERM (z. B. Stop-Knopf der GUI) wie Strg-C behandeln, damit die Aufräumroutine
+    # unten läuft und auch die IPMI-Kindprozesse beendet werden.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
     try:
         if args.interactive:
             interactive(fleet, args)
         else:
             while True:
                 time.sleep(3600)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     print("\nbeende...")
     for b in fleet.table():

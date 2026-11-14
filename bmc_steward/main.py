@@ -22,6 +22,7 @@ from .branding import app_icon, logo_png_data_uri
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
+from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
 
 
@@ -46,7 +47,7 @@ class PwDelegate(QStyledItemDelegate):
 
 
 
-class Window(ConsoleMixin, QWidget):
+class Window(ConsoleMixin, VbmcTabMixin, QWidget):
     def __init__(self, state=None):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
@@ -250,6 +251,7 @@ class Window(ConsoleMixin, QWidget):
         self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
         self.tabs.addTab(self.build_services(), T("4 · Dienste"))
         self.tabs.addTab(self.build_console(), T("5 · UEFI-Konsole"))
+        self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         _logo = logo_png_data_uri()
@@ -859,6 +861,7 @@ class Window(ConsoleMixin, QWidget):
         self.stop_scanner()
         self.stop_dhcp()
         self.console_shutdown()
+        self.vbmc_shutdown()
         event.accept()
 
     def stop_scanner(self):
