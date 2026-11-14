@@ -305,7 +305,7 @@ def line_variants(line):
     for scale in (1.0, 1.5):
         base = line.scaled(max(1, int(line.width() * scale)), max(1, int(line.height() * scale)),
                            Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        for k in (1, 2, 3):      # k=1: scharfe Fassung (für klare Fotos), 2/3: weicher gegen Moiré vom Bildschirm
+        for k in (1, 2):      # k=1: scharfe Fassung (für klare Fotos), 2: leicht weicher gegen Moiré
             im = base.scaled(max(1, base.width() // k), max(1, base.height() // k),
                              Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
             im = im.scaled(base.width(), base.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
@@ -458,13 +458,14 @@ def scan_decode(jpeg, mode, dbg=None):
         bw, thr = binarize(gray)
         if dbg:
             dbg.add(f"Vorbereitung: Graustufen {gray.width()}x{gray.height()} (Faktor {scale}), Otsu-Schwelle {thr}")
-        # Weichgezeichnete Fassungen zuerst: zeilenweise Erkennung, mehrere Varianten stimmen über das Ergebnis ab
-        steps = (("weich2", soft(2), False, ("7",)), ("weich3", soft(3), False, ("7",)),
+        # Scharfe Fassungen zuerst (bewahren 9/0 und den i-Punkt); Weichzeichnen nur als Rückfall für
+        # verrauschte Bildschirmfotos, damit es die scharfe Lesung nicht überstimmt.
+        steps = (("grau", gray, False, ("7", "8", "6")), ("sw", bw, False, ("7", "8", "6")),
+                 ("weich2", soft(2), False, ("7",)), ("weich3", soft(3), False, ("7",)),
                  ("weich4", soft(4), False, ("7",)),
-                 ("grau", gray, False, ("7", "8", "6")), ("sw", bw, False, ("7", "8", "6")),
                  ("grau-invers", gray, True, ("7", "6")), ("sw-invers", bw, True, ("7", "6")))
         for name, base, inverted, modes in steps:
-            if (out and not name.startswith("weich")) or (len(votes) and max(votes.values()) >= 3):
+            if out or (len(votes) and max(votes.values()) >= 2):
                 break
             im = base.copy()
             if inverted:
