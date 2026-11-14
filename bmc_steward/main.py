@@ -19,7 +19,7 @@ from . import i18n
 from .i18n import BIOS_PROFILES, HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
 from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, mask, netmask, row_errors
 from .branding import app_icon, logo_png_data_uri
-from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread
+from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread, VendorProbeThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
 from .firmware_tab import FirmwareTabMixin
@@ -138,12 +138,18 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         top.addLayout(right)
 
         # --- Serverliste ---
-        self.table = QTableWidget(0, len(i18n.COLS))
-        self.table.setHorizontalHeaderLabels(i18n.COLS)
+        self.vendor_col = len(i18n.COLS)     # zusätzliche, nur angezeigte Spalte, keine Daten-COLS-Spalte
+        self.vendor_tip = T("Hersteller/Typ, automatisch anhand der Aktuelle-IP ermittelt. Nur Anzeige,\n"
+                           "nicht editierbar; wird beim Eintragen/Ändern der Aktuelle IP neu geprüft.")
+        self.vendor_threads = {}             # Aktuelle IP -> laufender VendorProbeThread
+        self.table = QTableWidget(0, len(i18n.COLS) + 1)
+        self.table.setHorizontalHeaderLabels(i18n.COLS + [T("Hersteller/Typ")])
         for c, tip in enumerate(i18n.COL_TIPS):
             self.table.horizontalHeaderItem(c).setToolTip(tip)
+        self.table.horizontalHeaderItem(self.vendor_col).setToolTip(self.vendor_tip)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemChanged.connect(self.update_count)
+        self.table.itemChanged.connect(self.on_item_changed)
         add = QPushButton(T("+ Server"))
         add.setToolTip(T("Neue Zeile. Passwort, Subnetzmaske und Gateway werden vorbelegt."))
         add.clicked.connect(lambda: self.add_row())
@@ -519,7 +525,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.log.append(f'<span style="{style}">{html.escape(text)}</span>')
 
     # ---------- Serverliste ----------
-    def add_row(self, values=None):
+    def add_row(self, values=None, vendor_text=""):
         """Neue Zeile; ohne Werte gelten die Vorgaben, sonst Maske und Gateway der letzten Zeile."""
         r = self.table.rowCount()
         if values is None:
@@ -530,7 +536,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.table.insertRow(r)
         for c, val in enumerate(values):
             self.table.setItem(r, c, QTableWidgetItem(val))
+        vitem = QTableWidgetItem(vendor_text)
+        vitem.setFlags(vitem.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        vitem.setToolTip(self.vendor_tip)
+        self.table.setItem(r, self.vendor_col, vitem)
         self.table.setCurrentCell(r, 0)
+        if not vendor_text and ipv4(values[0] if values else ""):
+            self.probe_vendor(values[0])
 
     def remove_rows(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
@@ -562,6 +574,42 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
     def cell(self, r, c):
         item = self.table.item(r, c)
         return item.text().strip() if item else ""
+
+    def on_item_changed(self, item):
+        """Aktuelle IP geändert: Hersteller/Typ neu ermitteln (eigene Spalte, kein Pflichtfeld)."""
+        if item.column() != 0:
+            return
+        ip = item.text().strip()
+        vitem = self.table.item(item.row(), self.vendor_col)
+        if vitem:
+            self.table.blockSignals(True)
+            vitem.setText("")
+            vitem.setToolTip(self.vendor_tip)
+            self.table.blockSignals(False)
+        if ipv4(ip):
+            self.probe_vendor(ip)
+
+    def probe_vendor(self, ip):
+        """Startet die Hersteller-Erkennung für eine Adresse im Hintergrund (nicht blockierend)."""
+        old = self.vendor_threads.get(ip)
+        if old and old.isRunning():
+            return      # schon unterwegs für diese Adresse
+        th = VendorProbeThread(self, ip)
+        th.done.connect(self.on_vendor_probe_done)
+        self.vendor_threads[ip] = th
+        th.start()
+
+    def on_vendor_probe_done(self, ip, text, tip):
+        """Trägt das Ergebnis in jede Zeile ein, deren Aktuelle IP noch mit der geprüften übereinstimmt."""
+        self.vendor_threads.pop(ip, None)
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            if self.cell(r, 0) == ip:
+                vitem = self.table.item(r, self.vendor_col)
+                if vitem:
+                    vitem.setText(text)
+                    vitem.setToolTip(tip)
+        self.table.blockSignals(False)
 
     def rows(self, open_only=False):
         """Alle nicht leeren Zeilen als Listen mit 6 Feldern; mit open_only ohne die fertigen."""
@@ -618,12 +666,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 continue
             f = [x.strip() for x in line.replace(";", ",").split(",")]     # Excel exportiert mit Semikolon
             done = False
+            vendor_text = ""
+            if len(f) == 8:               # 8. Spalte: Hersteller/Typ, nur Anzeige (neueres Format)
+                vendor_text = f.pop()
             if len(f) == 7:              # 7. Spalte: „fertig“, Server schon umgestellt
                 done = f.pop().lower() in ("fertig", "done", "1", "x")
             if len(f) == 5:              # ohne Passwort-Spalte
                 f.insert(1, "")
             if len(f) == 6:
-                self.add_row(f)
+                self.add_row(f, vendor_text=vendor_text)
                 if done and f[0]:
                     self.table.item(self.table.rowCount() - 1, 0).setData(Qt.ItemDataRole.UserRole, f[0])
         self.table.blockSignals(False)
@@ -694,14 +745,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if with_passwords:
             settings += [("cur_pass", self.cur_pass.text()), ("new_pass", self.new_pass.text())]
         text = "".join(f"#@ {k}={v}\n" for k, v in settings)
-        text += "# aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,fertig\n"
+        text += "# aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,fertig,hersteller\n"
         for r in range(self.table.rowCount()):
             vals = [self.cell(r, c) for c in range(len(i18n.COLS))]
             if not (vals[0] or vals[2] or vals[5]):
                 continue
             if not with_passwords:
                 vals[1] = ""
-            text += ",".join(vals + ["fertig" if self.is_done(r) else ""]) + "\n"
+            text += ",".join(vals + ["fertig" if self.is_done(r) else "", self.cell(r, self.vendor_col)]) + "\n"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -763,6 +814,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 else:
                     item.setBackground(QBrush())
                     item.setToolTip(i18n.COL_TIPS[c])
+            vitem = t.item(r, self.vendor_col)
+            if vitem:
+                vitem.setBackground(DONE_BG if done else QBrush())
         t.blockSignals(False)
         return out
 
@@ -864,6 +918,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.stop_dhcp()
         self.console_shutdown()
         self.vbmc_shutdown()
+        for th in list(self.vendor_threads.values()):      # kurze Gnadenfrist, sonst Warnung/Absturz beim Beenden
+            th.wait(300)
         event.accept()
 
     def stop_scanner(self):

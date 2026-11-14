@@ -1542,3 +1542,31 @@ class BiosReadThread(QThread):
                 self.done.emit(attrs, v, "")
         except Exception as e:
             self.done.emit(None, "", T('Unerwarteter Fehler: {0!r}').format(e))
+
+
+class VendorProbeThread(QThread):
+    """Ermittelt einmalig Hersteller/Typ einer Adresse, ohne Anmeldung (wie vendor()); läuft im
+    Hintergrund, damit die Serverliste (Reiter 2) beim Eintragen der Aktuelle-IP nicht blockiert."""
+    done = pyqtSignal(str, str, str)     # Aktuelle IP, Anzeigetext, Tooltip
+
+    def __init__(self, parent, ip):
+        super().__init__(parent)
+        self.ip = ip
+
+    def run(self):
+        rc = RedfishClient(dry=True, log=lambda *a, **k: None)
+        try:
+            v = rc.vendor(self.ip)
+        except Exception as e:
+            self.done.emit(self.ip, T("Fehler"), T('Unerwarteter Fehler: {0!r}').format(e))
+            return
+        if v == "offline":
+            self.done.emit(self.ip, T("nicht erreichbar"),
+                            T("Gerät antwortet nicht (Zeitüberschreitung oder Verbindung abgelehnt)."))
+        elif v in RedfishClient.NAME:
+            label = RedfishClient.NAME[v] + (f" ({rc.model})" if rc.model else "")
+            self.done.emit(self.ip, label, label)
+        else:
+            label = T("unbekannt") + (f" ({rc.model})" if rc.model else "")
+            self.done.emit(self.ip, label, T("Weder Dell iDRAC, HPE iLO, Supermicro noch Lenovo XCC erkannt.")
+                            + (f"\n{rc.model}" if rc.model else ""))
