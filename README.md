@@ -71,25 +71,68 @@ On top of that:
 
 ## Install and run
 
-**Arch Linux / CachyOS**
+You need Python 3.9 or newer. The interface needs PyQt6; the DHCP server and the optional parts
+(phone scanner, UEFI console) have their own helper programs.
+
+### Arch Linux / CachyOS
 
 ```bash
-sudo pacman -S python-pyqt6 dnsmasq
+# base install
+sudo pacman -S python-pyqt6 dnsmasq git
+
+# get the code and run
+git clone https://github.com/daklicker-code/bmc-steward.git
+cd bmc-steward
 python bmc-steward.py
 ```
 
-**Debian / Ubuntu**
+Optional components:
 
 ```bash
-sudo apt install python3-pyqt6 dnsmasq
+# phone scanner (barcode + OCR + QR code)
+sudo pacman -S zbar tesseract tesseract-data-eng qrencode
+
+# UEFI console: embedded web console and text console (SOL/SSH)
+sudo pacman -S python-pyqt6-webengine ipmitool sshpass
+pip install --break-system-packages pyte
+```
+
+With an active firewall (ufw), open UDP 67 for the DHCP server and port 8443 for the phone scanner:
+
+```bash
+sudo ufw allow 67/udp
+sudo ufw allow 8443/tcp
+```
+
+### Windows
+
+1. **Install Python** from [python.org](https://www.python.org/downloads/) (3.9 or newer) and tick
+   **“Add python.exe to PATH”** during setup.
+2. **Install PyQt6** in a command prompt:
+   ```powershell
+   pip install PyQt6
+   ```
+3. **Get the code:** either with Git
+   ```powershell
+   git clone https://github.com/daklicker-code/bmc-steward.git
+   ```
+   or on GitHub via **Code → Download ZIP** and extract it.
+4. **Run** from the project folder:
+   ```powershell
+   python bmc-steward.py
+   ```
+
+The DHCP server is built in on Windows (no dnsmasq needed) — allow the firewall prompt when you start
+it. The phone scanner additionally needs `openssl`, `zbar`, `tesseract` and `qrencode` on the PATH,
+installed by hand on Windows. The UEFI **text** console (SOL/SSH) is Linux-only.
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install python3-pyqt6 dnsmasq git
+git clone https://github.com/daklicker-code/bmc-steward.git
+cd bmc-steward
 python3 bmc-steward.py
-```
-
-**Windows**
-
-```powershell
-pip install PyQt6
-python bmc-steward.py
 ```
 
 ## How to use it
