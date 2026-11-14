@@ -7,7 +7,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "2.0.3"
+__version__ = "2.0.4"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
