@@ -52,7 +52,7 @@ On top of that:
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German.
 - **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the Test lab tab or standalone from the command line.
-- **Modular layout** (package `bmc_steward/`), runs on Linux and Windows.
+- **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
 ## Built to forgive mistakes
 
@@ -109,9 +109,9 @@ sudo ufw allow 8443/tcp
 
 ### Windows
 
-**Ready-made .exe (no Python install needed)** — download `bmc-steward.exe` from the
-[latest release](https://github.com/daklicker-code/bmc-steward/releases) and run it. Builds made
-between releases are under **Actions → Build Windows EXE → Artifacts**.
+> **Note:** The ready-made Windows **.exe** and its build pipeline are **archived and no longer
+> maintained** (see [`archive/windows-build/`](archive/windows-build/)). BMC-Steward still runs on
+> Windows **from source** — the code is cross-platform — but is developed and tested on Linux.
 
 **From source:**
 
@@ -134,8 +134,8 @@ between releases are under **Actions → Build Windows EXE → Artifacts**.
 The DHCP server is built in on Windows (no dnsmasq needed) — allow the firewall prompt when you start
 it. The phone scanner additionally needs `openssl`, `zbar`, `tesseract` and `qrencode` on the PATH,
 installed by hand on Windows. The embedded UEFI console needs QtWebEngine and the text console
-(SOL/SSH) needs `pyte`, `paramiko` and `pyghmi`; the ready-made `.exe` already bundles all of these,
-from source install them with `pip install PyQt6-WebEngine pyte paramiko pyghmi`.
+(SOL/SSH) needs `pyte`, `paramiko` and `pyghmi`; install them with
+`pip install PyQt6-WebEngine pyte paramiko pyghmi`.
 
 ### Debian / Ubuntu
 

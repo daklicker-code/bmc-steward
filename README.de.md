@@ -52,7 +52,7 @@ Dazu kommt:
 - **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
 - **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch.
 - **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus dem Testlabor-Reiter oder eigenständig über die Kommandozeile.
-- **Modular aufgebaut** (Paket `bmc_steward/`), läuft unter Linux und Windows.
+- **Modular aufgebaut** (Paket `bmc_steward/`); entwickelt unter Linux, läuft aus dem Quellcode auch unter Windows (die fertige .exe ist archiviert und wird nicht mehr gepflegt).
 
 ## Schutz vor Fehlbedienung
 
@@ -110,9 +110,10 @@ sudo ufw allow 8443/tcp
 
 ### Windows
 
-**Fertige .exe (ohne Python-Installation)** — `bmc-steward.exe` vom
-[neuesten Release](https://github.com/daklicker-code/bmc-steward/releases) herunterladen und starten.
-Zwischenstände zwischen den Releases liegen unter **Actions → Build Windows EXE → Artifacts**.
+> **Hinweis:** Die fertige Windows-**.exe** und ihr Build sind **archiviert und werden nicht mehr
+> gepflegt** (siehe [`archive/windows-build/`](archive/windows-build/)). BMC-Steward läuft unter
+> Windows weiter **aus dem Quellcode** — der Code ist plattformübergreifend — entwickelt und getestet
+> wird aber unter Linux.
 
 **Aus dem Quellcode:**
 
@@ -135,8 +136,8 @@ Zwischenstände zwischen den Releases liegen unter **Actions → Build Windows E
 Der DHCP-Server ist unter Windows eingebaut (kein dnsmasq nötig) — beim Start die Firewall-Abfrage
 zulassen. Der Handy-Scanner braucht zusätzlich `openssl`, `zbar`, `tesseract` und `qrencode` im PATH,
 unter Windows von Hand zu installieren. Die eingebettete UEFI-Konsole braucht QtWebEngine, die
-**Text**konsole (SOL/SSH) braucht `pyte`, `paramiko` und `pyghmi`; die fertige `.exe` bündelt das
-bereits, aus dem Quellcode mit `pip install PyQt6-WebEngine pyte paramiko pyghmi` nachinstallieren.
+**Text**konsole (SOL/SSH) braucht `pyte`, `paramiko` und `pyghmi`; mit
+`pip install PyQt6-WebEngine pyte paramiko pyghmi` nachinstallieren.
 
 ### Debian / Ubuntu
 
