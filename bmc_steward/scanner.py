@@ -124,7 +124,9 @@ async function cam(){
   $("v").srcObject=s;track=s.getVideoTracks()[0];
   const c=(track.getCapabilities&&track.getCapabilities())||{};
   if(c.focusMode&&c.focusMode.includes("continuous"))track.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(()=>{});
-  if(c.zoom){const z=$("zoom");z.min=c.zoom.min;z.max=c.zoom.max;z.step=c.zoom.step||.1;z.value=c.zoom.min;z.style.display="";
+  if(c.zoom){const z=$("zoom");z.min=c.zoom.min;z.max=c.zoom.max;z.step=c.zoom.step||.1;z.style.display="";
+   const st=z.step||.1,def=c.zoom.min+(c.zoom.max-c.zoom.min)*.25;z.value=Math.round(def/st)*st;  // Standard-Zoom ~25 %
+   track.applyConstraints({advanced:[{zoom:+z.value}]}).catch(()=>{});
    z.oninput=()=>track.applyConstraints({advanced:[{zoom:+z.value}]}).catch(()=>{})}
   if(c.torch){let on=false;const t=$("torch");t.style.display="";t.onclick=()=>{on=!on;track.applyConstraints({advanced:[{torch:on}]}).catch(()=>{})}}
  }catch(e){say(L.nocam,"err")}
