@@ -71,8 +71,8 @@ SCAN_HTML = """<!doctype html>
 </div>
 <div id="area"><div id="wrap"><video id="v" playsinline muted autoplay></video><div id="box"></div></div></div>
 <div class="seg">
- <label><input type="radio" name="c" value="s"><span id="c_s">Klein</span></label>
- <label><input type="radio" name="c" value="m" checked><span id="c_m">Mittel</span></label>
+ <label><input type="radio" name="c" value="s" checked><span id="c_s">Klein</span></label>
+ <label><input type="radio" name="c" value="m"><span id="c_m">Mittel</span></label>
  <label><input type="radio" name="c" value="f"><span id="c_f">Ganz</span></label>
 </div>
 <div id="ctl"><input type="range" id="zoom" style="display:none"><button class="small" id="torch" style="display:none">💡</button></div>
@@ -95,7 +95,7 @@ const L=de?{shot:"● Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
 $("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
 say(L.tip);$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
-const SIZE={s:[.82,.5],m:[.96,.75],f:[1,1]};let cx=.5,cy=.5,track=null,prevUrl=null;
+const SIZE={s:[.82,.5],m:[.9,.62],f:[.98,.78]};let cx=.5,cy=.5,track=null,prevUrl=null;
 const BAND=0.30;      // Höhe des Kamerastreifens als Anteil der Breite; kurzer Streifen, oben/unten beschnitten, keine schwarzen Ränder
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
@@ -117,7 +117,7 @@ function box(){
 }
 document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
 document.querySelectorAll("input[name=m]").forEach(e=>e.onchange=()=>{
- document.querySelector("input[name=c][value=m]").checked=true;cx=cy=.5;layout()});
+ document.querySelector("input[name=c][value=s]").checked=true;cx=cy=.5;layout()});
 $("wrap").onclick=e=>{const r=$("wrap").getBoundingClientRect();cx=(e.clientX-r.left)/r.width;cy=(e.clientY-r.top)/r.height;box()};
 addEventListener("resize",layout);if(window.ResizeObserver)new ResizeObserver(layout).observe($("area"));$("prev").onclick=()=>{$("cmp").style.display="none";$("big").textContent=""};$("v").addEventListener("loadedmetadata",layout);
 async function cam(){
