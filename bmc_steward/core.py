@@ -9,7 +9,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "2.2.3"
+__version__ = "2.2.4"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -79,7 +79,7 @@ def _run(cmd):
 
 
 def _default_gateway(prefix):
-    """Standard-Gateway des aktiven Netzes; Fallback <prefix>.1 (z. B. FritzBox 192.168.178.1)."""
+    """Standard-Gateway des aktiven Netzes aus der Routing-Tabelle (jeder Router); Fallback <prefix>.1."""
     if WINDOWS:
         out = _run(["ipconfig"])
         gw = ""

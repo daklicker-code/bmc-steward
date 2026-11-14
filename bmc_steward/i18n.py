@@ -102,10 +102,10 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
-"Neue IP: echtes Netz (FritzBox) – zum Üben": [
+"Neue IP: echtes Netz (Router) – zum Üben": [
 "New IP: real network (router) – for practice",
-"Nouvelle IP : réseau réel (box) – pour s'entraîner",
-"Neui IP: echts Netz (FritzBox) – zum Üebe"
+"Nouvelle IP : réseau réel (routeur) – pour s'entraîner",
+"Neui IP: echts Netz (Router) – zum Üebe"
 ],
 "Neue IP: Loopback – scharfe Migration läuft grün": [
 "New IP: loopback – live migration passes green",

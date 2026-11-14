@@ -85,7 +85,7 @@ class VbmcTabMixin:
                                          "Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor."))
         self.vbmc_adopt_btn.clicked.connect(self.vbmc_adopt)
         self.vbmc_adopt_mode = QComboBox()
-        self.vbmc_adopt_mode.addItem(T("Neue IP: echtes Netz (FritzBox) – zum Üben"), "net")
+        self.vbmc_adopt_mode.addItem(T("Neue IP: echtes Netz (Router) – zum Üben"), "net")
         self.vbmc_adopt_mode.addItem(T("Neue IP: Loopback – scharfe Migration läuft grün"), "loopback")
         self.vbmc_adopt_mode.setToolTip(T("Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit "
                                           "deinem Präfix vorgefüllt (ideal für Trockenlauf). Loopback: die neue "
@@ -213,7 +213,7 @@ class VbmcTabMixin:
         existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
         base = self.vbmc_base.text().strip() or "127.9.0"
         port = self.vbmc_port.value()
-        # Modus: echtes Netz (FritzBox) zum Üben oder Loopback (scharfe Migration läuft grün)
+        # Modus: echtes Netz (Router) zum Üben oder Loopback (scharfe Migration läuft grün)
         net = local_network() if self.vbmc_adopt_mode.currentData() == "net" else None
         if net:
             mask, gw, new_prefix, new_port = net["mask"], net["gateway"], net["prefix"], ""
