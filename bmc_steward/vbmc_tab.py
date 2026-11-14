@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QProcess, QTimer, Qt
@@ -84,10 +84,17 @@ class VbmcTabMixin:
         self.vbmc_adopt_btn.setToolTip(T("Trägt die laufenden virtuellen Server mit Adresse (inkl. :Port) und "
                                          "Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor."))
         self.vbmc_adopt_btn.clicked.connect(self.vbmc_adopt)
+        self.vbmc_adopt_mode = QComboBox()
+        self.vbmc_adopt_mode.addItem(T("Neue IP: echtes Netz (FritzBox) – zum Üben"), "net")
+        self.vbmc_adopt_mode.addItem(T("Neue IP: Loopback – scharfe Migration läuft grün"), "loopback")
+        self.vbmc_adopt_mode.setToolTip(T("Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit "
+                                          "deinem Präfix vorgefüllt (ideal für Trockenlauf). Loopback: die neue "
+                                          "IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft."))
         btns = QHBoxLayout()
         btns.addWidget(self.vbmc_start_btn)
         btns.addWidget(self.vbmc_stop_btn)
         btns.addWidget(self.vbmc_adopt_btn)
+        btns.addWidget(self.vbmc_adopt_mode)
         btns.addStretch()
 
         self.vbmc_status = QLabel()
@@ -206,8 +213,8 @@ class VbmcTabMixin:
         existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
         base = self.vbmc_base.text().strip() or "127.9.0"
         port = self.vbmc_port.value()
-        # Echtes Netz erkennen (Gateway/Subnetz der FritzBox); sonst Loopback als Fallback
-        net = local_network()
+        # Modus: echtes Netz (FritzBox) zum Üben oder Loopback (scharfe Migration läuft grün)
+        net = local_network() if self.vbmc_adopt_mode.currentData() == "net" else None
         if net:
             mask, gw, new_prefix, new_port = net["mask"], net["gateway"], net["prefix"], ""
             if not self.def_mask.text().strip():

@@ -102,6 +102,21 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Neue IP: echtes Netz (FritzBox) – zum Üben": [
+"New IP: real network (router) – for practice",
+"Nouvelle IP : réseau réel (box) – pour s'entraîner",
+"Neui IP: echts Netz (FritzBox) – zum Üebe"
+],
+"Neue IP: Loopback – scharfe Migration läuft grün": [
+"New IP: loopback – live migration passes green",
+"Nouvelle IP : loopback – la migration réelle passe au vert",
+"Neui IP: Loopback – scharfi Migration lauft grüen"
+],
+"Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit deinem Präfix vorgefüllt (ideal für Trockenlauf). Loopback: die neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft.": [
+"Real network: gateway/subnet are detected and the new IP is prefilled with your prefix (ideal for a dry run). Loopback: the new IP stays on 127.x:port so a live run also passes green.",
+"Réseau réel : la passerelle/le sous-réseau sont détectés et la nouvelle IP est préremplie avec votre préfixe (idéal pour une simulation). Loopback : la nouvelle IP reste sur 127.x:port pour qu'un vrai run passe aussi au vert.",
+"Echts Netz: Gateway/Subnetz werdet erkennt und d neui IP wird mit dim Präfix vorgfüllt (ideal für de Troggelauf). Loopback: d neui IP bliibt uf 127.x:Port, dass au en scharfe Lauf grüen durelauft."
+],
 "{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen und oben Benutzer/Passwort setzen.": [
 "{0} servers added. Network detected (gateway {1}, mask {2}); for “New IP” just enter the last digit and set user/password above.",
 "{0} serveurs ajoutés. Réseau détecté (passerelle {1}, masque {2}) ; pour « Nouvelle IP », saisissez juste le dernier chiffre et renseignez l'utilisateur/mot de passe ci-dessus.",
