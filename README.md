@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" width="112" alt="BMC-Steward logo"></p>
+
 # BMC-Steward
 
 *Deutsche Fassung: [README.de.md](README.de.md)*
