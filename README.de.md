@@ -72,25 +72,69 @@ Dazu kommt:
 
 ## Installieren und starten
 
-**Arch Linux / CachyOS**
+Voraussetzung ist Python 3.9 oder neuer. Die Oberfläche braucht PyQt6; der DHCP-Server und die
+optionalen Teile (Handy-Scanner, UEFI-Konsole) haben eigene Zusatzprogramme.
+
+### Arch Linux / CachyOS
 
 ```bash
-sudo pacman -S python-pyqt6 dnsmasq
+# Grundinstallation
+sudo pacman -S python-pyqt6 dnsmasq git
+
+# Code holen und starten
+git clone https://github.com/daklicker-code/bmc-steward.git
+cd bmc-steward
 python bmc-steward.py
 ```
 
-**Debian / Ubuntu**
+Optionale Bestandteile:
 
 ```bash
-sudo apt install python3-pyqt6 dnsmasq
+# Handy-Scanner (Barcode + Texterkennung + QR-Code)
+sudo pacman -S zbar tesseract tesseract-data-eng qrencode
+
+# UEFI-Konsole: eingebettete Web-Konsole und Textkonsole (SOL/SSH)
+sudo pacman -S python-pyqt6-webengine ipmitool sshpass
+pip install --break-system-packages pyte
+```
+
+Bei aktiver Firewall (ufw) für den DHCP-Server UDP 67 und für den Handy-Scanner Port 8443 freigeben:
+
+```bash
+sudo ufw allow 67/udp
+sudo ufw allow 8443/tcp
+```
+
+### Windows
+
+1. **Python installieren** von [python.org](https://www.python.org/downloads/) (Version 3.9 oder neuer),
+   beim Setup **„Add python.exe to PATH“** ankreuzen.
+2. **PyQt6 installieren** in der Eingabeaufforderung:
+   ```powershell
+   pip install PyQt6
+   ```
+3. **Code holen:** entweder mit Git
+   ```powershell
+   git clone https://github.com/daklicker-code/bmc-steward.git
+   ```
+   oder auf GitHub über **Code → Download ZIP** und entpacken.
+4. **Starten** im Projektordner:
+   ```powershell
+   python bmc-steward.py
+   ```
+
+Der DHCP-Server ist unter Windows eingebaut (kein dnsmasq nötig) — beim Start die Firewall-Abfrage
+zulassen. Der Handy-Scanner braucht zusätzlich `openssl`, `zbar`, `tesseract` und `qrencode` im PATH,
+unter Windows von Hand zu installieren. Die **Text**konsole der UEFI-Konsole (SOL/SSH) gibt es nur
+unter Linux.
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install python3-pyqt6 dnsmasq git
+git clone https://github.com/daklicker-code/bmc-steward.git
+cd bmc-steward
 python3 bmc-steward.py
-```
-
-**Windows**
-
-```powershell
-pip install PyQt6
-python bmc-steward.py
 ```
 
 ## Bedienung
