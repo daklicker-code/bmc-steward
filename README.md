@@ -67,7 +67,7 @@ On top of that:
 - Python 3.9 or newer
 - PyQt6
 - Linux only: `dnsmasq` and polkit (`pkexec`) for the DHCP server
-- Optional, for the UEFI console: PyQt6-WebEngine (embedded console), `pyte` + `ipmitool` + `sshpass` (text console, Linux only)
+- Optional, for the UEFI console: PyQt6-WebEngine (embedded console), `pyte` + `paramiko` + `pyghmi` (text console, Linux and Windows)
 
 ## Install and run
 
@@ -93,8 +93,8 @@ Optional components:
 sudo pacman -S zbar tesseract tesseract-data-eng qrencode
 
 # UEFI console: embedded web console and text console (SOL/SSH)
-sudo pacman -S python-pyqt6-webengine ipmitool sshpass
-pip install --break-system-packages pyte
+sudo pacman -S python-pyqt6-webengine
+pip install --break-system-packages pyte paramiko pyghmi
 ```
 
 With an active firewall (ufw), open UDP 67 for the DHCP server and port 8443 for the phone scanner:
@@ -105,6 +105,12 @@ sudo ufw allow 8443/tcp
 ```
 
 ### Windows
+
+**Ready-made .exe (no Python install needed)** — download `bmc-steward.exe` from the
+[latest release](https://github.com/daklicker-code/bmc-steward/releases) and run it. Builds made
+between releases are under **Actions → Build Windows EXE → Artifacts**.
+
+**From source:**
 
 1. **Install Python** from [python.org](https://www.python.org/downloads/) (3.9 or newer) and tick
    **“Add python.exe to PATH”** during setup.
@@ -124,7 +130,9 @@ sudo ufw allow 8443/tcp
 
 The DHCP server is built in on Windows (no dnsmasq needed) — allow the firewall prompt when you start
 it. The phone scanner additionally needs `openssl`, `zbar`, `tesseract` and `qrencode` on the PATH,
-installed by hand on Windows. The UEFI **text** console (SOL/SSH) is Linux-only.
+installed by hand on Windows. The embedded UEFI console needs QtWebEngine and the text console
+(SOL/SSH) needs `pyte`, `paramiko` and `pyghmi`; the ready-made `.exe` already bundles all of these,
+from source install them with `pip install PyQt6-WebEngine pyte paramiko pyghmi`.
 
 ### Debian / Ubuntu
 

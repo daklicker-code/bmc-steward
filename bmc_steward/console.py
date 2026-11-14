@@ -529,7 +529,7 @@ class ConsoleMixin:
         sf = QFormLayout(self.con_serial_box)
         sf.setContentsMargins(0, 0, 0, 0)
         self.tip_row(sf, T("Verfahren"), self.con_method,
-                     T("Automatisch: Supermicro über ipmitool, Dell/HPE/Lenovo über SSH (sshpass), sonst ipmitool.\n"
+                     T("Automatisch: Supermicro über IPMI-SOL (pyghmi), Dell/HPE/Lenovo über SSH (paramiko), sonst IPMI-SOL.\n"
                        "IPMI über LAN muss im BMC aktiviert sein (bei Dell ab Werk aus)."))
         self.tip_row(sf, T("Terminaltyp"), self.con_term,
                      T("Muss zur Einstellung „Terminal Type“ im UEFI passen: VT100/VT-UTF8 → UTF-8,\n"

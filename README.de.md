@@ -68,7 +68,7 @@ Dazu kommt:
 - Python 3.9 oder neuer
 - PyQt6
 - Nur Linux: `dnsmasq` und polkit (`pkexec`) für den DHCP-Server
-- Optional für die UEFI-Konsole: PyQt6-WebEngine (eingebettete Konsole), `pyte` + `ipmitool` + `sshpass` (Textkonsole, nur Linux)
+- Optional für die UEFI-Konsole: PyQt6-WebEngine (eingebettete Konsole), `pyte` + `paramiko` + `pyghmi` (Textkonsole, Linux und Windows)
 
 ## Installieren und starten
 
@@ -94,8 +94,8 @@ Optionale Bestandteile:
 sudo pacman -S zbar tesseract tesseract-data-eng qrencode
 
 # UEFI-Konsole: eingebettete Web-Konsole und Textkonsole (SOL/SSH)
-sudo pacman -S python-pyqt6-webengine ipmitool sshpass
-pip install --break-system-packages pyte
+sudo pacman -S python-pyqt6-webengine
+pip install --break-system-packages pyte paramiko pyghmi
 ```
 
 Bei aktiver Firewall (ufw) für den DHCP-Server UDP 67 und für den Handy-Scanner Port 8443 freigeben:
@@ -106,6 +106,12 @@ sudo ufw allow 8443/tcp
 ```
 
 ### Windows
+
+**Fertige .exe (ohne Python-Installation)** — `bmc-steward.exe` vom
+[neuesten Release](https://github.com/daklicker-code/bmc-steward/releases) herunterladen und starten.
+Zwischenstände zwischen den Releases liegen unter **Actions → Build Windows EXE → Artifacts**.
+
+**Aus dem Quellcode:**
 
 1. **Python installieren** von [python.org](https://www.python.org/downloads/) (Version 3.9 oder neuer),
    beim Setup **„Add python.exe to PATH“** ankreuzen.
@@ -125,8 +131,9 @@ sudo ufw allow 8443/tcp
 
 Der DHCP-Server ist unter Windows eingebaut (kein dnsmasq nötig) — beim Start die Firewall-Abfrage
 zulassen. Der Handy-Scanner braucht zusätzlich `openssl`, `zbar`, `tesseract` und `qrencode` im PATH,
-unter Windows von Hand zu installieren. Die **Text**konsole der UEFI-Konsole (SOL/SSH) gibt es nur
-unter Linux.
+unter Windows von Hand zu installieren. Die eingebettete UEFI-Konsole braucht QtWebEngine, die
+**Text**konsole (SOL/SSH) braucht `pyte`, `paramiko` und `pyghmi`; die fertige `.exe` bündelt das
+bereits, aus dem Quellcode mit `pip install PyQt6-WebEngine pyte paramiko pyghmi` nachinstallieren.
 
 ### Debian / Ubuntu
 
