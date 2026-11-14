@@ -5,6 +5,7 @@ import errno
 from xml.sax.saxutils import escape
 import http.client
 import json
+import ipaddress
 import re
 import socket
 import ssl
@@ -704,8 +705,15 @@ class Engine(RedfishClient):
 
     @staticmethod
     def in_use(ip):
-        """True, wenn unter der Adresse schon ein Gerät antwortet (Verbindung klappt oder wird aktiv abgelehnt)."""
-        alive = {0, errno.ECONNREFUSED, getattr(errno, "WSAECONNREFUSED", 10061)}
+        """True, wenn unter der Adresse schon ein Gerät antwortet (Verbindung klappt oder wird aktiv abgelehnt).
+        Im gesamten Loopback-Bereich (127.0.0.0/8, Testlabor) lehnt der Kernel jeden unbelegten Port sofort
+        aktiv ab, unabhängig davon, ob dort ein virtueller Server läuft - "aktiv abgelehnt" ist dort also kein
+        Beweis. Dort zählt nur eine tatsächlich angenommene Verbindung."""
+        try:
+            loopback = ipaddress.IPv4Address(ip).is_loopback
+        except ValueError:
+            loopback = False
+        alive = {0} if loopback else {0, errno.ECONNREFUSED, getattr(errno, "WSAECONNREFUSED", 10061)}
         for port in (443, 80, 22, 445):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(0.5)
