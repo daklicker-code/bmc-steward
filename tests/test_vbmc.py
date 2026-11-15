@@ -10,11 +10,11 @@ import importlib.util
 import io
 import json
 import os
-import re
 import socket
 import ssl
 import struct
 import sys
+import time
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -280,6 +280,55 @@ class TestConsoleUi(unittest.TestCase):
         self.assertIn("vbmc-kvm", body)
 
 
+class TestMigrateRollback(unittest.TestCase):
+    """Ohne Netzlabor (Loopback) gehört nur 127.x diesem Rechner. Ein Umzug auf eine andere Adresse
+    (z. B. wenn der Hauptreiter versehentlich eine echte LAN-Adresse wie 192.168.0.240 auf einen
+    Loopback-Testserver schickt) muss fehlschlagen, DARF den Server aber nicht unerreichbar machen -
+    genau das war der gemeldete Fehler ("bekomme keine Verbindung zum Server")."""
+
+    @classmethod
+    def setUpClass(cls):
+        cert, key = vbmc.ensure_cert()
+        cls.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        cls.ctx.load_cert_chain(cert, key)
+        cls.cctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        cls.cctx.check_hostname = False
+        cls.cctx.verify_mode = ssl.CERT_NONE
+
+    def _reachable(self, host, port):
+        try:
+            conn = http.client.HTTPSConnection(host, port, context=self.cctx, timeout=2)
+            conn.request("GET", "/")
+            conn.getresponse()
+            return True
+        except OSError:
+            return False
+        finally:
+            conn.close()
+
+    def test_failed_migration_keeps_old_address_reachable(self):
+        # Fester Port statt 0: _bind_redfish() bindet beim Rollback auf die Fleet-eigenen
+        # redfish_ports erneut - mit 0 (das OS wählt frei) wäre das nach dem Rollback ein anderer
+        # Port als vorher, in der echten CLI ist redfish_ports aber immer fest (z. B. [8443]).
+        port = 18643
+        fleet = vbmc.Fleet(self.ctx, [port])
+        b = vbmc.BMC("hpe", "127.9.0.21", port, idx=1)
+        fleet.start(b)
+        self.addCleanup(fleet.stop, b)
+
+        before = b.status
+        fleet.migrate(b, "192.168.0.240")
+        for _ in range(30):                         # migrate() läuft asynchron (0.6 s Verzögerung)
+            time.sleep(0.1)
+            if b.status != before:
+                break
+
+        self.assertEqual(b.addr, f"127.9.0.21:{port}", "Adresse bleibt die alte")
+        self.assertIn("alte Adresse bleibt aktiv", b.status)
+        self.assertIn("Rechenzentrum", b.status)
+        self.assertTrue(self._reachable("127.9.0.21", port), "Server muss unter der alten Adresse erreichbar bleiben")
+
+
 class TestTestlabTab(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -341,9 +390,9 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual([w.cell(0, c) for c in (0, 1, 2)], ["192.168.0.101", "Dell4711", "192.168.0.51"])
         w.vbmc_show_state([])
 
-    def test_save_and_open_log(self):
-        """Die Knöpfe „Protokoll öffnen/speichern“ (Testlabor) - z. B. um einen Fehlschlag wie
-        „Gerät nicht erreichbar“ weiterzugeben."""
+    def test_save_log(self):
+        """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht
+        erreichbar“ weiterzugeben."""
         w = self.w
         w.vbmc_log.setPlainText("[12:00:00] Server CN123 gestartet")
         with tempfile.TemporaryDirectory() as d:
@@ -351,10 +400,6 @@ class TestTestlabTab(unittest.TestCase):
             with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName", return_value=(p, "")):
                 w.vbmc_save_log()
             self.assertIn("Server CN123 gestartet", open(p, encoding="utf-8").read())
-            w.vbmc_log.clear()
-            with patch("bmc_steward.vbmc_tab.QFileDialog.getOpenFileName", return_value=(p, "")):
-                w.vbmc_open_log()
-            self.assertIn("Server CN123 gestartet", w.vbmc_log.toPlainText())
 
     def test_save_log_refuses_when_empty(self):
         w = self.w
@@ -362,6 +407,27 @@ class TestTestlabTab(unittest.TestCase):
         with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName") as dlg:
             w.vbmc_save_log()
             dlg.assert_not_called()
+
+    def test_open_log_writes_tempfile_and_opens_it(self):
+        """„Protokoll anzeigen …“ fragt NICHT nach einer Datei (das war der gemeldete Fehler), sondern
+        schreibt das aktuell sichtbare Protokoll direkt in eine Datei und öffnet diese."""
+        w = self.w
+        w.vbmc_log.setPlainText("[12:00:00] Server CN123 gestartet")
+        with patch("bmc_steward.vbmc_tab.QFileDialog.getOpenFileName") as dlg, \
+             patch("bmc_steward.vbmc_tab.QDesktopServices.openUrl", return_value=True) as opener:
+            w.vbmc_open_log()
+            dlg.assert_not_called()
+            opener.assert_called_once()
+            path = opener.call_args[0][0].toLocalFile()
+        self.assertIn("Server CN123 gestartet", open(path, encoding="utf-8").read())
+        os.unlink(path)
+
+    def test_open_log_refuses_when_empty(self):
+        w = self.w
+        w.vbmc_log.clear()
+        with patch("bmc_steward.vbmc_tab.QDesktopServices.openUrl") as opener:
+            w.vbmc_open_log()
+            opener.assert_not_called()
 
 
 if __name__ == "__main__":

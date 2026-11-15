@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialo
                              QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
                              QPushButton, QSpinBox, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import QProcess, QTimer, Qt
+from PyQt6.QtGui import QDesktopServices, QFont
+from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 
 from .i18n import HERE, T
@@ -315,9 +315,10 @@ class VbmcTabMixin:
         lbox = QGroupBox(T("Protokoll"))
         ll = QVBoxLayout(lbox)
         lrow = QHBoxLayout()
-        self.vbmc_log_open_btn = QPushButton(T("Protokoll öffnen …"))
-        self.vbmc_log_open_btn.setToolTip(T("Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\n"
-                                            "Ersetzt die aktuelle Anzeige, ändert aber nichts an der Flotte."))
+        self.vbmc_log_open_btn = QPushButton(T("Protokoll anzeigen …"))
+        self.vbmc_log_open_btn.setToolTip(T("Schreibt die aktuelle Ausgabe der Flotte in eine Textdatei und "
+                                            "öffnet sie im Standardprogramm für Textdateien (z. B. zum Suchen "
+                                            "in einem langen Protokoll)."))
         self.vbmc_log_open_btn.clicked.connect(self.vbmc_open_log)
         self.vbmc_log_save_btn = QPushButton(T("Protokoll speichern …"))
         self.vbmc_log_save_btn.setToolTip(T("Speichert die Ausgabe der Flotte als Textdatei, z. B. um einen "
@@ -613,18 +614,24 @@ class VbmcTabMixin:
         self.vbmc_status.setStyleSheet("color: #c9302c;" if err else "color: #2e9e4f;")
 
     def vbmc_open_log(self):
-        """Zeigt eine zuvor gespeicherte Protokoll-Textdatei der Flotte an (nur Ansicht)."""
-        path, _ = QFileDialog.getOpenFileName(self, T("Protokoll öffnen"), str(HERE),
-                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
-        if not path:
+        """Schreibt die aktuelle Ausgabe der Flotte in eine Textdatei und öffnet sie im Standardprogramm
+        für Textdateien - zum Durchsuchen/Vergrößern, ohne die eingebettete Anzeige zu verlassen."""
+        text = self.vbmc_log.toPlainText()
+        if not text.strip():
+            self.vbmc_set_status(T("Das Protokoll ist noch leer."), True)
             return
+        path = Path(tempfile.gettempdir()) / ("vbmc-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
         try:
-            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            path.write_text(text + "\n", encoding="utf-8")
         except OSError as e:
-            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht lesbar:\n{0}').format(e))
+            QMessageBox.warning(self, T("Protokoll anzeigen"), T('Datei nicht schreibbar:\n{0}').format(e))
             return
-        self.vbmc_log.setPlainText(text)
-        self.vbmc_set_status(T("Protokoll geladen aus {0}").format(path))
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(self, T("Protokoll anzeigen"),
+                                T("Kein Standardprogramm für Textdateien gefunden.\nDatei liegt unter {0}")
+                                .format(path))
+            return
+        self.vbmc_set_status(T("Protokoll geöffnet: {0}").format(path))
 
     def vbmc_save_log(self):
         """Schreibt die Ausgabe der Flotte in eine Textdatei, z. B. um einen Fehlschlag weiterzugeben."""

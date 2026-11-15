@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 __license__ = "MIT"
 
 import argparse
@@ -1528,6 +1528,7 @@ class Fleet:
         def do():
             time.sleep(0.6)
             with self.lock:
+                old_host, old_port, old_ipv4 = bmc.host, bmc.port, dict(bmc.ipv4)
                 self._unbind_redfish(bmc)
                 bmc.host, bmc.port = host, port
                 bmc.ipv4["Address"] = host
@@ -1538,8 +1539,19 @@ class Fleet:
                 try:
                     self._bind_redfish(bmc)
                 except Exception as e:
-                    bmc.status = f"Umstellen fehlgeschlagen: {e}"
-                    print(f"  [migrate] {old} -> {new_addr} fehlgeschlagen: {e}", file=sys.stderr)
+                    # Ohne Netzlabor gehört nur 127.x diesem Rechner - eine andere Adresse lässt sich nie
+                    # binden. Wie bei einem echten BMC darf eine abgelehnte/fehlgeschlagene Adressänderung
+                    # die bestehende Erreichbarkeit nicht mit sich reißen: die alte Adresse bleibt aktiv.
+                    hint = (" - ohne Netzlabor gehört nur 127.x diesem Rechner; für {0} das Testlabor im "
+                            "Modus „Rechenzentrum“ oder „Zuhause/Router“ starten.".format(host)
+                            if not host.startswith("127.") else "")
+                    bmc.host, bmc.port, bmc.ipv4 = old_host, old_port, old_ipv4
+                    try:
+                        self._bind_redfish(bmc)
+                        bmc.status = f"Umstellen fehlgeschlagen, alte Adresse bleibt aktiv: {e}{hint}"
+                    except Exception as e2:
+                        bmc.status = f"Umstellen fehlgeschlagen, auch alte Adresse nicht mehr erreichbar: {e2}"
+                    print(f"  [migrate] {old} -> {new_addr} fehlgeschlagen: {e}{hint}", file=sys.stderr)
                     self.emit()
                     return
             print(f"  [migrate] {old} -> {bmc.addr} ({NAME[bmc.vendor]})")
