@@ -325,7 +325,7 @@ class TestMigrateRollback(unittest.TestCase):
 
         self.assertEqual(b.addr, f"127.9.0.21:{port}", "Adresse bleibt die alte")
         self.assertIn("alte Adresse bleibt aktiv", b.status)
-        self.assertIn("Rechenzentrum", b.status)
+        self.assertIn("Konfigraum", b.status)
         self.assertTrue(self._reachable("127.9.0.21", port), "Server muss unter der alten Adresse erreichbar bleiben")
 
 

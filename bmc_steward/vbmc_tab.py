@@ -2,7 +2,7 @@
 startet, überwacht und stoppt sie. Drei Netz-Modi:
 
   loopback  ohne Root, nur dieser PC: Server auf 127.x:Port (wie bisher)
-  rz        Rechenzentrum: isolierter Staging-Switch bmclab0, DHCP über Reiter 1 oder feste Werks-IP
+  rz        Konfigraum: isolierter Staging-Switch bmclab0, DHCP über Reiter 1 oder feste Werks-IP
   router    Zuhause: Server hängen an der Kabel-Netzwerkkarte, Adresse vom Router (z. B. FritzBox)
 
 Jeder Server ist einzeln einstellbar (Hersteller, Firmware-Generation, Werkszustand Netz, Werks-Login,
@@ -44,7 +44,7 @@ SERIAL_PREFIX = {"dell": "CN", "hpe": "CZ", "lenovo": "J", "smc": "S"}
 DELL_STATIC = "192.168.0.120"            # Dell ab Werk ohne DHCP
 
 MODES = [("loopback", "Loopback – ohne Root, nur dieser PC (127.x:Port)"),
-         ("rz", "Rechenzentrum – isolierter Staging-Switch (bmclab0)"),
+         ("rz", "Konfigraum – isolierter Staging-Switch (bmclab0)"),
          ("router", "Zuhause/Router – echtes LAN über die Kabel-Netzwerkkarte")]
 
 # Spalten der Flotten-Tabelle
@@ -127,7 +127,7 @@ class VbmcTabMixin:
         self.vbmc_run_mode = None
 
         intro = QLabel(T("Virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs verhalten - zum "
-                         "Testen und Vorführen ohne Hardware. Im Modus Rechenzentrum oder Router bekommt jeder "
+                         "Testen und Vorführen ohne Hardware. Im Modus Konfigraum oder Router bekommt jeder "
                          "Server eine eigene Netzwerkkarte mit MAC, holt sich per DHCP eine Adresse (oder hat "
                          "eine feste Werks-IP) und zieht beim Umstellen wirklich um."))
         intro.setWordWrap(True)
@@ -142,9 +142,9 @@ class VbmcTabMixin:
             for i in (1, 2):
                 self.vbmc_mode.model().item(i).setEnabled(False)
         self.vbmc_mode.setToolTip(T("Loopback: läuft ohne Root nur auf diesem PC, Adressen als IP:PORT.\n"
-                                    "Rechenzentrum: eigener virtueller Staging-Switch, DHCP über Reiter 1.\n"
+                                    "Konfigraum: eigener virtueller Staging-Switch, DHCP über Reiter 1.\n"
                                     "Router: die Server hängen im echten LAN und erscheinen im Router.\n"
-                                    "Rechenzentrum und Router brauchen beim Start einmal Root (pkexec)."))
+                                    "Konfigraum und Router brauchen beim Start einmal Root (pkexec)."))
         self.vbmc_mode.currentIndexChanged.connect(self.vbmc_mode_changed)
         mf.addRow(T("Modus"), self.vbmc_mode)
 
@@ -167,13 +167,13 @@ class VbmcTabMixin:
                                        "läuft dann über eine Rechteabfrage (pkexec)."))
         lf.addRow("", self.vbmc_console)
         self.vbmc_opts.addWidget(lw)
-        # Rechenzentrum
+        # Konfigraum
         rw = QWidget()
         rf = QFormLayout(rw)
         rf.setContentsMargins(0, 0, 0, 0)
         self.vbmc_rz_addrs = QLineEdit("192.168.0.1/24")
         self.vbmc_rz_addrs.setToolTip(T("Adresse(n) dieses PCs am Staging-Switch, ohne Gateway - wie die Staging-"
-                                        "Karte im RZ. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, "
+                                        "Karte im Konfigraum. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, "
                                         "damit auch die neuen Adressen im Zielnetz erreichbar sind."))
         rf.addRow(T("Dieser PC"), self.vbmc_rz_addrs)
         rinfo = QLabel(T("Nach dem Start ist im Reiter 1 die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
@@ -217,7 +217,7 @@ class VbmcTabMixin:
                                                    T("Seriennummer"), T("Belegter Slot")])
         tips = [T("Hersteller des virtuellen Servers"),
                 T("Firmware-Generation. „iDRAC8, Firmware zu alt“ und iLO 3/4 prüfen die Sonderwege von BMC-Steward."),
-                T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Rechenzentrum/Router."),
+                T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Konfigraum/Router."),
                 T("Feste Werks-IP (nur bei „Feste IP“)"),
                 T("Werksbenutzer, mit dem BMC-Steward sich anmeldet"),
                 T("Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in Reiter 2."),
@@ -672,9 +672,9 @@ class VbmcTabMixin:
             try:
                 addrs = [str(ipaddress.IPv4Interface(a.strip())) for a in sc["host_addrs"].split(",") if a.strip()]
             except ValueError as e:
-                addrs, err = None, T("Rechenzentrum, Adresse dieses PCs: {0}").format(e)
+                addrs, err = None, T("Konfigraum, Adresse dieses PCs: {0}").format(e)
             if addrs is not None and not addrs:
-                err = T("Rechenzentrum: Adresse dieses PCs fehlt, z. B. 192.168.0.1/24.")
+                err = T("Konfigraum: Adresse dieses PCs fehlt, z. B. 192.168.0.1/24.")
         if not err and mode == "router" and not sc["parent"]:
             err = T("Router: bitte die Kabel-Netzwerkkarte wählen.")
         need_root = mode in ("rz", "router") or (mode == "loopback" and self.vbmc_console.isChecked())
@@ -833,7 +833,7 @@ class VbmcTabMixin:
                                        "selbst eintragen.").format(ready))
 
     def vbmc_preselect_staging(self):
-        """RZ-Modus: im DHCP-Reiter die Karte bmclab0 schon auswählen (wie die Staging-Karte im RZ)."""
+        """Konfigraum-Modus: im DHCP-Reiter die Karte bmclab0 schon auswählen (wie die Staging-Karte im Konfigraum)."""
         self.vbmc_iface_done = True
         try:
             if self.dhcp_running():

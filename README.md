@@ -34,7 +34,7 @@ Everything is organised into tabs; work through them in order or use only what y
 
 | Tab | What it does |
 |---|---|
-| **1 · DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list with one click. |
+| **1 · DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list by themselves (“Add automatically”, on by default, can be switched off) or with one click. |
 | **2 · Configure servers** | The core: creates the new administrator, sets the hostname and switches the BMC to a static IP (address, subnet mask, gateway). Servers can be done one after another; finished rows turn green and are skipped on the next run. |
 | **↳ Phone scanner** | Opens a camera-based input from tab 2: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
 | **2b · Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to tabs 2–4. |
@@ -42,7 +42,7 @@ Everything is organised into tabs; work through them in order or use only what y
 | **4 · Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
 | **5 · Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
 | **6 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
-| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **data centre** (virtual staging switch, DHCP from tab 1) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
+| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **config room** (virtual staging switch, DHCP from tab 1) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
 | **7 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:

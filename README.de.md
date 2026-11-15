@@ -34,7 +34,7 @@ Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nu
 
 | Reiter | Funktion |
 |---|---|
-| **1 · DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern per Klick in die Serverliste. |
+| **1 · DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern von selbst in die Serverliste (Haken „Automatisch übernehmen“, voreingestellt, abschaltbar) oder per Klick. |
 | **2 · Server konfigurieren** | Das Kernstück: legt den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf eine feste IP (Adresse, Subnetzmaske, Gateway) um. Server lassen sich nacheinander abarbeiten; fertige Zeilen werden grün und beim nächsten Lauf übersprungen. |
 | **↳ Handy-Scanner** | Öffnet aus Reiter 2 eine kameragestützte Eingabe: Das Handy (im selben Netz oder per USB-Tethering/Hotspot verbunden) scannt Barcode oder Text (OCR) vom Geräteaufkleber, der Wert landet direkt im Passwortfeld. Es wird kein Foto auf dem Handy gespeichert, die Verbindung läuft verschlüsselt über einen geheimen Link. |
 | **2b · Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in die Reiter 2–4 über. |
@@ -42,7 +42,7 @@ Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nu
 | **4 · Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
 | **5 · Firmware** | Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar eines Referenzgeräts und spielt dann eine lokale Datei (Multipart-/HTTP-Push) oder eine Datei von einer URL (SimpleUpdate) auf alle Server der Liste – mit Live-Fortschritt und Verifikation. Trockenlauf ist Vorgabe; scharfe Läufe verlangen das Eintippen der Serverzahl. |
 | **6 · UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
-| **Testlabor** | Stellt eine Flotte virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Rechenzentrum** (virtueller Staging-Switch, DHCP aus Reiter 1) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
+| **Testlabor** | Stellt eine Flotte virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Konfigraum** (virtueller Staging-Switch, DHCP aus Reiter 1) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
 | **7 · Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
 
 Dazu kommt:

@@ -370,7 +370,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 "new_user": self.new_user.text().strip(), "slot": self.slot.value(),
                 "mask": self.def_mask.text().strip(), "gateway": self.def_gw.text().strip(),
                 "dhcp_if": (self.iface.currentData() or [""])[0],
-                "dhcp_from": self.dhcp_from.text().strip(), "dhcp_to": self.dhcp_to.text().strip()}
+                "dhcp_from": self.dhcp_from.text().strip(), "dhcp_to": self.dhcp_to.text().strip(),
+                "dhcp_auto": self.auto_take.isChecked()}
 
     def apply_profile(self, p):
         dirty = self.dirty                      # ein Profilwechsel ändert die Serverliste nicht
@@ -387,6 +388,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if p.get("dhcp_from") and p.get("dhcp_to"):
             self.dhcp_from.setText(str(p["dhcp_from"]))
             self.dhcp_to.setText(str(p["dhcp_to"]))
+        self.auto_take.setChecked(bool(p.get("dhcp_auto", True)))      # ältere Profile ohne Angabe: an
         self.validate_defaults()
         self.validate_range()
         self.dirty = dirty
@@ -1398,9 +1400,22 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                         "Mit Markierung nur die markierten Geräte, sonst alle."))
         take.clicked.connect(self.take_leases)
         self.lease_count = QLabel(T("0 Geräte"))
+        self.lease_taken = set()          # MACs, die schon in der Serverliste waren: nie ein zweites Mal eintragen
+        self.auto_take = QCheckBox(T("Automatisch übernehmen"))
+        self.auto_take.setChecked(True)
+        self.auto_take.setToolTip(T("Trägt neu gefundene Geräte von selbst in die Serverliste ein (Aktuelle IP).\n"
+                                    "Es wird nichts konfiguriert: Neue IP, Hostname und der Start bleiben Handarbeit.\n"
+                                    "Ein Gerät kommt nur einmal in die Liste; wer eine Zeile löscht, bekommt sie nicht\n"
+                                    "von selbst zurück. Während eines Laufs wartet die Übernahme bis zum Ende.\n"
+                                    "Ohne Haken übernimmt nur der Knopf rechts."))
+        self.auto_take.toggled.connect(self.auto_take_leases)
+        self.auto_timer = QTimer(self)             # holt zurückgestellte Geräte nach (Lauf aktiv, Zelle in Bearbeitung)
+        self.auto_timer.setInterval(2000)
+        self.auto_timer.timeout.connect(self.auto_take_leases)
         lb = QHBoxLayout()
         lb.addWidget(self.lease_count)
         lb.addStretch()
+        lb.addWidget(self.auto_take)
         lb.addWidget(take)
         box2 = QGroupBox(T("Gefundene Geräte"))
         v = QVBoxLayout(box2)
@@ -1586,6 +1601,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.iface.setEnabled(False)
         self.dhcp_from.setEnabled(False)
         self.dhcp_to.setEnabled(False)
+        self.auto_timer.start()
 
         if WINDOWS:                                  # eingebauter Server, braucht kein Zusatzprogramm
             self.lease_file = None
@@ -1646,6 +1662,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
 
     def dhcp_done(self, code=0, *_):
         self.lease_timer.stop()
+        self.auto_timer.stop()
         self.guard_timer.stop()
         if self.lease_file:
             self.read_leases()
@@ -1687,15 +1704,23 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             for c, val in enumerate(vals):
                 self.leases.setItem(r, c, QTableWidgetItem(val))
         self.lease_count.setText(T('{0} Geräte').format(len(rows)))
+        self.auto_take_leases()
 
-    def take_leases(self):
-        sel = sorted({i.row() for i in self.leases.selectedIndexes()}) or range(self.leases.rowCount())
+    def lease_pairs(self, rows=None):
+        """(IP, MAC) der angezeigten Geräte; mit rows nur die dieser Tabellenzeilen."""
+        return [(self.leases.item(r, 0).text(), self.leases.item(r, 1).text())
+                for r in (range(self.leases.rowCount()) if rows is None else rows)]
+
+    def add_leased(self, pairs):
+        """Geräte als „Aktuelle IP“ in die Serverliste eintragen. Gibt die neu eingetragenen IPs zurück."""
         known = {r[0] for r in self.rows(open_only=True)}      # fertige Server haben ihre alte IP abgegeben
-        new = [self.leases.item(r, 0).text() for r in sel]
-        new = [ip for ip in new if ip not in known]
+        new = []
+        for ip, mac in pairs:
+            self.lease_taken.add(mac or ip)                    # auch schon bekannte: später nicht noch einmal anbieten
+            if ip not in known and ip not in new:
+                new.append(ip)
         if not new:
-            self.status.setText(T("Keine neuen Geräte zum Übernehmen"))
-            return
+            return []
         for r in reversed(range(self.table.rowCount())):          # leere Zeilen entfernen
             if not any(self.cell(r, c) for c in (0, 2, 5)):
                 self.table.removeRow(r)
@@ -1704,8 +1729,31 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             self.table.item(self.table.rowCount() - 1, 0).setText(ip)
         self.update_count()
         self.touch()
+        return new
+
+    def take_leases(self):
+        sel = sorted({i.row() for i in self.leases.selectedIndexes()}) or range(self.leases.rowCount())
+        new = self.add_leased(self.lease_pairs(sel))
+        if not new:
+            self.status.setText(T("Keine neuen Geräte zum Übernehmen"))
+            return
         self.tabs.setCurrentIndex(1)
         self.status.setText(T('{0} Geräte übernommen: jetzt neue IP und Hostname eintragen').format(len(new)))
+
+    def auto_take_leases(self, *_):
+        """Neu gefundene Geräte von selbst in die Serverliste eintragen (Haken „Automatisch übernehmen“).
+        Wartet, solange die Liste gesperrt ist (Lauf) oder eine Zelle bearbeitet wird; der Timer holt es nach."""
+        if not self.auto_take.isChecked() or self.running() or not self.table.isEnabled() \
+                or self.table.state() == QAbstractItemView.State.EditingState:
+            return
+        fresh = [(ip, mac) for ip, mac in self.lease_pairs() if (mac or ip) not in self.lease_taken]
+        if not fresh:
+            return
+        new = self.add_leased(fresh)
+        if new:
+            text = T('{0} Geräte automatisch übernommen: jetzt neue IP und Hostname eintragen').format(len(new))
+            self.status.setText(text)
+            self.dlog(text, "#3fa45b")
 
     # ---------- Ablauf ----------
     def run(self):
@@ -2502,6 +2550,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "slot": self.slot.value(), "iface": (self.iface.currentData() or [None])[0],
             "texts": {k: getattr(self, k).text() for k in self.STATE_FIELDS},
             "new_pass2_chk": self.new_pass2_chk.isChecked(),
+            "auto_take": self.auto_take.isChecked(), "lease_taken": sorted(self.lease_taken),
             "rows": [([self.cell(r, c) for c in range(len(i18n.COLS))], self.is_done(r))
                      for r in range(self.table.rowCount())],
             "bios_profile": self.bios_current_profile(), "bios_vendor": self.bios_vendor.currentData() or "",
@@ -2521,6 +2570,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         for key, text in s["texts"].items():
             getattr(self, key).setText(text)
         self.new_pass2_chk.setChecked(s.get("new_pass2_chk", False))
+        self.auto_take.setChecked(s.get("auto_take", True))
+        self.lease_taken = set(s.get("lease_taken", []))
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for vals, done in s["rows"]:
