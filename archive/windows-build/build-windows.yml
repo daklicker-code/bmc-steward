@@ -23,7 +23,7 @@ jobs:
           pip install pyinstaller
 
       - name: EXE bauen
-        run: pyinstaller --onefile --windowed --name bmc-steward --collect-submodules pyghmi bmc-steward.py
+        run: pyinstaller --onefile --windowed --icon docs/logo.ico --name bmc-steward --collect-submodules pyghmi bmc-steward.py
 
       - name: Artefakt hochladen
         uses: actions/upload-artifact@v4
