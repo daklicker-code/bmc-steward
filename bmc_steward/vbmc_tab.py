@@ -1,4 +1,4 @@
-"""BMC-Steward: Reiter „Testlabor" - stellt eine virtuelle BMC-Flotte (tools/vbmc/vbmc.py) zusammen,
+"""BMC-Steward: Reiter „Testlabor" - stellt eine virtuelle BMC-Cluster (tools/vbmc/vbmc.py) zusammen,
 startet, überwacht und stoppt sie. Drei Netz-Modi:
 
   loopback  ohne Root, nur dieser PC: Server auf 127.x:Port (wie bisher)
@@ -53,7 +53,7 @@ MODE_INFO = {
     'router': 'Die Server hängen mit eigener MAC am echten LAN (Kabel-Netzwerkkarte) und bekommen ihre Adresse vom Router, z. B. einer FritzBox, wo sie als eigene Geräte erscheinen.\nBeispiel: Ein HPE meldet sich als „ILOCZ12345“ beim Router und bekommt 192.168.178.45; das Umstellen auf eine feste Adresse wie 192.168.178.201 läuft wirklich durch. Braucht beim Start einmal Root, WLAN geht nicht.',
 }
 
-# Spalten der Flotten-Tabelle
+# Spalten der Cluster-Tabelle
 C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT, C_LIC = range(10)
 # Spalten der Übersicht laufender Server
 S_NR, S_DEV, S_ID, S_MAC, S_ADDR, S_STATE, S_LOGIN, S_LINK = range(8)
@@ -223,9 +223,9 @@ class VbmcTabMixin:
         self.vbmc_opts.addWidget(hw)
         mf.addRow(self.vbmc_opts)
 
-        # --- Flotte ---
+        # --- Cluster ---
         fbox = QGroupBox(T("Cluster-Konfiguration"))
-        fbox.setToolTip(T("Jede Zeile ist ein virtueller Server. „Flotte starten“ startet alle Zeilen zusammen."))
+        fbox.setToolTip(T("Jede Zeile ist ein virtueller Server. „Cluster starten“ startet alle Zeilen zusammen."))
         fl = QVBoxLayout(fbox)
         self.vbmc_fleet = QTableWidget(0, 10)
         self.vbmc_fleet.setHorizontalHeaderLabels([T("Hersteller"), T("Generation"), T("Werks-Netz"), T("Werks-IP"),
@@ -281,10 +281,10 @@ class VbmcTabMixin:
         fl.addLayout(frow)
 
         # --- Start/Stopp ---
-        self.vbmc_start_btn = QPushButton(T("Flotte starten"))
+        self.vbmc_start_btn = QPushButton(T("Cluster starten"))
         self.vbmc_start_btn.setMinimumHeight(30)
         self.vbmc_start_btn.clicked.connect(self.vbmc_start)
-        self.vbmc_stop_btn = QPushButton(T("Flotte stoppen"))
+        self.vbmc_stop_btn = QPushButton(T("Cluster stoppen"))
         self.vbmc_stop_btn.setEnabled(False)
         self.vbmc_stop_btn.clicked.connect(self.vbmc_stop)
         btns = QHBoxLayout()
@@ -329,18 +329,18 @@ class VbmcTabMixin:
         self.vbmc_log = QPlainTextEdit()
         self.vbmc_log.setReadOnly(True)
         self.vbmc_log.setFont(QFont("monospace"))
-        self.vbmc_log.setPlaceholderText(T("Ausgabe der Flotte (DHCP, Umzüge, Hinweise) …"))
+        self.vbmc_log.setPlaceholderText(T("Ausgabe des Clusters (DHCP, Umzüge, Hinweise) …"))
 
         lbox = QGroupBox(T("Protokoll"))
         ll = QVBoxLayout(lbox)
         lrow = QHBoxLayout()
         self.vbmc_log_open_btn = QPushButton(T("Protokoll anzeigen …"))
-        self.vbmc_log_open_btn.setToolTip(T("Schreibt die aktuelle Ausgabe der Flotte in eine Textdatei und "
+        self.vbmc_log_open_btn.setToolTip(T("Schreibt die aktuelle Ausgabe des Clusters in eine Textdatei und "
                                             "öffnet sie im Standardprogramm für Textdateien (z. B. zum Suchen "
                                             "in einem langen Protokoll)."))
         self.vbmc_log_open_btn.clicked.connect(self.vbmc_open_log)
         self.vbmc_log_save_btn = QPushButton(T("Protokoll speichern …"))
-        self.vbmc_log_save_btn.setToolTip(T("Speichert die Ausgabe der Flotte als Textdatei, z. B. um einen "
+        self.vbmc_log_save_btn.setToolTip(T("Speichert die Ausgabe des Clusters als Textdatei, z. B. um einen "
                                             "Fehler wie „Gerät nicht erreichbar“ weiterzugeben."))
         self.vbmc_log_save_btn.clicked.connect(self.vbmc_save_log)
         lrow.addWidget(self.vbmc_log_open_btn)
@@ -376,10 +376,10 @@ class VbmcTabMixin:
             self.vbmc_set_status(T("tools/vbmc/vbmc.py nicht gefunden. Der Reiter funktioniert nur, wenn "
                                    "BMC-Steward aus dem Quellcode läuft."), True)
         else:
-            self.vbmc_set_status(T("Bereit. Server hinzufügen (oder Szenario laden) und „Flotte starten“."))
+            self.vbmc_set_status(T("Bereit. Server hinzufügen (oder Szenario laden) und „Cluster starten“."))
         return page
 
-    # ================================================================ Flotten-Tabelle
+    # ================================================================ Cluster-Tabelle
     def vbmc_current_mode(self):
         return self.vbmc_mode.currentData()
 
@@ -512,7 +512,7 @@ class VbmcTabMixin:
             self.vbmc_fleet.item(r, C_PASS).setText(random_password(vendor))
 
     def vbmc_entries(self):
-        """Flotte als Liste von Server-Einträgen (Szenario-Format) - oder (None, Fehlertext)."""
+        """Cluster als Liste von Server-Einträgen (Szenario-Format) - oder (None, Fehlertext)."""
         t = self.vbmc_fleet
         out, serials = [], set()
         lab = self.vbmc_current_mode() != "loopback"
@@ -638,7 +638,7 @@ class VbmcTabMixin:
         self.vbmc_status.setStyleSheet("color: #c9302c;" if err else "color: #2e9e4f;")
 
     def vbmc_open_log(self):
-        """Schreibt die aktuelle Ausgabe der Flotte in eine Textdatei und öffnet sie im Standardprogramm
+        """Schreibt die aktuelle Ausgabe des Clusters in eine Textdatei und öffnet sie im Standardprogramm
         für Textdateien - zum Durchsuchen/Vergrößern, ohne die eingebettete Anzeige zu verlassen."""
         text = self.vbmc_log.toPlainText()
         if not text.strip():
@@ -658,7 +658,7 @@ class VbmcTabMixin:
         self.vbmc_set_status(T("Protokoll geöffnet: {0}").format(path))
 
     def vbmc_save_log(self):
-        """Schreibt die Ausgabe der Flotte in eine Textdatei, z. B. um einen Fehlschlag weiterzugeben."""
+        """Schreibt die Ausgabe des Clusters in eine Textdatei, z. B. um einen Fehlschlag weiterzugeben."""
         text = self.vbmc_log.toPlainText()
         if not text.strip():
             self.vbmc_set_status(T("Das Protokoll ist noch leer."), True)
@@ -743,15 +743,15 @@ class VbmcTabMixin:
         self._vbmc_lock(True)
         self.vbmc_adopt_ready(False)
         self.vbmc_adopt_mode.setVisible(mode == "loopback")
-        self.vbmc_set_status(T("Flotte startet …") if not (need_root and not root)
-                             else T("Flotte startet … (Rechteabfrage bestätigen)"))
+        self.vbmc_set_status(T("Cluster startet …") if not (need_root and not root)
+                             else T("Cluster startet … (Rechteabfrage bestätigen)"))
 
     def vbmc_stop(self):
-        """Über den Steuerkanal beenden: braucht keine Rechte, die Flotte räumt Netz und Leases selbst auf."""
+        """Über den Steuerkanal beenden: braucht keine Rechte, der Cluster räumt Netz und Leases selbst auf."""
         if not self.vbmc_running():
             return
         self.vbmc_stop_btn.setEnabled(False)
-        self.vbmc_set_status(T("Flotte wird gestoppt (Adressen werden freigegeben) …"))
+        self.vbmc_set_status(T("Cluster wird gestoppt (Adressen werden freigegeben) …"))
         self.vbmc_proc.write(b"quit\n")
         self.vbmc_proc.closeWriteChannel()
         QTimer.singleShot(15000, self._vbmc_force_stop)
@@ -780,7 +780,7 @@ class VbmcTabMixin:
                     self.vbmc_show_state(json.loads(line[8:]))
                 except ValueError:
                     pass
-                self._vbmc_drop_cfg()       # die Flotte hat das Szenario gelesen
+                self._vbmc_drop_cfg()       # der Cluster hat das Szenario gelesen
             else:
                 out.append(line.rstrip("\r"))
         if out:
@@ -808,12 +808,12 @@ class VbmcTabMixin:
         self.vbmc_servers = []
         self.vbmc_show_state([])
         if code in (126, 127) and self.vbmc_proc and self.vbmc_proc.program() == "pkexec":
-            self.vbmc_set_status(T("Rechteabfrage abgebrochen, die Flotte wurde nicht gestartet."), True)
+            self.vbmc_set_status(T("Rechteabfrage abgebrochen, der Cluster wurde nicht gestartet."), True)
         elif code:
             last = [l for l in self.vbmc_log.toPlainText().splitlines() if l.strip()]
-            self.vbmc_set_status(T("Flotte beendet mit Fehler: {0}").format(last[-1] if last else code), True)
+            self.vbmc_set_status(T("Cluster beendet mit Fehler: {0}").format(last[-1] if last else code), True)
         else:
-            self.vbmc_set_status(T("Flotte gestoppt."))
+            self.vbmc_set_status(T("Cluster gestoppt."))
 
     # ================================================================ Übersicht
     def vbmc_show_state(self, servers):
@@ -847,14 +847,14 @@ class VbmcTabMixin:
         if servers and self.vbmc_running():
             ready = sum(1 for s in servers if s.get("addr"))
             if ready < len(servers) and self.vbmc_run_mode == "rz":
-                self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse. Die übrigen warten "
+                self.vbmc_set_status(T("Cluster läuft: {0} von {1} Servern haben eine Adresse. Die übrigen warten "
                                        "auf DHCP - in „DHCP-Server“ auf „bmclab0“ den DHCP-Server starten.").format(
                                            ready, len(servers)))
             elif ready < len(servers):
-                self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse, die übrigen warten "
+                self.vbmc_set_status(T("Cluster läuft: {0} von {1} Servern haben eine Adresse, die übrigen warten "
                                        "auf DHCP.").format(ready, len(servers)))
             else:
-                self.vbmc_set_status(T("Flotte läuft: {0} Server erreichbar. Übernehmen in „Neuware“ oder dort "
+                self.vbmc_set_status(T("Cluster läuft: {0} Server erreichbar. Übernehmen in „Neuware“ oder dort "
                                        "selbst eintragen.").format(ready))
 
     def vbmc_preselect_staging(self):
@@ -943,7 +943,7 @@ class VbmcTabMixin:
                                 + (" " + note if note else ""))
 
     def vbmc_shutdown(self):
-        """Beim Schließen des Programms die Flotte mitnehmen (räumt Netzlabor und Leases auf)."""
+        """Beim Schließen des Programms der Cluster mitnehmen (räumt Netzlabor und Leases auf)."""
         if not self.vbmc_running():
             return
         self.vbmc_proc.write(b"quit\n")

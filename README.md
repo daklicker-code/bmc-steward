@@ -44,7 +44,7 @@ Since version 3.0 the tab bar is replaced by a **menu** on the left; the selecte
 | **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
 | **Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
 | **UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
-| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **config room** (virtual staging switch, DHCP from “DHCP server”) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
+| **Test lab** | Builds a cluster of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **config room** (virtual staging switch, DHCP from “DHCP server”) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
 | **Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:
@@ -53,7 +53,7 @@ On top of that:
 - **Profiles** remember recurring settings (never passwords, never the server list).
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
-- **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
+- **Virtual test cluster** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
 ## Built to forgive mistakes
