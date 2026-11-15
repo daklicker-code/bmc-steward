@@ -1,4 +1,4 @@
-<h1><img src="docs/logo.svg" height="36" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
+<h1><img src="docs/logo.svg" height="52" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
 
 *English version: [README.md](README.md)*
 
@@ -32,7 +32,7 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 
 Seit Version 3.0 steht links statt der Reiterleiste ein **Menü**; die gewählte Seite öffnet sich rechts daneben. Man arbeitet die Punkte der Reihe nach ab oder nutzt nur, was man braucht. **DHCP-Server** steht als dunkelgelber Knopf an erster Stelle, weil man dort beginnt.
 
-**Monitor links oben:** Solange keine Konsole verbunden ist, zeigt er dezentes Schwarz-Weiß-Rauschen, in dem sich alle acht Sekunden das Logo – eine Kugel mit Chip – aufbaut, beim Häkchen kurz grün leuchtet und wieder abbaut. Mit einer Verbindung erscheint die Server-Konsole dort als Miniatur; ein Klick darauf öffnet sie direkt in voller Größe. Der Schalter unter dem Monitor wählt die Konsolen-Variante: **HTML5** (eingebettet), **Text** (SOL/SSH) oder **Browser**. Eine verdeckte Web-Ansicht kann nicht neu gezeichnet werden, dann bleibt im Monitor das letzte Bild als Standbild stehen.
+**Monitor links oben:** Solange keine Konsole verbunden ist, zeigt er dezentes Schwarz-Weiß-Rauschen, in dem sich alle acht Sekunden das Logo – eine Kugel mit Netzwerk – aufbaut, beim Stern kurz grün leuchtet und wieder abbaut. Mit einer Verbindung erscheint die Server-Konsole dort als Miniatur; ein Klick darauf öffnet sie direkt in voller Größe. Der Schalter unter dem Monitor wählt die Konsolen-Variante: **HTML5** (eingebettet), **Text** (SOL/SSH) oder **Browser**. Eine verdeckte Web-Ansicht kann nicht neu gezeichnet werden, dann bleibt im Monitor das letzte Bild als Standbild stehen.
 
 | Menüpunkt | Funktion |
 |---|---|

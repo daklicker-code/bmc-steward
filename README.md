@@ -1,4 +1,4 @@
-<h1><img src="docs/logo.svg" height="36" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
+<h1><img src="docs/logo.svg" height="52" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
 
 *Deutsche Fassung: [README.de.md](README.de.md)*
 
@@ -32,7 +32,7 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 
 Since version 3.0 the tab bar is replaced by a **menu** on the left; the selected page opens next to it. Work through the entries in order or use only what you need. **DHCP server** sits at the top as a dark-yellow button, because that is where you start.
 
-**Monitor at the top left:** while no console is connected it shows subtle black-and-white noise in which the logo – a sphere with a chip – builds up every eight seconds, glows green briefly with the check mark and fades away again. Once connected, the server console appears there as a thumbnail; a click on it opens it full size right away. The switch below the monitor picks the console variant: **HTML5** (embedded), **Text** (SOL/SSH) or **Browser**. A hidden web view cannot be redrawn, so the monitor then keeps the last picture as a still frame.
+**Monitor at the top left:** while no console is connected it shows subtle black-and-white noise in which the logo – a sphere with a network – builds up every eight seconds, shows a star and glows green briefly and fades away again. Once connected, the server console appears there as a thumbnail; a click on it opens it full size right away. The switch below the monitor picks the console variant: **HTML5** (embedded), **Text** (SOL/SSH) or **Browser**. A hidden web view cannot be redrawn, so the monitor then keeps the last picture as a still frame.
 
 | Menu entry | What it does |
 |---|---|

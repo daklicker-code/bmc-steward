@@ -5,6 +5,7 @@ Verbindung steht, erscheint deren Bild verkleinert im Monitor; ein Klick öffnet
 Größe. Das Widget kennt die Konsole nicht selbst: Es fragt über eine Rückruffunktion, was gerade
 anzuzeigen ist, und macht von dem Widget nur Bildschirmfotos (grab), es greift nirgends ein.
 """
+import math
 import os
 from PyQt6.QtCore import QElapsedTimer, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
@@ -44,14 +45,29 @@ _SPHERE_RECT = QRectF(_SPHERE_C.x() - _SPHERE_R, _SPHERE_C.y() - _SPHERE_R, 2 * 
 _SPHERE = QPainterPath()                    # Umriss beginnt oben und läuft gegen den Uhrzeigersinn einmal herum
 _SPHERE.arcMoveTo(_SPHERE_RECT, 90)
 _SPHERE.arcTo(_SPHERE_RECT, 90, 360)
-_CHIP = QPainterPath()
-_CHIP.addRoundedRect(QRectF(46, 50, 28, 28), 5, 5)
-_CHECK = QPainterPath(QPointF(53, 64))
-_CHECK.lineTo(QPointF(58, 69))
-_CHECK.lineTo(QPointF(68, 58))
-_TRACES = [_line(32, 44, 44, 44), _line(76, 44, 88, 44), _line(32, 82, 44, 82), _line(76, 82, 88, 82)]
-_DOTS = [(32, 44), (88, 44), (32, 82), (88, 82)]
-_PINS = [_line(x, 45, x, 50) for x in (51, 60, 69)] + [_line(x, 78, x, 83) for x in (51, 60, 69)]
+_HUB_R, _NODE_R = 12, 33                    # Netzwerk: Hub mit Stern in der Mitte, sechs Knoten rundherum
+_NODES = [(60 + _NODE_R * math.cos(math.radians(-90 + 60 * k)), 63 + _NODE_R * math.sin(math.radians(-90 + 60 * k)))
+          for k in range(6)]
+_CHIP = QPainterPath()                      # Stufe „chip“: der Ring des Hubs
+_CHIP.addEllipse(_SPHERE_C, _HUB_R, _HUB_R)
+
+
+def _cut(a, b, ta, tb):
+    """Linie von a nach b, vorn um ta und hinten um tb gekürzt (Platz für Ringe und Knoten)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    n = math.hypot(dx, dy)
+    return _line(a[0] + dx / n * ta, a[1] + dy / n * ta, b[0] - dx / n * tb, b[1] - dy / n * tb)
+
+
+_STAR_PTS = [QPointF(60 + (8.4 if i % 2 == 0 else 3.7) * math.cos(math.radians(-90 + i * 36)),
+                     64 + (8.4 if i % 2 == 0 else 3.7) * math.sin(math.radians(-90 + i * 36))) for i in range(10)]
+_CHECK = QPainterPath(_STAR_PTS[0])           # der Stern (Stufe „check“: kommt als Letztes, mit dem grünen Schein)
+for _pt in _STAR_PTS[1:]:
+    _CHECK.lineTo(_pt)
+_CHECK.closeSubpath()
+_TRACES = [_cut((60, 63), n, _HUB_R + 3, 5.5) for n in _NODES]                         # Verbindungen Hub → Knoten
+_DOTS = _NODES
+_PINS = [_cut(_NODES[k], _NODES[(k + 1) % 6], 7.5, 7.5) for k in range(6)]             # Verbindungen zwischen den Knoten
 
 
 def _ease(x):
@@ -119,13 +135,14 @@ def _draw_glow(p, g):
     if g <= 0:
         return
     halo = QRadialGradient(_SPHERE_C, 80)
-    halo.setColorAt(0.0, QColor(52, 211, 153, int(120 * g)))
-    halo.setColorAt(0.55, QColor(52, 211, 153, int(55 * g)))
+    halo.setColorAt(0.0, QColor(52, 211, 153, int(80 * g)))
+    halo.setColorAt(0.57, QColor(52, 211, 153, int(66 * g)))
+    halo.setColorAt(0.78, QColor(52, 211, 153, int(24 * g)))
     halo.setColorAt(1.0, QColor(52, 211, 153, 0))
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QBrush(halo))
     p.drawEllipse(_SPHERE_C, 80, 80)
-    for width, alpha in ((26, 28), (17, 45), (10, 70)):    # weich auslaufender Rand an der Kugel entlang
+    for width, alpha in ((24, 14), (15, 24), (8, 38)):    # weich auslaufender Rand an der Kugel entlang
         pen = QPen(QColor(52, 211, 153, int(alpha * g)), width)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
@@ -137,7 +154,7 @@ def draw_logo(p, rect, t, glow=0.0):
     """Zeichnet das Logo teilweise aufgebaut (t = 0 nichts, t = 1 fertig) in das Quadrat rect,
     mit grünem Schein der Stärke glow (0..1)."""
     st = logo_stages(t)
-    green, teal = QColor("#34d399"), QColor("#2dd4bf")
+    green, teal, eye = QColor("#34d399"), QColor("#5eead4"), QColor("#d1fae5")
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.translate(rect.x(), rect.y())
@@ -147,14 +164,14 @@ def draw_logo(p, rect, t, glow=0.0):
     if st["fill"] > 0:                      # Kugel: Licht von links oben, zum Rand hin dunkler
         a = st["fill"]
         shade = QRadialGradient(QPointF(_SPHERE_C.x() - 16, _SPHERE_C.y() - 18), _SPHERE_R * 1.45)
-        shade.setColorAt(0.0, QColor(30, 96, 82, int(255 * a)))
-        shade.setColorAt(0.55, QColor(13, 52, 45, int(255 * a)))
-        shade.setColorAt(1.0, QColor(5, 22, 19, int(255 * a)))
+        shade.setColorAt(0.0, QColor(47, 154, 130, int(255 * a)))
+        shade.setColorAt(0.55, QColor(22, 96, 79, int(255 * a)))
+        shade.setColorAt(1.0, QColor(8, 50, 42, int(255 * a)))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(shade))
         p.drawEllipse(_SPHERE_C, _SPHERE_R, _SPHERE_R)
         shine = QRadialGradient(QPointF(_SPHERE_C.x() - 20, _SPHERE_C.y() - 24), 14)   # kleiner Glanzpunkt
-        shine.setColorAt(0.0, QColor(255, 255, 255, int(60 * a)))
+        shine.setColorAt(0.0, QColor(255, 255, 255, int(87 * a)))
         shine.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.setBrush(QBrush(shine))
         p.drawEllipse(QPointF(_SPHERE_C.x() - 20, _SPHERE_C.y() - 24), 14, 14)
@@ -167,11 +184,19 @@ def draw_logo(p, rect, t, glow=0.0):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(dot)
         for x, y in _DOTS:
-            p.drawEllipse(QPointF(x, y), 4, 4)
+            p.drawEllipse(QPointF(x, y), 5, 5)
     _stroke(p, _CHIP, green, 4, st["chip"])
+    mesh = QColor(teal)
+    mesh.setAlphaF(0.55)
     for path in _PINS:
-        _stroke(p, path, green, 3, st["pins"])
-    _stroke(p, _CHECK, teal, 4, st["check"])
+        _stroke(p, path, mesh, 2.5, st["pins"])
+    if st["check"] > 0:                     # Füllung des Sterns blendet ein, der Umriss zeichnet sich
+        fill = QColor(eye)
+        fill.setAlphaF(st["check"])
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fill)
+        p.drawPath(_CHECK)
+    _stroke(p, _CHECK, teal, 2.5, st["check"])
     p.restore()
 
 
