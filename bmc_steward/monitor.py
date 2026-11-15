@@ -6,7 +6,7 @@ Größe. Das Widget kennt die Konsole nicht selbst: Es fragt über eine Rückruf
 anzuzeigen ist, und macht von dem Widget nur Bildschirmfotos (grab), es greift nirgends ein.
 """
 import os
-from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QElapsedTimer, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
                          QTextOption)
 from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton, QWidget
@@ -18,6 +18,94 @@ NOISE_MS = 70                   # ca. 14 Bilder pro Sekunde
 GRAB_MS = 400                   # Konsolen-Miniatur: ca. 2,5 Bilder pro Sekunde reichen als Vorschau
 # Grauwerte nur zwischen 14 und 70 von 255: dunkel und kontrastarm, damit es nicht ablenkt
 _NOISE_LUT = bytes(14 + i * 56 // 255 for i in range(256))
+
+
+# ---------------------------------------------------------------------------------------- Logo-Aufbau
+# Gleiche Formen wie das Markenzeichen in branding.py (Koordinaten im 120er-Raster), hier als Pfade, damit sich
+# jedes Teil einzeln aufbauen lässt: erst das Schild, dann Leiterbahnen, Chip und Anschlüsse, zuletzt das Häkchen.
+LOGO_MS = 6000                  # Dauer des ganzen Aufbaus
+
+
+def _line(x1, y1, x2, y2):
+    path = QPainterPath(QPointF(x1, y1))
+    path.lineTo(QPointF(x2, y2))
+    return path
+
+
+_SHIELD = QPainterPath(QPointF(24, 20))
+for _pt in ((96, 20), (96, 68)):
+    _SHIELD.lineTo(QPointF(*_pt))
+_SHIELD.quadTo(QPointF(96, 96), QPointF(60, 112))
+_SHIELD.quadTo(QPointF(24, 96), QPointF(24, 68))
+_SHIELD.closeSubpath()
+_CHIP = QPainterPath()
+_CHIP.addRoundedRect(QRectF(46, 50, 28, 28), 5, 5)
+_CHECK = QPainterPath(QPointF(53, 64))
+_CHECK.lineTo(QPointF(58, 69))
+_CHECK.lineTo(QPointF(68, 58))
+_TRACES = [_line(32, 44, 44, 44), _line(76, 44, 88, 44), _line(32, 82, 44, 82), _line(76, 82, 88, 82)]
+_DOTS = [(32, 44), (88, 44), (32, 82), (88, 82)]
+_PINS = [_line(x, 45, x, 50) for x in (51, 60, 69)] + [_line(x, 78, x, 83) for x in (51, 60, 69)]
+
+
+def _ease(x):
+    x = min(1.0, max(0.0, x))
+    return x * x * (3 - 2 * x)
+
+
+def logo_stages(t):
+    """Fortschritt (0..1) jedes Logo-Teils zum Zeitpunkt t (0..1 der Gesamtdauer). Das Häkchen beginnt erst
+    bei 90 % und ist damit immer das Letzte."""
+    def stage(a, b):
+        return _ease((t - a) / (b - a))
+    return {"shield": stage(0.00, 0.35), "fill": stage(0.25, 0.45), "traces": stage(0.40, 0.55),
+            "dots": stage(0.52, 0.62), "chip": stage(0.58, 0.76), "pins": stage(0.74, 0.88),
+            "check": stage(0.90, 1.00)}
+
+
+def _stroke(p, path, color, width, frac):
+    """Zeichnet die ersten frac (0..1) der Linie; gestrichelt mit einer Strichlänge, die dem Teil entspricht."""
+    if frac <= 0:
+        return
+    pen = QPen(color, width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    if frac < 1:
+        full = path.length() / width            # Strichmuster zählt in Stiftbreiten
+        pen.setDashPattern([max(frac * full, 0.001), full * 2])
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawPath(path)
+
+
+def draw_logo(p, rect, t):
+    """Zeichnet das Logo teilweise aufgebaut (t = 0 nichts, t = 1 fertig) in das Quadrat rect."""
+    st = logo_stages(t)
+    green, teal = QColor("#34d399"), QColor("#2dd4bf")
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.translate(rect.x(), rect.y())
+    k = min(rect.width(), rect.height()) / 120.0
+    p.scale(k, k)
+    if st["fill"] > 0:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(11, 46, 40, int(255 * st["fill"])))
+        p.drawPath(_SHIELD)
+    _stroke(p, _SHIELD, green, 5, st["shield"])
+    for path in _TRACES:
+        _stroke(p, path, teal, 3.5, st["traces"])
+    if st["dots"] > 0:
+        dot = QColor(green)
+        dot.setAlphaF(st["dots"])
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(dot)
+        for x, y in _DOTS:
+            p.drawEllipse(QPointF(x, y), 4, 4)
+    _stroke(p, _CHIP, green, 4, st["chip"])
+    for path in _PINS:
+        _stroke(p, path, green, 3, st["pins"])
+    _stroke(p, _CHECK, teal, 4, st["check"])
+    p.restore()
 
 
 class MonitorWidget(QWidget):
@@ -36,6 +124,7 @@ class MonitorWidget(QWidget):
         self._caption = ""
         self._hover = False
         self._noise = self._make_noise()
+        self._logo_clock = QElapsedTimer()      # läuft, solange das Rauschen zu sehen ist
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -62,6 +151,10 @@ class MonitorWidget(QWidget):
         if live != self._live:
             self._live = live
             self.setToolTip(self._tips[1] if live else self._tips[0])
+        if live:
+            self._logo_clock.invalidate()
+        elif not self._logo_clock.isValid():
+            self._logo_clock.start()            # Logo baut sich von vorn auf, sobald das Rauschen beginnt
         if not live:
             self._frame = None
             self._caption = ""
@@ -84,6 +177,12 @@ class MonitorWidget(QWidget):
             pass
         self.update()
 
+    def _logo_progress(self):
+        """Wie weit das Logo aufgebaut ist (0..1)."""
+        if not self._logo_clock.isValid():
+            return 0.0
+        return min(1.0, self._logo_clock.elapsed() / LOGO_MS)
+
     def _set_interval(self, ms):
         if self._timer.interval() != ms:
             self._timer.setInterval(ms)
@@ -95,6 +194,7 @@ class MonitorWidget(QWidget):
 
     def hideEvent(self, e):
         self._timer.stop()                      # unsichtbar kostet der Monitor nichts
+        self._logo_clock.invalidate()           # beim nächsten Zeigen baut sich das Logo neu auf
         super().hideEvent(e)
 
     # ---------- Zeichnen ----------
@@ -128,6 +228,7 @@ class MonitorWidget(QWidget):
         else:
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
             p.drawImage(scr, self._noise)
+            draw_logo(p, QRectF(scr.x() + 10, scr.y() + 8, 46, 46), self._logo_progress())   # oben links
         sheen = QLinearGradient(scr.topLeft(), scr.bottomLeft())    # leichter Glasglanz oben
         sheen.setColorAt(0.0, QColor(255, 255, 255, 22))
         sheen.setColorAt(0.45, QColor(255, 255, 255, 0))
