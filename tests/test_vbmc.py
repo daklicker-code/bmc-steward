@@ -994,6 +994,24 @@ class TestTestlabTab(unittest.TestCase):
         w.console_pick_ip()
         self.assertEqual(w.con_user.text(), "")
 
+    def test_console_fills_new_admin_automatically(self):
+        w = self._done_row()
+        w.con_user.clear()
+        w.con_pass.clear()
+        w.console_refresh_ips()
+        self.assertEqual((w.con_ip.currentText(), w.con_user.text(), w.con_pass.text()),
+                         ("10.0.0.5", "", "PASSW0RD"), "noch nicht umgestellt: Werksdaten")
+        w.mark_done("10.0.0.5")                                 # Umstellung fertig: Adresse und Admin ohne Zutun
+        self.assertEqual((w.con_ip.currentText(), w.con_user.text(), w.con_pass.text()),
+                         ("10.0.0.50", "klicker", "Geheim123!"))
+        w.new_pass.setText("Anders456!")                        # Admin-Passwort oben geändert: Feld zieht nach
+        self.assertEqual(w.con_pass.text(), "Anders456!")
+        w.con_ip.setEditText("192.0.2.9")                       # fremde Adresse getippt: Felder bleiben
+        w.con_user.setText("admin2")
+        w.con_pass.setText("x")
+        w.con_ip.setEditText("192.0.2.99")
+        self.assertEqual((w.con_user.text(), w.con_pass.text()), ("admin2", "x"))
+
     def test_console_replaces_stale_factory_password_for_new_user(self):
         w = self._done_row()
         w.mark_done("10.0.0.5")

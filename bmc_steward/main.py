@@ -608,6 +608,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 self.table.blockSignals(False)
                 break
         self.update_count()
+        if hasattr(self, "con_pws"):                    # UEFI-Konsole: neue Adresse samt neuem Administrator anbieten
+            self.console_refresh_ips()
 
     def apply_password(self):
         for r in range(self.table.rowCount()):

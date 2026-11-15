@@ -535,7 +535,9 @@ class ConsoleMixin:
         self.con_ip.setEditable(True)
         self.con_ip.setToolTip(T("Adresse des BMC. Vorschläge aus der Serverliste („Neuware“), es geht aber jede\n"
                                "erreichbare Adresse."))
+        self.con_pws = {}
         self.con_ip.activated.connect(self.console_pick_ip)
+        self.con_ip.currentTextChanged.connect(self.console_pick_ip)     # Zugangsdaten folgen der Adresse automatisch
         refresh = QPushButton("↻")
         refresh.setFixedWidth(36)
         refresh.setToolTip(T("Adressen aus der Serverliste („Neuware“) neu einlesen"))
@@ -724,6 +726,8 @@ class ConsoleMixin:
         self.con_timer.timeout.connect(self.console_login_tick)
         self.console_mode_changed()
         self.console_refresh_ips()
+        for w in (self.new_user, self.new_pass):             # neuer Administrator oben geändert: Felder nachziehen
+            w.textChanged.connect(lambda *_: self.console_pick_ip(only_done=True))
         return page
 
     @staticmethod
@@ -735,20 +739,34 @@ class ConsoleMixin:
 
     # ---------- Bedienung der Maske ----------
     def console_refresh_ips(self):
+        """Adressliste aus „Neuware“ neu aufbauen. Ohne bisherige Eingabe wird die erste fertig umgestellte Zeile
+        (sonst die erste) vorgewählt; Benutzer und Passwort tragen sich dazu automatisch ein."""
         keep = self.con_ip.currentText()
+        self.con_ip.blockSignals(True)
         self.con_ip.clear()
         self.con_pws = {}
         for ip, pw in self.reachable_rows():
-            self.con_ip.addItem(ip)
             self.con_pws[ip] = pw
+            self.con_ip.addItem(ip)
+        for r in range(self.table.rowCount()):          # Adresse gerade umgestellt: auf die neue wechseln
+            if self.is_done(r) and keep and keep == self.cell(r, 0):
+                keep = self.cell(r, 2)
+        if not keep and self.con_pws:
+            keep = next((ip for ip in self.con_pws if self.row_login(ip)[0]), next(iter(self.con_pws)))
         if keep:
             self.con_ip.setEditText(keep)
+        self.con_ip.blockSignals(False)
+        self.console_pick_ip()
 
-    def console_pick_ip(self, *_):
+    def console_pick_ip(self, *_, only_done=False):
         """Übernimmt Benutzer und Passwort der Zeile aus „Neuware“ (nur in die Felder, gespeichert wird nichts).
         Fertig umgestellte Zeilen kennen nur noch den neuen Benutzer mit dem neuen Passwort."""
         ip = self.con_ip.currentText()
+        if ip not in self.con_pws or not self.con_ip.isEnabled():
+            return                                      # von Hand getippte Adresse oder laufende Verbindung: nichts anfassen
         user, pw = self.row_login(ip)
+        if only_done and not user:
+            return
         pw = pw or self.cur_pass.text()
         if user:
             self.con_user.setText(user)
