@@ -2068,6 +2068,11 @@ TR = {
 "Serveur DHCP arrêté : la route par défaut passe désormais par cette carte, ce n'est plus un réseau de staging séparé.",
 "DHCP-Server gstoppt: Über die Charte lauft jetzt d Standardroute, das isch kei trännts Staging-Netz meh."
 ],
+"DHCP-Server gestoppt: Im Staging-Netz ist während des Laufs ein weiterer DHCP-Server aufgetaucht ({0}). Zwei DHCP-Server im selben Netz würden Geräte stören.": [
+"DHCP server stopped: another DHCP server ({0}) appeared on the staging network while running. Two DHCP servers on the same network would disrupt devices.",
+"Serveur DHCP arrêté : un autre serveur DHCP ({0}) est apparu sur le réseau de staging pendant l'exécution. Deux serveurs DHCP sur le même réseau perturberaient les appareils.",
+"DHCP-Server gstoppt: Im Staging-Netz isch während em Luuf en anderi DHCP-Server ufgtaucht ({0}). Zwei DHCP-Server im gliiche Netz würded d Gschirr störe."
+],
 "Sprache": [
 "Language",
 "Langue",

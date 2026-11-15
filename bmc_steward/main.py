@@ -2443,11 +2443,24 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         return None
 
     def dhcp_guard(self):
-        """Läuft alle paar Sekunden mit: stoppt den DHCP-Server, sobald die Karte kein Staging-Netz mehr ist."""
-        if self.dhcp_running() and self.default_route_ip() == self.dhcp_ip:
+        """Läuft alle paar Sekunden mit: stoppt den DHCP-Server, sobald die Karte kein Staging-Netz mehr ist,
+        oder sobald während des Laufs ein fremder DHCP-Server im selben Netz auftaucht (z. B. weil jemand
+        den Staging-Switch versehentlich mit dem Produktivnetz verbindet). Die Vorab-Prüfung beim Start
+        sieht nur den Zustand zum Start-Zeitpunkt; dieser laufende Check deckt auch spätere Änderungen ab."""
+        if not self.dhcp_running():
+            return
+        if self.default_route_ip() == self.dhcp_ip:
             self.stop_dhcp()
             self.dlog(T("DHCP-Server gestoppt: Über diese Karte läuft jetzt die Standardroute, "
                       "das ist kein getrenntes Staging-Netz mehr."), "#d9534f")
+            return
+        found = probe_dhcp_servers(self.dhcp_ip, timeout=0.5)
+        others = (found or set()) - {self.dhcp_ip}
+        if others:
+            self.stop_dhcp()
+            self.dlog(T('DHCP-Server gestoppt: Im Staging-Netz ist während des Laufs ein weiterer '
+                      'DHCP-Server aufgetaucht ({0}). Zwei DHCP-Server im selben Netz würden Geräte '
+                      'stören.').format(", ".join(sorted(others))), "#d9534f")
 
     def reopen_rows(self):
         """Nimmt bei den markierten Zeilen die grüne Fertig-Markierung zurück."""
