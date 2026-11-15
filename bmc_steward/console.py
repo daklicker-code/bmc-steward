@@ -628,7 +628,7 @@ class ConsoleMixin:
         self.con_disconnect.clicked.connect(self.console_disconnect)
         self.con_start = QPushButton(T("Konsole starten"))
         self.con_start.setEnabled(False)
-        self.con_start.setToolTip(T("Springt nach der Anmeldung zur Konsolen-Seite des BMC."))
+        self.con_start.setToolTip(T("Öffnet die Konsole des BMC in einem eigenen Reiter."))
         self.con_start.clicked.connect(self.console_goto)
         self.con_setup = QPushButton(T("Ins UEFI-Setup booten …"))
         self.con_setup.setToolTip(T("Merkt „beim nächsten Start ins UEFI-Setup“ vor und startet den Server hart neu\n"
@@ -850,7 +850,7 @@ class ConsoleMixin:
                           "view": view}
         self.con_start.setEnabled(True)
         self.con_timer.start(1000)
-        self.console_set_status(T("Verbunden mit {0}. Anmeldung läuft; danach öffnet sich die Konsole.").format(ip))
+        self.console_set_status(T("Verbunden mit {0}. Anmeldung läuft; danach bleibt die Verwaltungsseite des BMC offen.").format(ip))
 
     def console_new_view(self, ip):
         view = QWebEngineView()
@@ -892,9 +892,10 @@ class ConsoleMixin:
         if not st or st["state"] != "wait":
             if st and st["state"] == "done":
                 st["after"] = st.get("after", 0) + 1
-                if st["after"] == 5:                    # Anmeldung hatte Zeit: zur Konsole weiterspringen
-                    self.console_goto()
+                if st["after"] == 5:                    # Anmeldung hatte Zeit: Verwaltungsseite bleibt stehen
                     self.con_timer.stop()
+                    self.console_set_status(T("Angemeldet. Die Verwaltungsseite des BMC ist offen; "
+                                              "„Konsole starten“ öffnet die Konsole in einem eigenen Reiter."))
             return
         st["tries"] += 1
         if st["tries"] > 25:
@@ -913,8 +914,17 @@ class ConsoleMixin:
         if not st:
             return
         path = CONSOLE_PATH.get(st["vendor"], "/")
-        self.con_web_tabs.setCurrentIndex(0)
-        st["view"].setUrl(QUrl(f"https://{st['ip']}{path}"))
+        if path == "/":                                 # z. B. Lenovo: die Konsole startet man in der Verwaltungsseite
+            self.con_web_tabs.setCurrentIndex(0)
+            self.console_set_status(T("Auf der Verwaltungsseite „Remote Console“ wählen; die Konsole öffnet sich "
+                                      "dann in einem eigenen Reiter."))
+            return
+        while self.con_web_tabs.count() > 1:            # alte Konsolen-Reiter schließen, genau einer bleibt
+            self.console_close_tab(1)
+        view = self.console_new_view(st["ip"])
+        i = self.con_web_tabs.addTab(view, T("Konsole"))
+        self.con_web_tabs.setCurrentIndex(i)
+        view.setUrl(QUrl(f"https://{st['ip']}{path}"))
 
     # ---------- Textkonsole ----------
     def console_open_serial(self, ip, user, pw, vendor):

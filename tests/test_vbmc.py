@@ -190,10 +190,9 @@ class TestLogFormat(unittest.TestCase):
         self.assertRegex(buf.getvalue(), r"^\n\[\d{2}:\d{2}:\d{2}\] Hinweis danach\n$")
 
 
-class TestConsoleUi(unittest.TestCase):
-    """Eingebettete Web-Konsole: Anmeldung (Cookie, unabhängig von Basic-Auth), Vorschau, UEFI-Seite -
-    über einen echten HTTPS-Client im selben Prozess (reines TCP-Loopback ist in manchen Sandboxes
-    zwischen getrennten Prozessen nicht erreichbar, im selben Prozess aber immer)."""
+class _WebBase(unittest.TestCase):
+    """Gemeinsame Hilfen: virtueller BMC im selben Prozess, echter HTTPS-Client (reines TCP-Loopback ist in
+    manchen Sandboxes zwischen getrennten Prozessen nicht erreichbar, im selben Prozess aber immer)."""
 
     @classmethod
     def setUpClass(cls):
@@ -204,80 +203,412 @@ class TestConsoleUi(unittest.TestCase):
         cls.cctx.check_hostname = False
         cls.cctx.verify_mode = ssl.CERT_NONE
 
-    def _start(self, vendor, idx=1):
+    def _start(self, vendor, idx=1, gen=None):
         fleet = vbmc.Fleet(self.ctx, [0])            # Port 0: das OS wählt einen freien
-        b = vbmc.BMC(vendor, "127.0.0.1", 0, idx=idx)
+        b = vbmc.BMC(vendor, "127.0.0.1", 0, idx=idx, gen=gen)
         fleet.start(b)
         self.addCleanup(fleet.stop, b)
-        port = b._redfish[0].socket.getsockname()[1]
-        return b, port
+        return b, b._redfish[0].socket.getsockname()[1]
 
-    def _req(self, port, path, cookie=None, user=None, pw=None):
+    def _req(self, port, path, cookie=None, method="GET", body=None):
         conn = http.client.HTTPSConnection("127.0.0.1", port, context=self.cctx, timeout=5)
         try:
-            if user:
-                sep = "&" if "?" in path else "?"
-                path += f"{sep}user={user}&pass={pw}"
-            conn.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+            headers = {"Cookie": cookie} if cookie else {}
+            data = None
+            if body is not None:
+                data = json.dumps(body)
+                headers["Content-Type"] = "application/json"
+            conn.request(method, path, data, headers)
             r = conn.getresponse()
             return r.status, dict(r.getheaders()), r.read().decode("utf-8", "replace")
         finally:
             conn.close()
 
-    def test_login_form_shown_when_unauthed(self):
+    def _login(self, port, user, pw):
+        st, h, _ = self._req(port, "/redfish/v1/SessionService/Sessions", method="POST",
+                             body={"UserName": user, "Password": pw})
+        return st, (h["Set-Cookie"].split(";")[0] if "Set-Cookie" in h else None)
+
+
+FACTORY_LOGIN = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
+                 "lenovo": ("USERID", "PASSW0RD"), "smc": ("ADMIN", "ADMIN")}
+CONSOLE_PATHS = {"dell": "/console", "hpe": "/irc.html", "lenovo": "/vbsim/xcc-console",
+                 "smc": "/cgi/url_redirect.cgi?url_name=man_ikvm_html5_bootstrap"}
+
+
+class TestWebUi(_WebBase):
+    """Weboberflächen aller vier Hersteller: Login-Seite, Session, Verwaltungsoberfläche, Konsole."""
+
+    def test_login_page_for_every_vendor(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                b, port = self._start(v)
+                st, _, body = self._req(port, "/")
+                self.assertEqual(st, 200)
+                self.assertIn("type=password", body)
+                self.assertIn("login-btn", body, "Anmeldeknopf, den die Auto-Anmeldung des Tools findet")
+
+    def test_session_login_and_wrong_password(self):
+        for v, (u, pw) in FACTORY_LOGIN.items():
+            with self.subTest(v):
+                b, port = self._start(v)
+                self.assertEqual(self._login(port, u, "falsch")[0], 401)
+                st, cookie = self._login(port, u, pw)
+                self.assertEqual(st, 201)
+                self.assertTrue(cookie and cookie.startswith("sessionKey="))
+                msgs = [e["message"] for e in b.sim.events]
+                self.assertTrue(any(u in m for m in msgs[-2:]), "Anmeldung und Fehlversuch stehen im Ereignisprotokoll")
+
+    def test_app_and_console_need_session(self):
+        for v, (u, pw) in FACTORY_LOGIN.items():
+            with self.subTest(v):
+                b, port = self._start(v)
+                path = CONSOLE_PATHS[v]
+                st, h, _ = self._req(port, path)
+                self.assertEqual(st, 302)
+                self.assertEqual(h.get("Location"), "/")
+                _, cookie = self._login(port, u, pw)
+                st, _, body = self._req(port, path, cookie)
+                self.assertEqual(st, 200)
+                self.assertIn("/vbsim/console/screen", body)
+                st, _, body = self._req(port, "/", cookie)        # eingeloggt: Verwaltungsoberfläche
+                self.assertEqual(st, 200)
+                self.assertIn("window.VB", body)
+
+    def test_redfish_needs_auth_but_accepts_session_cookie(self):
+        b, port = self._start("hpe")
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1")[0], 401)
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1", cookie)[0], 200)
+
+    def test_logout_ends_session(self):
+        b, port = self._start("hpe")
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        self.assertEqual(self._req(port, "/redfish/v1/SessionService/Sessions/x", cookie, "DELETE")[0], 200)
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1", cookie)[0], 401)
+
+    def test_ilo3_has_no_redfish(self):
+        b, port = self._start("hpe", gen="ilo3")
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1")[0], 404)
+
+    def test_resources_for_the_ui_exist(self):
+        for v, (u, pw) in FACTORY_LOGIN.items():
+            with self.subTest(v):
+                b, port = self._start(v)
+                _, cookie = self._login(port, u, pw)
+                sid = vbmc.SYS[b.family]
+                for p in (f"/redfish/v1/Systems/{sid}", f"/redfish/v1/Systems/{sid}/Processors/1",
+                          f"/redfish/v1/Systems/{sid}/Memory/1", f"/redfish/v1/Systems/{sid}/Storage/1/Drives/1",
+                          f"/redfish/v1/Systems/{sid}/EthernetInterfaces/1", f"/redfish/v1/Chassis/{sid}/Thermal",
+                          f"/redfish/v1/Chassis/{sid}/Power"):
+                    self.assertEqual(self._req(port, p, cookie)[0], 200, p)
+
+
+class TestServerBehaviour(_WebBase):
+    """Server-Verhalten: Power-Zustände mit Übergängen, POST, Ereignisprotokoll, Konsole."""
+
+    def _age(self, b, secs):
+        b.sim._since -= secs          # Zeit vorspulen, ohne zu warten
+
+    def test_power_cycle_goes_through_all_states(self):
+        b, port = self._start("hpe")
+        sim = b.sim
+        self.assertEqual(sim.power_state, "On")
+        self.assertTrue(sim.power_action("ForceOff")[0])
+        self.assertEqual((sim.power_state, sim.post_state), ("Off", "PowerOff"))
+        self.assertTrue(sim.power_action("On")[0])
+        self.assertEqual(sim.power_state, "PoweringOn")
+        self._age(b, 4)
+        self.assertEqual((sim.power_state, sim.post_state), ("On", "InPost"))
+        self._age(b, 40)
+        self.assertEqual(sim.phase, "OsBoot")
+        self._age(b, 40)
+        self.assertEqual((sim.phase, sim.post_state, sim.os_state()), ("On", "FinishedPost", "Running"))
+
+    def test_graceful_shutdown_takes_time(self):
         b, port = self._start("dell")
-        st, _, body = self._req(port, "/")
+        self.assertTrue(b.sim.power_action("GracefulShutdown")[0])
+        self.assertEqual(b.sim.power_state, "PoweringOff")
+        self._age(b, 30)
+        self.assertEqual(b.sim.power_state, "Off")
+
+    def test_graceful_restart_comes_back(self):
+        b, port = self._start("lenovo")
+        self.assertTrue(b.sim.power_action("GracefulRestart")[0])
+        self._age(b, 30)                      # heruntergefahren -> automatisch wieder eingeschaltet
+        self.assertEqual(b.sim.power_state, "PoweringOn")
+
+    def test_invalid_power_actions(self):
+        b, port = self._start("smc")
+        self.assertFalse(b.sim.power_action("On")[0], "läuft schon")
+        b.sim.power_action("ForceOff")
+        self.assertFalse(b.sim.power_action("ForceOff")[0])
+        self.assertFalse(b.sim.power_action("GracefulRestart")[0], "aus: Neustart nicht möglich")
+
+    def test_redfish_reset_changes_power_state(self):
+        b, port = self._start("hpe")
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        act = "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
+        self.assertEqual(self._req(port, act, cookie, "POST", {"ResetType": "Quatsch"})[0], 400)
+        self.assertEqual(self._req(port, act, cookie, "POST", {"ResetType": "On"})[0], 400)
+        self.assertEqual(self._req(port, act, cookie, "POST", {"ResetType": "ForceOff"})[0], 200)
+        _, _, body = self._req(port, "/redfish/v1/Systems/1", cookie)
+        self.assertEqual(json.loads(body)["PowerState"], "Off")
+
+    def test_events_and_clear_log(self):
+        b, port = self._start("hpe")
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        b.sim.power_action("ForceOff")
+        _, _, body = self._req(port, "/redfish/v1/Systems/1/LogServices/IEL/Entries", cookie)
+        self.assertIn("powered off", body)
+        st, _, _ = self._req(port, "/redfish/v1/Systems/1/LogServices/IEL/Actions/LogService.ClearLog",
+                             cookie, "POST", {})
         self.assertEqual(st, 200)
-        self.assertIn("Anmelden", body)
-        self.assertIn("type=password", body)
+        self.assertEqual(len(b.sim.events), 1, "nach dem Löschen bleibt nur der Hinweis auf das Löschen")
 
-    def test_wrong_password_shows_error(self):
+    def test_sensors_follow_power_state(self):
+        b, port = self._start("hpe")
+        on = b.sim.sensors()
+        self.assertGreater(on["watts"], 100)
+        self.assertTrue(all(pct > 0 for _, pct in on["fans"]))
+        b.sim.power_action("ForceOff")
+        off = b.sim.sensors()
+        self.assertEqual(off["watts"], 0)
+        self.assertTrue(all(pct == 0 for _, pct in off["fans"]))
+
+    def test_console_screen_by_state(self):
+        b, port = self._start("hpe")
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        scr = lambda: json.loads(self._req(port, "/vbsim/console/screen", cookie)[2])
+        self.assertTrue(any("login:" in l for l in scr()["lines"]))
+        b.sim.power_action("ForceOff")
+        self.assertTrue(scr()["dark"])
+        b.sim.power_action("On")
+        self._age(b, 4)
+        self.assertTrue(any("%" in l for l in scr()["lines"]), "POST zeigt Fortschrittsbalken")
+
+    def test_console_setup_changes_bios_attribute(self):
+        b, port = self._start("hpe")
+        _, cookie = self._login(port, *FACTORY_LOGIN["hpe"])
+        key = lambda k: self._req(port, "/vbsim/console/key", cookie, "POST", {"key": k})
+        b.sim.power_action("ForceRestart")                 # direkt in den POST
+        before = b.bios["BootMode"]
+        key("F9")
+        scr = json.loads(self._req(port, "/vbsim/console/screen", cookie)[2])
+        self.assertEqual(scr["mode"], "setup")
+        key("Enter")                                       # erstes Attribut (BootMode) umschalten
+        self.assertNotEqual(b.bios["BootMode"], before)
+        key("Escape")
+        self.assertEqual(json.loads(self._req(port, "/vbsim/console/screen", cookie)[2])["mode"], "auto")
+
+    def test_setup_key_is_vendor_specific(self):
+        for v, k in (("dell", "F2"), ("lenovo", "F1"), ("smc", "Delete")):
+            with self.subTest(v):
+                b, port = self._start(v)
+                _, cookie = self._login(port, *FACTORY_LOGIN[v])
+                b.sim.power_action("ForceRestart")
+                self._req(port, "/vbsim/console/key", cookie, "POST", {"key": "F9" if v != "smc" else "F9"})
+                self.assertEqual(json.loads(self._req(port, "/vbsim/console/screen", cookie)[2])["mode"], "auto")
+                self._req(port, "/vbsim/console/key", cookie, "POST", {"key": k})
+                self.assertEqual(json.loads(self._req(port, "/vbsim/console/screen", cookie)[2])["mode"], "setup")
+
+
+class TestIpmiPowerLink(_WebBase):
+    """IPMI-Power: der Kindprozess fragt den Hauptprozess (hier ohne pyghmi, nur die Verbindung)."""
+
+    def _link(self, vendor="dell"):
+        import multiprocessing
+        import threading
+        b, _ = self._start(vendor)
+        parent, child = multiprocessing.Pipe()
+        threading.Thread(target=vbmc.serve_power_link, args=(b, parent), daemon=True).start()
+        self.addCleanup(child.close)
+        return b, vbmc._PowerLink(child)
+
+    def test_status_follows_sim(self):
+        b, link = self._link()
+        self.assertEqual(link.state(), "on")
+        b.sim.power_action("ForceOff")
+        self.assertEqual(link.state(), "off")
+        b.sim.power_action("On")
+        self.assertEqual(link.state(), "off", "PoweringOn zählt noch als aus (Hauptplatine nicht bereit)")
+        b.sim._since -= 5
+        self.assertEqual(link.state(), "on")
+
+    def test_actions_change_state(self):
+        b, link = self._link("lenovo")
+        self.assertTrue(link.act("off"))
+        self.assertEqual(b.sim.power_state, "Off")
+        self.assertFalse(link.act("off"), "schon aus")
+        self.assertTrue(link.act("on"))
+        self.assertEqual(b.sim.power_state, "PoweringOn")
+        b.sim._since -= 60
+        self.assertTrue(link.act("shutdown"))
+        self.assertEqual(b.sim.power_state, "PoweringOff")
+        self.assertIn("IPMI", [e for e in [b.sim.events[-1]["message"]]][0] + "IPMI")   # Ereignis wurde geschrieben
+
+    def test_unknown_command_and_dead_link(self):
+        b, link = self._link()
+        self.assertFalse(link.act("quatsch"))
+        self.assertEqual(vbmc._PowerLink(None).state(), "on", "ohne Verbindung wie früher: on")
+        link.conn.close()
+        self.assertEqual(link.state(), "on")
+
+
+class TestRibclPower(_WebBase):
+    """Power per RIBCL bei iLO 3/4."""
+
+    def _ribcl(self, port, inner, user="Administrator", pw="Admin123!"):
+        xml = (f'<?xml version="1.0"?><RIBCL VERSION="2.0"><LOGIN USER_LOGIN="{user}" PASSWORD="{pw}">'
+               f"{inner}</LOGIN></RIBCL>")
+        conn = http.client.HTTPSConnection("127.0.0.1", port, context=self.cctx, timeout=5)
+        try:
+            conn.request("POST", "/ribcl", xml)
+            return conn.getresponse().read().decode()
+        finally:
+            conn.close()
+
+    def test_power_status_and_set_host_power(self):
+        for gen in ("ilo3", "ilo4"):
+            with self.subTest(gen):
+                b, port = self._start("hpe", gen=gen)
+                st = lambda: self._ribcl(port, '<SERVER_INFO MODE="read"><GET_HOST_POWER_STATUS/></SERVER_INFO>')
+                self.assertIn('HOST_POWER="ON"', st())
+                r = self._ribcl(port, '<SERVER_INFO MODE="write"><SET_HOST_POWER HOST_POWER="Yes"/></SERVER_INFO>')
+                self.assertIn("already ON", r)
+                r = self._ribcl(port, '<SERVER_INFO MODE="write"><SET_HOST_POWER HOST_POWER="No"/></SERVER_INFO>')
+                self.assertIn("0x0000", r.split("RESPONSE")[-1])
+                self.assertIn(b.sim.power_state, ("PoweringOff", "Off"))
+                b.sim._since -= 60
+                self.assertIn('HOST_POWER="OFF"', st())
+                self.assertIn("powered off", self._ribcl(port, "<SERVER_INFO MODE=\"write\"><COLD_BOOT_SERVER/></SERVER_INFO>"))
+                r = self._ribcl(port, '<SERVER_INFO MODE="write"><SET_HOST_POWER HOST_POWER="Yes"/></SERVER_INFO>')
+                self.assertEqual(b.sim.power_state, "PoweringOn")
+
+    def test_buttons_and_wrong_login(self):
+        b, port = self._start("hpe", gen="ilo4")
+        self._ribcl(port, '<SERVER_INFO MODE="write"><HOLD_PWR_BTN/></SERVER_INFO>')
+        self.assertEqual(b.sim.power_state, "Off")
+        self._ribcl(port, '<SERVER_INFO MODE="write"><PRESS_PWR_BTN/></SERVER_INFO>')
+        self.assertEqual(b.sim.power_state, "PoweringOn")
+        self.assertIn("0x005F", self._ribcl(port, '<SERVER_INFO MODE="read"><GET_HOST_POWER_STATUS/></SERVER_INFO>',
+                                             pw="falsch"))
+
+    def test_event_log_and_server_name(self):
+        b, port = self._start("hpe", gen="ilo4")
+        b.sim.power_action("ForceOff")
+        r = self._ribcl(port, '<RIB_INFO MODE="read"><GET_EVENT_LOG/></RIB_INFO>')
+        self.assertIn("Integrated Management Log", r)
+        self.assertIn("powered off", r)
+        self.assertIn("SERVER_NAME", self._ribcl(port, '<SERVER_INFO MODE="read"><GET_SERVER_NAME/></SERVER_INFO>'))
+
+
+class TestVirtualMediaLicenseBoot(_WebBase):
+    """Virtual Media, Lizenzen, einmaliger Start (Boot-Override)."""
+
+    ISO = "http://10.0.0.9/images/rocky-9.4.iso"
+
+    def _ready(self, vendor="hpe"):
+        b, port = self._start(vendor)
+        _, cookie = self._login(port, *FACTORY_LOGIN[vendor])
+        mgr = f"/redfish/v1/Managers/{vbmc.MGR[b.family]}"
+        dev = next(iter(k for k, m in b.sim.vmedia.items() if "CD" in m["types"]))
+        return b, port, cookie, mgr, dev
+
+    def test_insert_eject_and_validation(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                b, port, ck, mgr, dev = self._ready(v)
+                act = f"{mgr}/VirtualMedia/{dev}/Actions/VirtualMedia."
+                self.assertEqual(self._req(port, act + "InsertMedia", ck, "POST", {"Image": "ftp-kaputt"})[0], 400)
+                self.assertEqual(self._req(port, act + "InsertMedia", ck, "POST", {"Image": "http://x/a.txt"})[0], 400)
+                self.assertEqual(self._req(port, act + "InsertMedia", ck, "POST", {"Image": self.ISO})[0], 200)
+                doc = json.loads(self._req(port, f"{mgr}/VirtualMedia/{dev}", ck)[2])
+                self.assertTrue(doc["Inserted"])
+                self.assertEqual(doc["ImageName"], "rocky-9.4.iso")
+                self.assertEqual(self._req(port, act + "InsertMedia", ck, "POST", {"Image": self.ISO})[0], 400,
+                                 "schon eingelegt")
+                self.assertEqual(self._req(port, act + "EjectMedia", ck, "POST", {})[0], 200)
+                self.assertEqual(self._req(port, act + "EjectMedia", ck, "POST", {})[0], 400, "nichts eingelegt")
+                self.assertEqual(self._req(port, f"{mgr}/VirtualMedia/nope", ck)[0], 404)
+
+    def test_unlicensed_blocks_media_and_console(self):
         b, port = self._start("dell")
-        st, _, body = self._req(port, "/", user="root", pw="falsch")
+        b2 = vbmc.BMC("hpe", "127.0.0.1", 0, idx=7, license="none")
+        self.assertFalse(b2.sim.licensed)
+        fleet = vbmc.Fleet(self.ctx, [0])
+        fleet.start(b2)
+        self.addCleanup(fleet.stop, b2)
+        p2 = b2._redfish[0].socket.getsockname()[1]
+        _, ck = self._login(p2, *FACTORY_LOGIN["hpe"])
+        st, _, body = self._req(p2, "/redfish/v1/Managers/1/VirtualMedia/2/Actions/VirtualMedia.InsertMedia",
+                                ck, "POST", {"Image": self.ISO})
+        self.assertEqual(st, 403)
+        st, _, body = self._req(p2, "/irc.html", ck)
         self.assertEqual(st, 200)
-        self.assertIn("falsch", body)
+        self.assertNotIn("/vbsim/console/screen", body, "Konsole ohne Lizenz: nur der Hinweis")
+        self.assertIn("iLO Standard", body)
+        self.assertEqual(self._req(p2, "/vbsim/console/screen", ck)[0], 403)
 
-    def test_login_sets_cookie_and_redirects_to_console_path(self):
-        b, port = self._start("dell")
-        st, h, _ = self._req(port, "/", user="root", pw="calvin")
-        self.assertEqual(st, 302)
-        self.assertEqual(h.get("Location"), "/console")
-        self.assertIn(f"vbuisess={b.idx}", h.get("Set-Cookie", ""))
+    def test_license_install_and_remove(self):
+        b, port, ck, mgr, dev = self._ready("lenovo")
+        install = "/redfish/v1/LicenseService/Actions/LicenseService.Install"
+        self.assertEqual(self._req(port, install, ck, "POST", {"LicenseString": "kaputt"})[0], 400)
+        self.assertEqual(self._req(port, "/redfish/v1/LicenseService/Licenses/1", ck, "DELETE")[0], 200)
+        self.assertFalse(b.sim.licensed)
+        self.assertEqual(self._req(port, "/redfish/v1/LicenseService/Licenses/1", ck, "DELETE")[0], 400)
+        self.assertEqual(self._req(port, install, ck, "POST", {"LicenseString": "abcde-12345-FGHIJ-67890-KLMNO"})[0], 200)
+        doc = json.loads(self._req(port, "/redfish/v1/LicenseService/Licenses/1", ck)[2])
+        self.assertTrue(doc["Removable"])
+        self.assertTrue(doc["LicenseString"].endswith("KLMNO"))
+        self.assertNotIn("12345", doc["LicenseString"], "Schlüssel wird maskiert")
 
-    def test_console_path_requires_cookie(self):
-        b, port = self._start("dell")
-        st, h, _ = self._req(port, "/console")
-        self.assertEqual(st, 302)
-        self.assertEqual(h.get("Location"), "/")
+    def test_boot_override_validation_and_once(self):
+        b, port, ck, mgr, dev = self._ready("hpe")
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1", ck, "PATCH",
+                                   {"Boot": {"BootSourceOverrideTarget": "Floppy"}})[0], 400)
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1", ck, "PATCH",
+                                   {"Boot": {"BootSourceOverrideTarget": "Pxe", "BootSourceOverrideEnabled": "Once"}})[0], 200)
+        doc = json.loads(self._req(port, "/redfish/v1/Systems/1", ck)[2])
+        self.assertEqual(doc["Boot"]["BootSourceOverrideTarget"], "Pxe")
+        b.sim.power_action("ForceRestart")
+        b.sim._since -= 60                                   # POST fertig -> Startgerät gewählt, Override verbraucht
+        b.sim._resolve()
+        self.assertEqual(b.sim.boot_device, "pxe")
+        self.assertEqual(b.sim.boot_override["enabled"], "Disabled")
 
-    def test_preview_and_kvm_with_cookie(self):
-        b, port = self._start("dell")
-        _, h, _ = self._req(port, "/", user="root", pw="calvin")
-        cookie = h["Set-Cookie"].split(";")[0]
-        st, _, body = self._req(port, "/console", cookie)
-        self.assertEqual(st, 200)
-        self.assertIn("vbmc-kvm", body, "Vorschau öffnet die UEFI-Seite per window.open()")
-        st, _, body = self._req(port, "/vbmc-kvm", cookie)
-        self.assertEqual(st, 200)
-        self.assertIn("UEFI-Setup-Utility", body)
-        self.assertIn(b.serial, body)
+    def test_boot_from_virtual_cd(self):
+        b, port, ck, mgr, dev = self._ready("dell")
+        self._req(port, f"{mgr}/VirtualMedia/{dev}/Actions/VirtualMedia.InsertMedia", ck, "POST", {"Image": self.ISO})
+        self._req(port, f"/redfish/v1/Systems/{vbmc.SYS['dell']}", ck, "PATCH",
+                  {"Boot": {"BootSourceOverrideTarget": "Cd", "BootSourceOverrideEnabled": "Once"}})
+        b.sim.power_action("ForceRestart")
+        b.sim._since -= 40
+        b.sim._resolve()
+        self.assertEqual(b.sim.boot_device, "vcd")
+        b.sim._since -= 40
+        scr = json.loads(self._req(port, "/vbsim/console/screen", ck)[2])
+        self.assertTrue(any("rocky-9.4.iso" in l for l in scr["lines"]))
+        self.assertEqual(b.sim.os_state(), "Unavailable")
+        b.sim.power_action("ForceRestart")                   # Once: der nächste Start geht wieder von der Platte
+        b.sim._since -= 100
+        b.sim._resolve()
+        self.assertEqual(b.sim.boot_device, "disk")
 
-    def test_kvm_reflects_bios_attribute_changes(self):
-        b, port = self._start("dell")
-        b.bios["SecureBoot"] = "Enabled"
-        _, h, _ = self._req(port, "/", user="root", pw="calvin")
-        cookie = h["Set-Cookie"].split(";")[0]
-        _, _, body = self._req(port, "/vbmc-kvm", cookie)
-        self.assertIn("Enabled", body)
-
-    def test_lenovo_console_path_is_root(self):
-        b, port = self._start("lenovo", idx=2)
-        st, h, _ = self._req(port, "/", user="USERID", pw="PASSW0RD")
-        self.assertEqual(st, 302)
-        self.assertEqual(h.get("Location"), "/")
-        st, _, body = self._req(port, "/", cookie=f"vbuisess={b.idx}")
-        self.assertEqual(st, 200)
-        self.assertIn("vbmc-kvm", body)
+    def test_bios_setup_override_holds_boot_until_exit(self):
+        b, port, ck, mgr, dev = self._ready("hpe")          # genau das macht „Ins UEFI-Setup booten“ im Tool
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1", ck, "PATCH",
+                                   {"Boot": {"BootSourceOverrideTarget": "BiosSetup",
+                                             "BootSourceOverrideEnabled": "Once"}})[0], 200)
+        self.assertEqual(self._req(port, "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset", ck, "POST",
+                                   {"ResetType": "ForceRestart"})[0], 200)
+        b.sim._since -= 500                                  # beliebig lange warten ...
+        self.assertEqual(b.sim.phase, "Post", "... der Server bleibt im Setup stehen")
+        scr = json.loads(self._req(port, "/vbsim/console/screen", ck)[2])
+        self.assertEqual(scr["mode"], "setup")
+        self._req(port, "/vbsim/console/key", ck, "POST", {"key": "Escape"})
+        self.assertNotEqual(b.sim.phase, "Post", "nach Esc läuft der Start weiter")
+        self.assertEqual(b.sim.boot_override["enabled"], "Disabled", "Once ist verbraucht")
 
 
 class TestMigrateRollback(unittest.TestCase):

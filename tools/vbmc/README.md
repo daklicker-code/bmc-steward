@@ -100,6 +100,7 @@ Ein Szenario ist eine JSON-Datei (der Testlabor-Reiter liest und schreibt dassel
   OpenSSL es noch zulässt), Lenovo `xcc3`/`xcc2`/`xcc1`, Supermicro `x13`/`x12`/`x11`.
 * `net`/`ip`/`mask`/`gw`: Werkszustand (`dhcp` oder `static`); nur im Netzlabor wirksam.
 * `busy_slots`: Dell-User-Slots, die schon ein anderer Benutzer belegt.
+* `license`: `"none"` startet den Server ohne Lizenz (Virtual Media und Konsole gesperrt), sonst voll lizenziert.
 * `user`/`password`, `model`, `serial`, `mac`: Werks-Login, Typenschild, Kennung.
 
 Beispiele in `szenarien/`: gemischte Konfigraum-Flotte, zwei Dells mit derselben festen Werks-IP,
@@ -117,8 +118,52 @@ Für den Testlabor-Reiter gibt es zusätzlich `--state` (Zustand als `@@STATE`-J
   (pyghmis globaler Zustand lässt kein sauberes Umziehen des IPMI-Sockets zu).
   Für den Konsolen-Test also die Startadresse des Servers verwenden. Im Netzlabor ziehen
   SSH/IPMI mit um, und neu angelegte Benutzer gelten auch für IPMI.
-* Nicht nachgebildet: die eingebettete HTML5-Web-Konsole des BMC (nur die reine
-  Landing-Seite auf 443 antwortet).
+* Power per IPMI (`chassis power status|on|off|soft|cycle|reset`) fragt über eine Pipe den Hauptprozess und
+  zeigt denselben Zustand wie Redfish und Weboberfläche. Dieser Weg braucht `pyghmi` (siehe oben); ohne
+  `pyghmi` ist er nicht automatisch testbar (die Pipe-Anbindung ist es, siehe `tests/test_vbmc.py`).
+
+## Server-Simulation und Weboberflächen (ab 1.4)
+
+Jeder virtuelle Server verhält sich wie ein laufendes Gerät, nicht nur wie eine Redfish-Attrappe
+(Paket `vbsim/`):
+
+* **Zustandsautomat** (`vbsim/state.py`): Aus → Einschalten → POST (mit Phasen) → Betriebssystemstart → Läuft;
+  Herunterfahren dauert, ein Neustart fährt herunter und wieder hoch. Alle Redfish-`ResetType`-Werte
+  (`On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, `ForceRestart`, `PushPowerButton`, `PowerCycle`,
+  `Nmi`). Unzulässige Aktionen (z. B. Einschalten, obwohl an) liefern wie echte BMCs HTTP 400.
+* **Ereignisprotokoll** im Wortlaut des Herstellers, Sensoren (Temperaturen, Lüfter, Netzteile, Leistung),
+  die vom Power-Zustand abhängen, Hardware-Inventar (CPU, DIMMs, Laufwerke, Netzwerkkarten).
+* **Weboberfläche je Hersteller** (`vbsim/webui/`): Anmeldung über eine Redfish-Session (Cookie
+  `sessionKey`/`X-Auth-Token`), danach Übersicht, Systeminformationen, Power-Steuerung, Temperaturen/Lüfter,
+  Ereignisprotokoll, Netzwerk, Benutzer, Firmware, BIOS. Layout, Menüs und Begriffe unterscheiden sich je
+  Hersteller (iLO: Menü links; iDRAC und Supermicro: Reiter oben; XCC: dunkles Menü links). Die Seiten
+  lesen dieselben Redfish-Endpunkte, die auch BMC-Steward benutzt; was das Tool ändert, ist sofort sichtbar.
+* **Remote-Konsole** (`vbsim/console.py`): Text-Bildschirm je Zustand (kein Signal, POST mit
+  Fortschritt, Kernelmeldungen, Login-Prompt). Im POST öffnet die herstellertypische Taste (iLO F9, iDRAC F2,
+  XCC F1, Supermicro Entf) ein bedienbares Setup; Änderungen landen in den BIOS-Attributen.
+* Zeitverhalten über `VBMC_TIME_SCALE` (Standard 1; 0.2 = fünfmal schneller, 0 = sofort).
+* Alle Seiten tragen den Hinweis „Simulierter Server“; es werden keine Hersteller-Logos nachgebaut.
+
+Ab 1.5 zusätzlich:
+
+* **Virtual Media** (Redfish `VirtualMedia`, `InsertMedia`/`EjectMedia`, bei iLO auch PATCH mit
+  `BootOnNextServerReset`; Seite „Virtual Media“ je Oberfläche). Geräte je Hersteller wie beim Original
+  (iLO `1`/`2`, iDRAC `RemovableDisk`/`CD`, XCC `EXT1`/`EXT2`, Supermicro `CD1`/`USB1`). Es wird nichts
+  heruntergeladen; geprüft werden URI-Schema und Endung (`.iso`, bei USB auch `.img`).
+* **Einmaliger Start** (`Boot.BootSourceOverrideTarget`/`-Enabled`): `Cd` bootet vom eingelegten Image (die Konsole
+  zeigt das Installationsmenü), `Pxe` zeigt einen fehlgeschlagenen Netzwerkstart, `BiosSetup` hält den
+  Start im BIOS-Setup an, bis man es in der Konsole mit Esc verlässt. Genau das nutzt „Ins UEFI-Setup booten“
+  im Tool. `Once` wird beim Start verbraucht.
+* **Lizenzen** (Redfish `LicenseService`, Seite „Lizenz“): Ohne Lizenz (iLO Standard, iDRAC Basic, XCC Standard,
+  Supermicro ohne Schlüssel) sind Virtual Media und Remote-Konsole gesperrt (HTTP 403 bzw. Hinweisseite), wie bei
+  den Originalen. Ein Schlüssel im Format `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX` schaltet die Standard-Vollstufe frei,
+  angezeigt wird er maskiert. Start ohne Lizenz: `"license": "none"` im Eintrag der Konfiguration.
+* **RIBCL-Power für iLO 3/4:** `GET_HOST_POWER_STATUS`, `SET_HOST_POWER`, `PRESS_PWR_BTN`, `HOLD_PWR_BTN`,
+  `COLD_BOOT_SERVER`, `WARM_BOOT_SERVER`, `RESET_SERVER`, dazu `GET_SERVER_NAME` und `GET_EVENT_LOG`.
+* Der Browser-Test `tests/test_vbmc_ui.py` bedient alle Oberflächen in einem echten Chrome (Playwright);
+  er wird übersprungen, wenn beides fehlt.
+
+Noch nicht nachgebildet: SSDP-Erkennung, Zertifikatsseiten, Inhalt der Virtual-Media-Images, IPMI-Bootgerät.
 
 ## Lizenz
 

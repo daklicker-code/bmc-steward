@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.3.2"
+__version__ = "1.5.0"
 __license__ = "MIT"
 
 import argparse
@@ -48,6 +48,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vbsim.state import ServerSim, RESET_TYPES      # noqa: E402
+from vbsim import redfish_ext, webui                 # noqa: E402
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
 
@@ -95,6 +99,7 @@ FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
 MGR = {"dell": "iDRAC.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
 SYS = {"dell": "System.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
 NIC = {"hpe": "1", "smc": "1", "lenovo": "NIC"}
+webui.configure(SYS=SYS, MGR=MGR)
 MODELS = {"dell": "PowerEdge R6625", "hpe": "ProLiant DL365 Gen11",
           "hpe_old": "ProLiant DL360p Gen8", "smc": "AS-2015HS-TNR",
           "lenovo": "ThinkSystem SR655 V3"}
@@ -178,7 +183,8 @@ def prefix_of(mask, default=24):
 
 class BMC:
     def __init__(self, vendor, host, port, serial=None, model=None, user=None, password=None,
-                 gen=None, mac=None, net=None, ip=None, mask=None, gw=None, busy_slots=None, idx=0):
+                 gen=None, mac=None, net=None, ip=None, mask=None, gw=None, busy_slots=None, idx=0,
+                 license=None):
         # HPE iLO 3/4 laufen über RIBCL: intern Hersteller hpe_old
         if vendor == "hpe" and gen in OLD_ILO:
             vendor = "hpe_old"
@@ -214,7 +220,6 @@ class BMC:
         self.status = ""
         self.dhcp = True
         self.ipv4 = {"Address": host, "SubnetMask": "255.255.255.0", "Gateway": ""}
-        self.power = "On"
         self.pending_ip = None
         self.attributes = dict(DELL_ATTRS) if vendor == "dell" else {}
         self.bios = dict(BIOS_ATTRS)
@@ -229,6 +234,8 @@ class BMC:
         self.tasks = {}                 # id -> {state, percent, target, newver}
         self._task_seq = 0
         self.lock = threading.Lock()
+        self.license_cfg = license      # "none" = ohne Lizenz starten, sonst Standardstufe des Herstellers
+        self.sim = ServerSim(self)      # Power/POST/Ereignisse/Sensoren (siehe vbsim/state.py)
         self._redfish = []              # [(Server, thread)]
         self._ssh = None                # (socket, thread)
         self._ipmi = None               # FakeBMC-Instanz
@@ -565,7 +572,52 @@ def _auth_snapshot(bmc):
     return {u: a["password"] for u, a in bmc.accounts.items() if a.get("enabled", True)}
 
 
-def _ipmi_process(vendor, host, port, serial, model, hostname, accounts, netns=None, authfile=None):
+# IPMI-Chassis-Befehle -> Redfish-ResetType (die Aktion läuft im Hauptprozess, wo der Server-Zustand liegt)
+IPMI_POWER = {"on": "On", "off": "ForceOff", "shutdown": "GracefulShutdown", "cycle": "PowerCycle",
+              "reset": "ForceRestart", "diag": "Nmi"}
+
+
+class _PowerLink:
+    """Kindprozess-Seite: fragt den Hauptprozess nach dem Power-Zustand und löst Power-Aktionen aus."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def _ask(self, msg, timeout=2.0):
+        if self.conn is None:
+            return None
+        try:
+            self.conn.send(msg)
+            return self.conn.recv() if self.conn.poll(timeout) else None
+        except (OSError, EOFError, ValueError):
+            return None
+
+    def state(self):
+        """„on“ oder „off“ (bei Verbindungsproblem „on“, wie früher)."""
+        return "off" if self._ask(("state",)) == "off" else "on"
+
+    def act(self, cmd):
+        return self._ask(("act", cmd))
+
+
+def serve_power_link(bmc, conn):
+    """Hauptprozess-Seite: beantwortet die Anfragen des IPMI-Kindprozesses aus bmc.sim."""
+    while True:
+        try:
+            msg = conn.recv()
+        except (EOFError, OSError):
+            return
+        try:
+            if msg[0] == "state":
+                conn.send("off" if bmc.sim.power_state in ("Off", "PoweringOn") else "on")
+            elif msg[0] == "act":
+                kind = IPMI_POWER.get(msg[1])
+                conn.send(bmc.sim.power_action(kind, "IPMI", "")[0] if kind else False)
+        except (OSError, ValueError):
+            return
+
+
+def _ipmi_process(vendor, host, port, serial, model, hostname, accounts, netns=None, authfile=None, powerconn=None):
     """Läuft im Kindprozess: ein einzelner IPMI-SOL-BMC."""
     if netns:                           # Netzlabor: der ganze Kindprozess lebt im Namespace des Servers
         import netlab
@@ -591,6 +643,7 @@ def _ipmi_process(vendor, host, port, serial, model, hostname, accounts, netns=N
         return _orig(self, request)
     SS.ServerSession.create_open_session_response = _patched
 
+    link = _PowerLink(powerconn)
     shim = BMC(vendor, "127.0.0.1", port, serial=serial, model=model)
     shim.hostname = hostname
     shim.accounts = accounts
@@ -620,19 +673,22 @@ def _ipmi_process(vendor, host, port, serial, model, hostname, accounts, netns=N
             return True
 
         def get_power_state(self):
-            return "on"
+            return link.state()
 
         def power_on(self):
-            pass
+            link.act("on")
 
         def power_off(self):
-            pass
+            link.act("off")
+
+        def power_shutdown(self):
+            link.act("shutdown")
 
         def power_cycle(self):
-            pass
+            link.act("cycle")
 
         def power_reset(self):
-            pass
+            link.act("reset")
 
         def cold_reset(self):
             pass
@@ -696,12 +752,15 @@ def _write_auth(bmc):
 
 def start_ipmi(bmc):
     _write_auth(bmc)
+    parent_conn, child_conn = _MP.Pipe()
     p = _MP.Process(
         target=_ipmi_process,
         args=(bmc.vendor, bmc.console_host, IPMI_PORT, bmc.serial, bmc.model,
-              bmc.hostname, dict(bmc.accounts), bmc.netns, bmc._authfile),
+              bmc.hostname, dict(bmc.accounts), bmc.netns, bmc._authfile, child_conn),
         daemon=True)
     p.start()
+    child_conn.close()                  # nur der Kindprozess hält sein Ende; stirbt er, endet unser recv()
+    threading.Thread(target=serve_power_link, args=(bmc, parent_conn), daemon=True).start()
     bmc._ipmi = p
 
 
@@ -779,15 +838,36 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return self.rfile.read(n) if n else b""
 
+    SESSION_COOKIES = ("sessionKey", "SID", "QSESSIONID", "SessionToken", "vbsess")
+
+    def session_token(self):
+        t = self.headers.get("X-Auth-Token", "")
+        if t:
+            return t
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, val = part.strip().partition("=")
+            if k in self.SESSION_COOKIES and val:
+                return val
+        return ""
+
+    def session_user(self):
+        """Angemeldeter Benutzer der Weboberfläche (Session) oder None."""
+        s = self.bmc.sim.session(self.session_token())
+        return s["user"] if s else None
+
+    @property
+    def client_ip(self):
+        return self.client_address[0]
+
     def authed(self):
         h = self.headers.get("Authorization", "")
-        if not h.startswith("Basic "):
-            return False
-        try:
-            user, _, pw = base64.b64decode(h[6:]).decode().partition(":")
-        except Exception:
-            return False
-        return self.bmc.check_auth(user, pw)
+        if h.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(h[6:]).decode().partition(":")
+            except Exception:
+                return False
+            return self.bmc.check_auth(user, pw)
+        return self.session_user() is not None
 
     def ui_authed(self):
         """Eigene, von Basic-Auth unabhängige Anmeldung der HTML-Oberfläche (wie beim echten BMC)."""
@@ -799,6 +879,70 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def actor(self):
+        """Wer die Aktion ausführt: Session-Benutzer oder Basic-Auth-Konto."""
+        u = self.session_user()
+        if u:
+            return u
+        h = self.headers.get("Authorization", "")
+        try:
+            return base64.b64decode(h[6:]).decode().partition(":")[0] if h.startswith("Basic ") else "unknown"
+        except Exception:
+            return "unknown"
+
+    def session_create(self, data):
+        b = self.bmc
+        user, pw = str(data.get("UserName", "")), str(data.get("Password", ""))
+        if not b.check_auth(user, pw):
+            b.sim.log("login_fail", user, self.client_ip)
+            return self.send(401, rf_error("Anmeldung fehlgeschlagen: Benutzername oder Passwort falsch."))
+        tok = b.sim.new_session(user, self.client_ip)
+        body = jbody({"@odata.id": f"/redfish/v1/SessionService/Sessions/{tok[:8]}", "Id": tok[:8],
+                      "UserName": user, "Name": "User Session"})
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Auth-Token", tok)
+        self.send_header("Location", f"/redfish/v1/SessionService/Sessions/{tok[:8]}")
+        self.send_header("Set-Cookie", f"sessionKey={tok}; Path=/; HttpOnly; Secure; SameSite=Lax")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_DELETE(self):
+        p = self.norm()
+        if not self.authed():
+            return self.need_auth()
+        if p.startswith("/redfish/v1/SessionService/Sessions/"):
+            tok = self.session_token()
+            if tok:
+                self.bmc.sim.end_session(tok)
+            self.send_response(200)
+            self.send_header("Set-Cookie", "sessionKey=; Path=/; Max-Age=0")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if p in ("/redfish/v1/LicenseService/Licenses/1", f"/redfish/v1/Managers/{MGR[self.bmc.family]}/LicenseService/1"):
+            ok, msg = self.bmc.sim.lic_remove(self.actor())
+            return self.send(200, {"ok": True}) if ok else self.send(400, rf_error(msg))
+        return self.send(404, rf_error("Nicht gefunden: " + p))
+
+    def vmedia_insert(self, mid, image, wp=True):
+        """Virtual Media einlegen; ohne Lizenz abgelehnt (wie bei echten BMCs)."""
+        if not self.bmc.sim.licensed:
+            return False, "A license is required for virtual media (license key not installed)."
+        return self.bmc.sim.vm_insert(mid, image, wp, self.actor())
+
+    def vmedia_action(self, mid, action, data):
+        b = self.bmc
+        if action == "InsertMedia":
+            ok, msg = self.vmedia_insert(mid, data.get("Image"), data.get("WriteProtected", True))
+        else:
+            ok, msg = b.sim.vm_eject(mid, self.actor())
+        if ok:
+            return self.send(200, {"ok": True})
+        return self.send(403 if "icense" in msg else 400, rf_error(msg))
 
     def need_auth(self):
         body = jbody(rf_error("Benutzername oder Passwort falsch."))
@@ -820,12 +964,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.norm()
         b = self.bmc
+        if b.vendor == "hpe_old" and b.gen == "ilo3" and p.startswith("/redfish"):
+            return self.send(404, rf_error("kein Redfish"))
         if p in ("/redfish/v1", "/redfish/v1/"):
-            if b.vendor == "hpe_old" and b.gen == "ilo3":
-                return self.send(404, rf_error("kein Redfish"))
             return self.send(200, self.root_doc())
         if p == "/xmldata":
             return self.xmldata()
+        if webui.handle(self, "GET", p):
+            return
         if p == "/":
             return self.landing()
         if p in ("/console", "/irc.html", "/cgi/url_redirect.cgi"):
@@ -834,8 +980,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.console_kvm()
         if not self.authed():
             return self.need_auth()
-        mgr = f"/redfish/v1/Managers/{MGR[b.vendor]}"
-        sysp = f"/redfish/v1/Systems/{SYS[b.vendor]}"
+        mgr = f"/redfish/v1/Managers/{MGR[b.family]}"
+        sysp = f"/redfish/v1/Systems/{SYS[b.family]}"
+        ext = redfish_ext.get(b, p, SYS, MGR)
+        if ext is not None:
+            return self.send(200, ext)
         if p == mgr:
             return self.send(200, self.manager_doc())
         if p == mgr + "/Attributes":
@@ -896,21 +1045,42 @@ class Handler(BaseHTTPRequestHandler):
         b = self.bmc
         if p == "/ribcl":
             return self.ribcl()
+        if p in ("/redfish/v1/SessionService/Sessions", "/redfish/v1/Sessions"):
+            return self.session_create(self.read_json())
+        if webui.handle(self, "POST", p):
+            return
         if not self.authed():
             return self.need_auth()
-        mgr = f"/redfish/v1/Managers/{MGR[b.vendor]}"
-        sysp = f"/redfish/v1/Systems/{SYS[b.vendor]}"
+        mgr = f"/redfish/v1/Managers/{MGR[b.family]}"
+        sysp = f"/redfish/v1/Systems/{SYS[b.family]}"
         if p == "/redfish/v1/AccountService/Accounts":
             return self.account_create(self.read_json())
         if p == mgr + "/Actions/Manager.Reset":
             self.read_raw()
+            b.sim.log("ilo_reset", self.actor())
             self.send(200, {"ok": True})
             if b.pending_ip:
                 self.server.fleet.migrate(b, *b.pending_ip)
                 b.pending_ip = None
             return
         if p == sysp + "/Actions/ComputerSystem.Reset":
+            kind = self.read_json().get("ResetType", "")
+            if kind not in RESET_TYPES:
+                return self.send(400, rf_error(f"ResetType '{kind}' wird nicht unterstützt."))
+            ok, msg = b.sim.power_action(kind, self.actor(), self.client_ip)
+            if not ok:
+                return self.send(400, rf_error(msg))
+            return self.send(200, {"ok": True})
+        m = re.match(r"^" + re.escape(mgr) + r"/VirtualMedia/([^/]+)/Actions/VirtualMedia\.(InsertMedia|EjectMedia)$", p)
+        if m:
+            return self.vmedia_action(m.group(1), m.group(2), self.read_json())
+        if p in ("/redfish/v1/LicenseService/Actions/LicenseService.Install", mgr + "/LicenseService"):
+            data = self.read_json()
+            ok, msg = b.sim.lic_install(data.get("LicenseString") or data.get("LicenseKey"), self.actor())
+            return self.send(200, {"ok": True}) if ok else self.send(400, rf_error(msg))
+        if "/LogServices/" in p and p.endswith("/Actions/LogService.ClearLog"):
             self.read_raw()
+            b.sim.clear_events(self.actor())
             return self.send(200, {"ok": True})
         if "/Actions/" in p and ("Cert" in p or "Certificate" in p):
             self.read_raw()
@@ -932,8 +1102,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authed():
             return self.need_auth()
         data = self.read_json()
-        mgr = f"/redfish/v1/Managers/{MGR[b.vendor]}"
-        sysp = f"/redfish/v1/Systems/{SYS[b.vendor]}"
+        mgr = f"/redfish/v1/Managers/{MGR[b.family]}"
+        sysp = f"/redfish/v1/Systems/{SYS[b.family]}"
         if p == mgr + "/Attributes":
             if b.gen == "idrac8_alt":
                 return self.send(404, rf_error("Ressource nicht vorhanden (Firmware zu alt)"))
@@ -956,6 +1126,33 @@ class Handler(BaseHTTPRequestHandler):
             return self.account_patch(m.group(1), data)
         if p == sysp + "/Bios/Settings":
             b.bios.update((data.get("Attributes") or {}))
+            b.sim.bios_changed(self.actor())
+            return self.send(200, {"ok": True})
+        if p == sysp and isinstance(data.get("Boot"), dict):
+            bo = data["Boot"]
+            tgt = bo.get("BootSourceOverrideTarget", b.sim.boot_override["target"])
+            en = bo.get("BootSourceOverrideEnabled",
+                        "Once" if tgt != "None" and "BootSourceOverrideEnabled" not in bo else
+                        b.sim.boot_override["enabled"])
+            ok, msg = b.sim.set_boot_override(tgt, en)
+            return self.send(200, {"ok": True}) if ok else self.send(400, rf_error(msg))
+        m = re.match(r"^" + re.escape(mgr) + r"/VirtualMedia/([^/]+)$", p)
+        if m:
+            mid = m.group(1)
+            if "Image" in data:
+                if data.get("Image") in (None, ""):
+                    ok, msg = b.sim.vm_eject(mid, self.actor())
+                else:
+                    ok, msg = self.vmedia_insert(mid, data["Image"], data.get("WriteProtected", True))
+                if not ok:
+                    return self.send(400 if "icense" not in msg else 403, rf_error(msg))
+            boot_next = ((data.get("Oem") or {}).get("Hpe") or {}).get("BootOnNextServerReset")
+            if boot_next:
+                b.sim.set_boot_override("Cd", "Once")
+            return self.send(200, {"ok": True})
+        if p in (sysp, f"/redfish/v1/Chassis/{SYS[b.family]}") and "IndicatorLED" in data:
+            if data["IndicatorLED"] in ("Off", "Lit", "Blinking"):
+                b.sim.uid_led = data["IndicatorLED"]
             return self.send(200, {"ok": True})
         return self.send(404, rf_error("Nicht gefunden: " + p))
 
@@ -978,13 +1175,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def manager_doc(self):
         b = self.bmc
-        d = {"@odata.id": f"/redfish/v1/Managers/{MGR[b.vendor]}", "Id": MGR[b.vendor],
+        d = {"@odata.id": f"/redfish/v1/Managers/{MGR[b.family]}", "Id": MGR[b.family],
              "ManagerType": "BMC", "FirmwareVersion": b.fw, "Model": b.gen_label,
              "PowerState": "On",
              "Actions": {"#Manager.Reset": {
-                 "target": f"/redfish/v1/Managers/{MGR[b.vendor]}/Actions/Manager.Reset"}}}
+                 "target": f"/redfish/v1/Managers/{MGR[b.family]}/Actions/Manager.Reset"}}}
         if b.vendor in NIC:
-            d["EthernetInterfaces"] = {"@odata.id": f"/redfish/v1/Managers/{MGR[b.vendor]}/EthernetInterfaces"}
+            d["EthernetInterfaces"] = {"@odata.id": f"/redfish/v1/Managers/{MGR[b.family]}/EthernetInterfaces"}
         return d
 
     def nic_doc(self, p):
@@ -1006,11 +1203,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def system_doc(self, p):
         b = self.bmc
-        return {"@odata.id": p, "Id": SYS[b.vendor], "Model": b.model,
-                "Manufacturer": {"dell": "Dell Inc.", "hpe": "HPE", "smc": "Supermicro",
+        return {"@odata.id": p, "Id": SYS[b.family], "Model": b.model,
+                "Manufacturer": {"dell": "Dell Inc.", "hpe": "HPE", "hpe_old": "HP", "smc": "Supermicro",
                                  "lenovo": "Lenovo"}[b.vendor],
-                "SerialNumber": b.serial, "SKU": b.serial, "PowerState": b.power,
-                "Actions": {"#ComputerSystem.Reset": {"target": p + "/Actions/ComputerSystem.Reset"}}}
+                "SerialNumber": b.serial, "SKU": b.serial, "PowerState": b.sim.power_state,
+                **{k: v for k, v in redfish_ext.system_extras(b, p).items() if k != "HostName"},
+                "Actions": {"#ComputerSystem.Reset": {
+                    "target": p + "/Actions/ComputerSystem.Reset",
+                    "ResetType@Redfish.AllowableValues": list(RESET_TYPES)}}}
 
     # -- UpdateService / Firmware ------------------------------------------
     def updateservice_doc(self):
@@ -1237,6 +1437,39 @@ class Handler(BaseHTTPRequestHandler):
             if nu and nu.group(1) in b.accounts and np_:
                 b.accounts[nu.group(1)]["password"] = np_.group(1)
             parts.append(self._ribcl_resp(0x0000, "No error"))
+        sim, who = b.sim, mu.group(1)
+        if "GET_HOST_POWER_STATUS" in raw:
+            on = sim.power_state in ("On", "PoweringOff")
+            parts.append(f'<GET_HOST_POWER HOST_POWER="{"ON" if on else "OFF"}"/>\r\n'
+                         + self._ribcl_resp(0x0000, "No error"))
+        if "GET_SERVER_NAME" in raw:
+            parts.append(f'<SERVER_NAME VALUE="{b.hostname or b.model}"/>\r\n' + self._ribcl_resp(0x0000, "No error"))
+        if "GET_EVENT_LOG" in raw:
+            ev = "".join(f'<EVENT SEVERITY="{e["severity"]}" CLASS="{e["source"]}" '
+                         f'LAST_UPDATE="{time.strftime("%m/%d/%Y %H:%M", time.localtime(e["time"]))}" '
+                         f'INITIAL_UPDATE="{time.strftime("%m/%d/%Y %H:%M", time.localtime(e["time"]))}" '
+                         f'COUNT="1" DESCRIPTION="{e["message"]}"/>' for e in reversed(sim.events))
+            parts.append(f'<EVENT_LOG DESCRIPTION="Integrated Management Log">{ev}</EVENT_LOG>\r\n'
+                         + self._ribcl_resp(0x0000, "No error"))
+        # (RIBCL-Befehl, Redfish-Aktion, Bedingung-Text bei Fehler)
+        for tag, kind, need in (("PRESS_PWR_BTN", "PushPowerButton", None), ("HOLD_PWR_BTN", "ForceOff", "on"),
+                                ("COLD_BOOT_SERVER", "PowerCycle", "on"), ("WARM_BOOT_SERVER", "ForceRestart", "on"),
+                                ("RESET_SERVER", "ForceRestart", "on")):
+            if re.search(rf"<{tag}\b", raw):
+                if need == "on" and sim.power_state == "Off":
+                    parts.append(self._ribcl_resp(0x0001, "Server is currently powered off."))
+                else:
+                    sim.power_action(kind, who, self.client_ip)
+                    parts.append(self._ribcl_resp(0x0000, "No error"))
+        msp = re.search(r'<SET_HOST_POWER\s+HOST_POWER\s*=\s*"([^"]*)"', raw)
+        if msp:
+            want_on = msp.group(1).strip().lower() in ("yes", "on", "y")
+            is_on = sim.power_state != "Off"
+            if want_on == is_on:
+                parts.append(self._ribcl_resp(0x0001, f"Host power is already {'ON' if is_on else 'OFF'}."))
+            else:
+                sim.power_action("On" if want_on else "GracefulShutdown", who, self.client_ip)
+                parts.append(self._ribcl_resp(0x0000, "No error"))
         new_ip = None
         if "MOD_NETWORK_SETTINGS" in raw:
             seg = raw[raw.find("MOD_NETWORK_SETTINGS"):]
@@ -1610,7 +1843,8 @@ def bmc_from_entry(e, idx, base, port):
                user=e.get("user") or None, password=e.get("password") or None,
                gen=e.get("gen") or None, mac=(e.get("mac") or "").lower() or None,
                net=e.get("net"), ip=e.get("ip") or None, mask=e.get("mask") or None,
-               gw=e.get("gw") or None, busy_slots=busy, idx=idx + 1)
+               gw=e.get("gw") or None, busy_slots=busy, idx=idx + 1,
+               license=e.get("license") or None)
 
 
 def build_fleet(args, cfg=None):
