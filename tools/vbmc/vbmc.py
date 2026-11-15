@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __license__ = "MIT"
 
 import argparse
@@ -51,7 +51,7 @@ from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vbsim.state import ServerSim, RESET_TYPES      # noqa: E402
-from vbsim import redfish_ext, webui                 # noqa: E402
+from vbsim import redfish_ext, ssdp, webui           # noqa: E402
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
 
@@ -239,6 +239,7 @@ class BMC:
         self._redfish = []              # [(Server, thread)]
         self._ssh = None                # (socket, thread)
         self._ipmi = None               # FakeBMC-Instanz
+        self._ssdp = None               # SSDP-Antwortdienst (vbsim/ssdp.py)
 
     def _gen_serial(self):
         import random
@@ -928,6 +929,27 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True}) if ok else self.send(400, rf_error(msg))
         return self.send(404, rf_error("Nicht gefunden: " + p))
 
+    def cert_action(self, p, data):
+        """Zertifikat einspielen (Redfish ReplaceCertificate und die Hersteller-Wege, die BMC-Steward nutzt)
+        oder CSR erzeugen."""
+        b = self.bmc
+        if "CSR" in p.upper():
+            ok, out = b.sim.cert_csr(self.actor(), str(data.get("CommonName") or ""), str(data.get("Organization") or ""),
+                                     str(data.get("Country") or ""), str(data.get("State") or ""),
+                                     str(data.get("City") or ""))
+            if not ok:
+                return self.send(400, rf_error(out))
+            return self.send(200, {"CSRString": out, "CertificateCollection": {
+                "@odata.id": f"/redfish/v1/Managers/{MGR[b.family]}/NetworkProtocol/HTTPS/Certificates"}})
+        pem = next((data[k] for k in ("CertificateString", "Certificate", "SSLCertificateFile")
+                    if isinstance(data.get(k), str) and data[k].strip()), None)
+        if pem is not None:
+            ok, msg = b.sim.cert_install(pem, self.actor())
+            if not ok:
+                return self.send(400, rf_error(msg))
+        b.extra["cert"] = True
+        return self.send(200, {"ok": True})
+
     def vmedia_insert(self, mid, image, wp=True):
         """Virtual Media einlegen; ohne Lizenz abgelehnt (wie bei echten BMCs)."""
         if not self.bmc.sim.licensed:
@@ -1082,10 +1104,8 @@ class Handler(BaseHTTPRequestHandler):
             self.read_raw()
             b.sim.clear_events(self.actor())
             return self.send(200, {"ok": True})
-        if "/Actions/" in p and ("Cert" in p or "Certificate" in p):
-            self.read_raw()
-            b.extra["cert"] = True
-            return self.send(200, {"ok": True})
+        if "/Actions/" in p and ("Cert" in p or "CSR" in p.upper()):
+            return self.cert_action(p, self.read_json())
         # ---- Firmware: Multipart-/HTTP-Push und SimpleUpdate ----
         if p in ("/redfish/v1/UpdateService/update-multipart", "/redfish/v1/UpdateService/update",
                  "/redfish/v1/UpdateService/FirmwareInventory"):
@@ -1571,6 +1591,18 @@ class Fleet:
         if not bmc._redfish:
             raise OSError(f"keine Redfish-Ports gebunden für {bmc.host}")
 
+    def _start_ssdp(self, bmc):
+        """SSDP-Antwortdienst: im Netzlabor auf der eigenen Karte (mit Multicast), sonst auf der Server-Adresse."""
+        port = ssdp.ssdp_port()
+        if not port:
+            return
+        try:
+            with _ns(bmc.netns):
+                bmc._ssdp = ssdp.Ssdp(bmc, "0.0.0.0" if bmc.netns else bmc.host, port, multicast=bool(bmc.netns))
+        except OSError as e:
+            print(f"  [ssdp] {bmc.host}:{port} nicht gebunden ({e.errno}); Erkennung per SSDP geht für diesen Server nicht.",
+                  file=sys.stderr)
+
     def _unbind_redfish(self, bmc):
         for srv in bmc._redfish:
             srv.shutdown()
@@ -1596,6 +1628,7 @@ class Fleet:
                 if self.lab and bmc.netns:
                     self.lab.remove_server(bmc.netns)
                 raise
+            self._start_ssdp(bmc)
             if self.console:
                 self._start_console(bmc)
             self.bmcs[bmc.idx] = bmc
@@ -1712,6 +1745,9 @@ class Fleet:
             self.bmcs.pop(bmc.idx, None)
         self._stop_dhcp(bmc, release=True)
         self._unbind_redfish(bmc)
+        if bmc._ssdp is not None:
+            bmc._ssdp.close()
+            bmc._ssdp = None
         if bmc._ssh:
             try:
                 bmc._ssh[0].close()

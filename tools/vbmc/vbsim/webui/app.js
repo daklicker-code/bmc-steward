@@ -257,6 +257,35 @@
   };
   P.license.noRefresh = true;
 
+  P.certificate = function (el) {
+    return api(C.cert).then(function (c) {
+      var yn = function (b) { return b ? C.t.yes : C.t.no; };
+      el.innerHTML = card(C.t.certificate, kv([[C.t.subject, (c.Subject || {}).CommonName], [C.t.issuer, (c.Issuer || {}).CommonName],
+        [C.t.validFrom, fmtTime(c.ValidNotBefore)], [C.t.validTo, fmtTime(c.ValidNotAfter)], [C.t.serial, c.SerialNumber],
+        [C.t.fingerprint, c.Fingerprint], [C.t.selfSigned, yn((c.Oem || {}).SelfSigned)]])) +
+        card(C.t.genCsr, '<div class="form"><label>' + esc(C.t.commonName) + '</label><input id="csr-cn" type="text" size="40">' +
+          '<label>' + esc(C.t.organization) + '</label><input id="csr-o" type="text" size="40">' +
+          '<label>' + esc(C.t.country) + '</label><input id="csr-c" type="text" size="3" maxlength="2">' +
+          '<p><button class="btn pri" id="csr-go">' + esc(C.t.genCsr) + "</button></p>" +
+          '<textarea id="csr-out" rows="8" cols="70" readonly placeholder="-----BEGIN CERTIFICATE REQUEST-----"></textarea></div>') +
+        card(C.t.importCert, '<div class="form"><label>' + esc(C.t.pem) + '</label>' +
+          '<textarea id="cert-pem" rows="8" cols="70" placeholder="-----BEGIN CERTIFICATE-----"></textarea>' +
+          '<p><button class="btn pri" id="cert-go">' + esc(C.t.install) + "</button></p></div>" +
+          '<p class="muted">' + esc(C.t.certHint) + "</p>");
+      el.querySelector("#csr-go").onclick = function () {
+        post("/redfish/v1/CertificateService/Actions/CertificateService.GenerateCSR",
+          {CommonName: el.querySelector("#csr-cn").value, Organization: el.querySelector("#csr-o").value,
+           Country: el.querySelector("#csr-c").value}).then(function (r) {
+          el.querySelector("#csr-out").value = r.CSRString || ""; toast(C.t.done); })
+          .catch(function (e) { toast(e.message, true); }); };
+      el.querySelector("#cert-go").onclick = function () {
+        post("/redfish/v1/CertificateService/Actions/CertificateService.ReplaceCertificate",
+          {CertificateString: el.querySelector("#cert-pem").value, CertificateType: "PEM"})
+          .then(function () { toast(C.t.done); render(); }).catch(function (e) { toast(e.message, true); }); };
+    });
+  };
+  P.certificate.noRefresh = true;
+
   var popup = null;
   function launchConsole() {
     popup = window.open(C.consolePath, "vbmc_console", "width=980,height=700");

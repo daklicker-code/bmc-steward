@@ -48,7 +48,7 @@ MODES = [("loopback", "Loopback – ohne Root, nur dieser PC (127.x:Port)"),
          ("router", "Zuhause/Router – echtes LAN über die Kabel-Netzwerkkarte")]
 
 # Spalten der Flotten-Tabelle
-C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT = range(9)
+C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT, C_LIC = range(10)
 # Spalten der Übersicht laufender Server
 S_NR, S_DEV, S_ID, S_MAC, S_ADDR, S_STATE, S_LOGIN, S_LINK = range(8)
 
@@ -211,10 +211,10 @@ class VbmcTabMixin:
         # --- Flotte ---
         fbox = QGroupBox(T("Flotte (jede Zeile ein Server)"))
         fl = QVBoxLayout(fbox)
-        self.vbmc_fleet = QTableWidget(0, 9)
+        self.vbmc_fleet = QTableWidget(0, 10)
         self.vbmc_fleet.setHorizontalHeaderLabels([T("Hersteller"), T("Generation"), T("Werks-Netz"), T("Werks-IP"),
                                                    T("Werks-Benutzer"), T("Werks-Passwort"), T("Modell"),
-                                                   T("Seriennummer"), T("Belegter Slot")])
+                                                   T("Seriennummer"), T("Belegter Slot"), T("Lizenz")])
         tips = [T("Hersteller des virtuellen Servers"),
                 T("Firmware-Generation. „iDRAC8, Firmware zu alt“ und iLO 3/4 prüfen die Sonderwege von BMC-Steward."),
                 T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Konfigraum/Router."),
@@ -224,7 +224,9 @@ class VbmcTabMixin:
                 T("Leer = Standardmodell der Generation"),
                 T("Bestimmt auch die MAC-Adresse: gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse."),
                 T("Nur Dell: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). "
-                  "BMC-Steward darf ihn nicht überschreiben.")]
+                  "BMC-Steward darf ihn nicht überschreiben."),
+                T("„Ohne Lizenz“: Virtual Media und Remote-Konsole des virtuellen Servers sind gesperrt, bis ein "
+                  "Lizenzschlüssel auf seiner Lizenzseite installiert wird.")]
         for c, tip in enumerate(tips):
             self.vbmc_fleet.horizontalHeaderItem(c).setToolTip(tip)
         hh = self.vbmc_fleet.horizontalHeader()
@@ -417,6 +419,8 @@ class VbmcTabMixin:
         net = e.get("net") or ("dhcp")
         ncb = self._vbmc_combo([("dhcp", "DHCP"), ("static", "Feste IP")], net)
         t.setCellWidget(r, C_NET, ncb)
+        t.setCellWidget(r, C_LIC, self._vbmc_combo([("full", "Lizenziert"), ("none", "Ohne Lizenz")],
+                                                    "none" if e.get("license") == "none" else "full"))
         user, pw = FACTORY[vendor]
         vals = {C_IP: e.get("ip") or (DELL_STATIC if vendor == "dell" else ""),
                 C_USER: e.get("user") or user, C_PASS: e.get("password") or pw,
@@ -530,6 +534,8 @@ class VbmcTabMixin:
                         return None, T("Zeile {0}: Belegter Slot „{1}“ - erlaubt sind 3 bis 16.").format(r + 1, s)
                     slots[s] = "operator" if not slots else f"operator{len(slots) + 1}"
                 e["busy_slots"] = slots
+            if t.cellWidget(r, C_LIC).currentData() == "none":
+                e["license"] = "none"
             out.append({k: v for k, v in e.items() if v not in (None, "")})
         return out, None
 

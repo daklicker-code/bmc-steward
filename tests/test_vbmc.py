@@ -20,6 +20,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+os.environ.setdefault("VBMC_SSDP_PORT", "0")        # SSDP nur im eigenen Test (freier Port)
 from tests._support import qapp
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -609,6 +610,137 @@ class TestVirtualMediaLicenseBoot(_WebBase):
         self._req(port, "/vbsim/console/key", ck, "POST", {"key": "Escape"})
         self.assertNotEqual(b.sim.phase, "Post", "nach Esc läuft der Start weiter")
         self.assertEqual(b.sim.boot_override["enabled"], "Disabled", "Once ist verbraucht")
+
+
+class TestSsdp(_WebBase):
+    """SSDP-Erkennung: der virtuelle Server antwortet auf M-SEARCH mit seiner Redfish-Adresse."""
+
+    def _ask(self, svc, st, man="ssdp:discover"):
+        msg = (f'M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: "{man}"\r\nMX: 1\r\nST: {st}\r\n\r\n')
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(1.0)
+        self.addCleanup(sock.close)
+        sock.sendto(msg.encode(), ("127.0.0.1", svc.port))
+        try:
+            return sock.recvfrom(2048)[0].decode()
+        except socket.timeout:
+            return None
+
+    def _svc(self, vendor="hpe", gen=None):
+        b, _ = self._start(vendor, gen=gen)
+        svc = vbmc.ssdp.Ssdp(b, "127.0.0.1", 0)
+        self.addCleanup(svc.close)
+        return b, svc
+
+    def test_redfish_search_is_answered(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                b, svc = self._svc(v)
+                for st in (vbmc.ssdp.ST_REDFISH, "ssdp:all"):
+                    r = self._ask(svc, st)
+                    self.assertIsNotNone(r, st)
+                    self.assertTrue(r.startswith("HTTP/1.1 200 OK"))
+                    self.assertIn("LOCATION: https://127.0.0.1", r)
+                    self.assertIn("/redfish/v1/", r)
+                    self.assertIn(f"USN: uuid:{b.sim.inv['uuid']}", r)
+
+    def test_other_searches_and_garbage_are_ignored(self):
+        b, svc = self._svc()
+        self.assertIsNone(self._ask(svc, "urn:schemas-upnp-org:device:MediaServer:1"))
+        self.assertIsNone(self._ask(svc, vbmc.ssdp.ST_REDFISH, man="quatsch"))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.sendto(b"\x00\xff garbage", ("127.0.0.1", svc.port))
+        self.assertIsNotNone(self._ask(svc, vbmc.ssdp.ST_REDFISH), "Dienst läuft nach Müll weiter")
+
+    def test_ilo3_points_to_xmldata_not_redfish(self):
+        b, svc = self._svc("hpe", gen="ilo3")
+        self.assertIsNone(self._ask(svc, vbmc.ssdp.ST_REDFISH), "iLO 3 hat kein Redfish")
+        r = self._ask(svc, "upnp:rootdevice")
+        self.assertIn("/xmldata?item=all", r)
+
+    def test_no_reply_while_address_unknown(self):
+        b, svc = self._svc()
+        b.netns = "x"                           # Netzlabor ohne DHCP-Adresse: addr ist leer
+        b.ipv4 = {"Address": ""}
+        self.assertEqual(b.addr, "")
+        self.assertIsNone(self._ask(svc, vbmc.ssdp.ST_REDFISH))
+
+    def test_fleet_starts_and_stops_responder(self):
+        with patch.dict(os.environ, {"VBMC_SSDP_PORT": "47190"}):
+            fleet = vbmc.Fleet(self.ctx, [0])
+            b = vbmc.BMC("dell", "127.0.0.1", 0, idx=1)
+            fleet.start(b)
+            try:
+                self.assertIsNotNone(b._ssdp)
+                self.assertEqual(b._ssdp.port, 47190)
+            finally:
+                fleet.stop(b)
+            self.assertIsNone(b._ssdp)
+
+
+@unittest.skipUnless(__import__("shutil").which("openssl"), "openssl fehlt")
+class TestCertificates(_WebBase):
+    """HTTPS-Zertifikat: anzeigen, einspielen (Redfish und die Wege von BMC-Steward), CSR erzeugen."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import subprocess
+        cls.tmp = tempfile.mkdtemp()
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", cls.tmp + "/k",
+                        "-out", cls.tmp + "/c", "-days", "30", "-subj", "/CN=install.lab/O=Lab"],
+                       capture_output=True, check=True)
+        cls.pem = open(cls.tmp + "/c").read()
+
+    def _ready(self, vendor="hpe"):
+        b, port = self._start(vendor)
+        _, ck = self._login(port, *FACTORY_LOGIN[vendor])
+        mgr = vbmc.MGR[b.family]
+        return b, port, ck, f"/redfish/v1/Managers/{mgr}/NetworkProtocol/HTTPS/Certificates/1"
+
+    def test_default_certificate_is_self_signed(self):
+        b, port, ck, doc = self._ready()
+        d = json.loads(self._req(port, doc, ck)[2])
+        self.assertTrue(d["Oem"]["SelfSigned"])
+        self.assertEqual(d["Subject"]["CommonName"], d["Issuer"]["CommonName"])
+
+    def test_replace_certificate_and_reject_garbage(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                b, port, ck, doc = self._ready(v)
+                act = "/redfish/v1/CertificateService/Actions/CertificateService.ReplaceCertificate"
+                self.assertEqual(self._req(port, act, ck, "POST", {"CertificateString": "quatsch"})[0], 400)
+                self.assertEqual(self._req(port, act, ck, "POST", {"CertificateString": self.pem})[0], 200)
+                d = json.loads(self._req(port, doc, ck)[2])
+                self.assertEqual(d["Subject"]["CommonName"], "install.lab")
+                self.assertRegex(d["Fingerprint"], r"^([0-9A-F]{2}:){31}[0-9A-F]{2}$")
+                self.assertTrue(any("install.lab" in e["message"] for e in b.sim.events))
+
+    def test_vendor_import_paths_used_by_the_tool(self):
+        # (Hersteller, Pfad, Feldname) wie in bmc_steward/redfish.py svc_cert
+        cases = [("hpe", "/redfish/v1/Managers/1/SecurityService/HttpsCert/Actions/HpeHttpsCert.ImportCertificate", "Certificate"),
+                 ("dell", "/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/"
+                          "DelliDRACCardService.ImportSSLCertificate", "SSLCertificateFile"),
+                 ("lenovo", "/redfish/v1/Managers/1/SecurityService/HttpsCert/Actions/HttpsCert.ImportServerCertificate",
+                  "Certificate")]
+        for v, path, key in cases:
+            with self.subTest(v):
+                b, port, ck, doc = self._ready(v)
+                self.assertEqual(self._req(port, path, ck, "POST", {key: "kein zertifikat"})[0], 400)
+                self.assertEqual(self._req(port, path, ck, "POST", {key: self.pem})[0], 200)
+                self.assertEqual(json.loads(self._req(port, doc, ck)[2])["Subject"]["CommonName"], "install.lab")
+                self.assertTrue(b.extra.get("cert"))
+
+    def test_generate_csr(self):
+        b, port, ck, doc = self._ready("dell")
+        act = "/redfish/v1/CertificateService/Actions/CertificateService.GenerateCSR"
+        st, _, body = self._req(port, act, ck, "POST", {"CommonName": "idrac01.lab", "Organization": "Lab", "Country": "DE"})
+        self.assertEqual(st, 200)
+        self.assertIn("BEGIN CERTIFICATE REQUEST", json.loads(body)["CSRString"])
+        self.assertTrue(json.loads(self._req(port, doc, ck)[2])["Oem"]["PendingCSR"])
+        st, _, body = self._req(port, act, ck, "POST", {})           # ohne CN: Hostname/Standardname
+        self.assertEqual(st, 200)
 
 
 class TestMigrateRollback(unittest.TestCase):

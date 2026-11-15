@@ -108,6 +108,23 @@ DE.update({
     "needLicensePage": "Die installierte Edition (%s) enthält die Remote-Konsole nicht. Zum Nutzen einen Lizenzschlüssel installieren.",
 })
 
+EN.update({
+    "certificate": "HTTPS certificate", "subject": "Subject", "issuer": "Issuer", "validFrom": "Valid from",
+    "validTo": "Valid until", "fingerprint": "SHA-256 fingerprint", "selfSigned": "Self-signed",
+    "genCsr": "Generate certificate signing request", "commonName": "Common name (CN)",
+    "organization": "Organization", "country": "Country (2 letters)", "importCert": "Import certificate",
+    "pem": "Certificate (PEM)",
+    "certHint": "Simulation: the imported certificate is stored and shown here, but the TLS handshake of this lab server keeps using its lab certificate.",
+})
+DE.update({
+    "certificate": "HTTPS-Zertifikat", "subject": "Antragsteller", "issuer": "Aussteller", "validFrom": "Gültig ab",
+    "validTo": "Gültig bis", "fingerprint": "SHA-256-Fingerabdruck", "selfSigned": "Selbstsigniert",
+    "genCsr": "Zertifikatsanforderung (CSR) erzeugen", "commonName": "Common Name (CN)",
+    "organization": "Organisation", "country": "Land (2 Buchstaben)", "importCert": "Zertifikat importieren",
+    "pem": "Zertifikat (PEM)",
+    "certHint": "Simulation: Das importierte Zertifikat wird gespeichert und hier angezeigt; der TLS-Handshake dieses Laborservers nutzt aber weiter sein Laborzertifikat.",
+})
+
 # Power-Aktionen: (Beschriftung, Redfish-ResetType, gefährlich)
 ACT_HPE = [("Momentary Press", "PushPowerButton", 0), ("Cold Boot", "PowerCycle", 1), ("Reset", "ForceRestart", 1),
            ("Graceful Shutdown", "GracefulShutdown", 0), ("Press and Hold", "ForceOff", 1), ("Power On", "On", 0)]
@@ -135,7 +152,8 @@ SKINS = {
              N("vmedia", "Virtual Media"),
              {"section": "Power & Thermal"}, N("power", "Power"), N("thermal", "Temperatures & Fans"),
              {"section": "iLO"}, N("network", "Network"), {"section": "Administration"},
-             N("firmware", "Firmware & OS Software"), N("license", "Licensing"), N("users", "User Administration"), N("bios", "BIOS/Platform Configuration")],
+             N("firmware", "Firmware & OS Software"), N("license", "Licensing"), N("certificate", "SSL Certificate"),
+             N("users", "User Administration"), N("bios", "BIOS/Platform Configuration")],
         actions=ACT_HPE, t={}),
     "dell": dict(
         layout="top", product="Integrated Dell Remote Access Controller", accent="#0076ce", head_bg="#1b1b1b", head_fg="#ffffff",
@@ -143,7 +161,7 @@ SKINS = {
         home="/restgui/start.html", login_btn="Log In", console_path="/console", nic="1",
         nav=[N("overview", "Dashboard"), N("sysinfo", "System"), N("power", "Power"), N("thermal", "Cooling"),
              N("events", "Logs"), N("bios", "Configuration"), N("firmware", "Maintenance"),
-             N("network", "iDRAC Settings"), N("license", "Licenses"), N("users", "Users"), N("console", "Virtual Console"),
+             N("network", "iDRAC Settings"), N("certificate", "SSL Certificates"), N("license", "Licenses"), N("users", "Users"), N("console", "Virtual Console"),
              N("vmedia", "Virtual Media")],
         actions=ACT_DELL, t={"on": "ON", "off": "OFF"}),
     "lenovo": dict(
@@ -152,7 +170,7 @@ SKINS = {
         home="/", login_btn="Log In", console_path="/vbsim/xcc-console", nic="NIC",
         nav=[N("overview", "Home"), N("events", "Event"), N("sysinfo", "Inventory"), N("thermal", "Utilization"),
              N("power", "Power Control"), N("console", "Remote Console"), N("vmedia", "Virtual Media"),
-             N("firmware", "Firmware Update"), N("license", "License"),
+             N("firmware", "Firmware Update"), N("license", "License"), N("certificate", "Security Certificates"),
              N("bios", "Server Configuration"), N("network", "BMC Configuration"), N("users", "Users & Security")],
         actions=ACT_XCC, t={}),
     "smc": dict(
@@ -161,7 +179,7 @@ SKINS = {
         home="/cgi/url_redirect.cgi?url_name=mainmenu", login_btn="Login", console_path="/cgi/url_redirect.cgi", nic="1",
         nav=[N("overview", "System"), N("thermal", "Server Health"), N("sysinfo", "Hardware"), N("events", "Event Log"),
              N("network", "Configuration"), N("console", "Remote Control"), N("vmedia", "Virtual Media"),
-             N("firmware", "Maintenance"), N("license", "License"),
+             N("firmware", "Maintenance"), N("license", "License"), N("certificate", "SSL Certification"),
              N("power", "Power Control"), N("users", "Users"), N("bios", "BIOS")],
         actions=ACT_SMC, t={}),
 }
@@ -204,7 +222,7 @@ table{{border-collapse:collapse;width:100%}}.kv th{{text-align:left;font-weight:
 .btn.pri{{background:{sk['accent']};border-color:{sk['accent']};color:#fff}}.btn.danger{{border-color:#c62828;color:#c62828}}
 .btn.flat{{border:0;background:transparent;color:inherit;text-decoration:underline;padding:2px 6px}}.acts .btn{{margin:0 6px 8px 0}}
 .right{{float:right}}.err{{color:#c62828}}
-.form label{{display:block;margin:8px 0 3px;font-size:12px;color:#556}}.form select,.form input[type=text]{{padding:6px;border:1px solid #b9bec6;border-radius:3px;font:inherit;max-width:100%}}
+.form textarea{{padding:6px;border:1px solid #b9bec6;border-radius:3px;font:12px monospace;max-width:100%}}.form label{{display:block;margin:8px 0 3px;font-size:12px;color:#556}}.form select,.form input[type=text]{{padding:6px;border:1px solid #b9bec6;border-radius:3px;font:inherit;max-width:100%}}
 .thumb{{width:380px;max-width:100%;height:210px;background:#05070a;border:3px solid #2a2f3a;border-radius:4px;cursor:pointer;overflow:hidden;margin:10px 0}}
 .thumb pre{{margin:0;padding:6px;color:#cfd6df;font:7px/8px monospace}}
 .foot{{padding:8px 24px;font-size:11px;color:#778;border-top:1px solid #dcdfe3;background:#fff}}
@@ -228,14 +246,15 @@ def cfg(h, sk):
     return {"vendor": b.vendor, "family": b.family, "layout": sk["layout"], "product": f"{sk['product']} ({b.gen_label})"
             if b.family == "hpe" else sk["product"], "model": b.model, "hostLabel": b.hostname or b.dhcp_hostname() or b.model,
             "sys": f"/redfish/v1/Systems/{sysid}", "mgr": f"/redfish/v1/Managers/{mgrid}",
-            "chassis": f"/redfish/v1/Chassis/{sysid}", "license": "/redfish/v1/LicenseService/Licenses/1", "log": f"/redfish/v1/Systems/{sysid}/LogServices/{ls}",
+            "chassis": f"/redfish/v1/Chassis/{sysid}", "license": "/redfish/v1/LicenseService/Licenses/1",
+            "cert": f"/redfish/v1/Managers/{mgrid}/NetworkProtocol/HTTPS/Certificates/1", "log": f"/redfish/v1/Systems/{sysid}/LogServices/{ls}",
             "nic": sk["nic"], "addr": (b.ipv4.get("Address") or b.host), "bmcMac": b.sim.inv["bmc_mac"],
             "consolePath": sk["console_path"], "nav": nav, "powerActions": sk["actions"], "t": t,
             "locale": "de-DE" if lang_of(h) == "de" else "en-GB"}
 
 
 PAGES = {"overview", "sysinfo", "events", "console", "power", "thermal", "network", "users", "firmware", "bios",
-         "vmedia", "license"}
+         "vmedia", "license", "certificate"}
 
 
 def login_html(h, error="", expired=False):

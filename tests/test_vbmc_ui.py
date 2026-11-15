@@ -10,6 +10,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tools", "vbmc"))
+os.environ.setdefault("VBMC_SSDP_PORT", "0")
 import vbmc  # noqa: E402
 
 try:
@@ -60,7 +61,7 @@ class TestBrowserUi(unittest.TestCase):
             with self.subTest(v):
                 b, page, base = self._open(v)
                 for k in ("overview", "sysinfo", "power", "thermal", "events", "console", "network", "users",
-                          "firmware", "bios", "vmedia", "license"):
+                          "firmware", "bios", "vmedia", "license", "certificate"):
                     page.goto(f"{base}/#/{k}")
                     page.wait_for_selector("#main .card, #main .err", timeout=8000)
                     err = page.query_selector("#main .err")

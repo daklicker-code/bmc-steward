@@ -163,7 +163,13 @@ Ab 1.5 zusätzlich:
 * Der Browser-Test `tests/test_vbmc_ui.py` bedient alle Oberflächen in einem echten Chrome (Playwright);
   er wird übersprungen, wenn beides fehlt.
 
-Noch nicht nachgebildet: SSDP-Erkennung, Zertifikatsseiten, Inhalt der Virtual-Media-Images, IPMI-Bootgerät.
+### Neu in 1.6
+
+- **SSDP-Erkennung:** Jeder virtuelle Server beantwortet `M-SEARCH` (`ssdp:all`, `upnp:rootdevice`, `urn:dmtf-org:service:redfish-rest:1`) mit seiner Redfish-Adresse (iLO 3: `/xmldata?item=all`). Im Netzlabor auf der eigenen Karte inklusive Multicast, sonst unicast auf der Server-Adresse. Port per `VBMC_SSDP_PORT` (Standard 1900, `0` schaltet SSDP ab).
+- **Zertifikatsseiten:** Seite „SSL-Zertifikat" in allen Herstellerskins: Zertifikat anzeigen, CSR erzeugen, PEM einspielen. Redfish: `CertificateService` (`GenerateCSR`, `ReplaceCertificate`), `.../NetworkProtocol/HTTPS/Certificates/1` und die Hersteller-Importwege, die BMC-Steward nutzt (Dell `ImportSSLCertificate`, HPE `ImportCertificate`, Lenovo `ImportServerCertificate`). Ungültiges PEM wird mit 400 abgelehnt, ein Eintrag im Ereignisprotokoll entsteht. Braucht `openssl` im Pfad.
+- **Testlabor-Reiter:** Neue Spalte „Lizenz" (Lizenziert / Ohne Lizenz) pro Server.
+
+Noch nicht nachgebildet: Inhalt der Virtual-Media-Images, IPMI-Bootgerät. Das importierte Zertifikat wird nur gespeichert und angezeigt; der TLS-Handshake nutzt weiter das Laborzertifikat.
 
 ## Lizenz
 

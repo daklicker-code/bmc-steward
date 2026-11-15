@@ -166,6 +166,22 @@ def get(bmc, p, SYS, MGR):
                     "ConnectedVia": "URI" if m["inserted"] else "NotConnected",
                     "Actions": {"#VirtualMedia.InsertMedia": {"target": p + "/Actions/VirtualMedia.InsertMedia"},
                                 "#VirtualMedia.EjectMedia": {"target": p + "/Actions/VirtualMedia.EjectMedia"}}}
+    if p == "/redfish/v1/CertificateService":
+        return {"@odata.id": p, "Id": "CertificateService",
+                "CertificateLocations": {"@odata.id": p + "/CertificateLocations"},
+                "Actions": {"#CertificateService.GenerateCSR": {"target": p + "/Actions/CertificateService.GenerateCSR"},
+                            "#CertificateService.ReplaceCertificate": {
+                                "target": p + "/Actions/CertificateService.ReplaceCertificate"}}}
+    if p == f"{mgp}/NetworkProtocol/HTTPS/Certificates":
+        return {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": p + "/1"}]}
+    if p == f"{mgp}/NetworkProtocol/HTTPS/Certificates/1":
+        c = sim.cert
+        return {"@odata.id": p, "Id": "1", "Name": "HTTPS Server Certificate", "CertificateType": "PEM",
+                "Subject": {"CommonName": c["subject"]}, "Issuer": {"CommonName": c["issuer"]},
+                "ValidNotBefore": iso(c["not_before"]), "ValidNotAfter": iso(c["not_after"]),
+                "SerialNumber": c["serial"], "Fingerprint": c["fingerprint"],
+                "FingerprintHashAlgorithm": "TPM_ALG_SHA256", "CertificateString": c["pem"] or None,
+                "Oem": {"SelfSigned": c["self_signed"], "PendingCSR": bool(sim.csr_pem)}}
     if p in ("/redfish/v1/LicenseService", f"{mgp}/LicenseService"):
         return {"@odata.id": p, "Id": "LicenseService", "ServiceEnabled": True,
                 "Licenses": {"@odata.id": "/redfish/v1/LicenseService/Licenses"},
