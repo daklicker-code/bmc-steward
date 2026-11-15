@@ -293,7 +293,7 @@ class VbmcTabMixin:
         rl.addWidget(self.vbmc_run)
         arow = QHBoxLayout()
         self.vbmc_adopt_btn = QPushButton(T("In Serverliste übernehmen („Neuware“)"))
-        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_adopt_ready(False)
         self.vbmc_adopt_btn.setToolTip(T("Trägt die markierten (ohne Markierung: alle) laufenden Server mit ihrer "
                                          "aktuellen Adresse und ihrem Werks-Passwort in die Serverliste ein und "
                                          "schlägt neue Adressen vor."))
@@ -723,7 +723,7 @@ class VbmcTabMixin:
         self.vbmc_proc.errorOccurred.connect(self.vbmc_error)
         self.vbmc_proc.start(program, pre + args)
         self._vbmc_lock(True)
-        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_adopt_ready(False)
         self.vbmc_adopt_mode.setVisible(mode == "loopback")
         self.vbmc_set_status(T("Flotte startet …") if not (need_root and not root)
                              else T("Flotte startet … (Rechteabfrage bestätigen)"))
@@ -786,7 +786,7 @@ class VbmcTabMixin:
             self.vbmc_log.appendPlainText(self.vbmc_buf.rstrip())
             self.vbmc_buf = ""
         self._vbmc_lock(False)
-        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_adopt_ready(False)
         self.vbmc_servers = []
         self.vbmc_show_state([])
         if code in (126, 127) and self.vbmc_proc and self.vbmc_proc.program() == "pkexec":
@@ -822,7 +822,7 @@ class VbmcTabMixin:
                 b = QPushButton(T("Kabel ziehen") if s.get("link", True) else T("Kabel stecken"))
                 b.clicked.connect(lambda _=False, i=s.get("id"), up=not s.get("link", True): self.vbmc_link(i, up))
                 t.setCellWidget(r, S_LINK, b)
-        self.vbmc_adopt_btn.setEnabled(any(s.get("addr") for s in servers))
+        self.vbmc_adopt_ready(any(s.get("addr") for s in servers))
         if servers and self.vbmc_run_mode == "rz" and not getattr(self, "vbmc_iface_done", True):
             self.vbmc_preselect_staging()
         if servers and self.vbmc_running():
@@ -855,6 +855,13 @@ class VbmcTabMixin:
     def vbmc_link(self, idx, up):
         if self.vbmc_running() and idx is not None:
             self.vbmc_proc.write(f"link {int(idx)} {'up' if up else 'down'}\n".encode())
+
+    def vbmc_adopt_ready(self, ready):
+        """„In Serverliste übernehmen“: grün, sobald es laufende Server mit Adresse zu übernehmen gibt, sonst farblos."""
+        self.vbmc_adopt_btn.setEnabled(bool(ready))
+        self.vbmc_adopt_btn.setStyleSheet(
+            "QPushButton{background:#3fa45b;color:#fff;font-weight:bold;border:1px solid #2e8a47;"
+            "border-radius:3px;padding:5px 12px}QPushButton:hover{background:#36934f}" if ready else "")
 
     def vbmc_adopt(self):
         """Laufende virtuelle Server in die Serverliste („Neuware“) eintragen."""

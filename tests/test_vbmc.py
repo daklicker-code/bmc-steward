@@ -1005,6 +1005,18 @@ class TestTestlabTab(unittest.TestCase):
         w.con_pass.setText("Eigenes1!")                         # bewusst anderes Passwort bleibt unangetastet
         self.assertEqual(w.console_creds()[2], "Eigenes1!")
 
+    def test_adopt_button_is_green_only_with_servers(self):
+        w = self.w
+        w.vbmc_show_state([])
+        self.assertFalse(w.vbmc_adopt_btn.isEnabled())
+        self.assertEqual(w.vbmc_adopt_btn.styleSheet(), "", "leere Liste: farblos")
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "192.168.0.101", "ip": "192.168.0.101"}])
+        self.assertTrue(w.vbmc_adopt_btn.isEnabled())
+        self.assertIn("#3fa45b", w.vbmc_adopt_btn.styleSheet())
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "", "ip": ""}])
+        self.assertEqual(w.vbmc_adopt_btn.styleSheet(), "", "noch keine Adresse: farblos")
+        w.vbmc_show_state([])
+
     def test_save_log(self):
         """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht
         erreichbar“ weiterzugeben."""
