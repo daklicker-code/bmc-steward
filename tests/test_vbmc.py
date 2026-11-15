@@ -653,6 +653,57 @@ class TestSerialRead(_WebBase):
         self.assertEqual(self._read("dell", dry=True)[1], "")
 
 
+class TestNeuwareSerial(_WebBase):
+    """Neuware-Liste: Seriennummer wird beim Eintragen der IP bzw. per Knopf aus dem BMC gelesen."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        qapp()
+        import bmc_steward.i18n as i18n
+        i18n.set_language("de")
+        from bmc_steward.main import Window
+        cls.w = Window()
+
+    def setUp(self):
+        self.w.table.setRowCount(0)
+        self.w.add_row(["", "", "", "", "", "", ""])
+
+    def _wait(self, cond, seconds=15):
+        import time
+        end = time.time() + seconds
+        while time.time() < end and not cond():
+            qapp().processEvents()
+            time.sleep(0.05)
+        return cond()
+
+    def test_on_serial_read_only_fills_empty_cells(self):
+        w = self.w
+        w.table.item(0, 0).setText("10.0.0.5")
+        w.table.item(0, 6).setText("MEINE-NR")
+        w.add_row(["10.0.0.5", "", "", "", "", "", ""])
+        w.on_serial_read("10.0.0.5", "CZ1234")
+        self.assertEqual([w.cell(0, 6), w.cell(1, 6)], ["MEINE-NR", "CZ1234"])
+
+    def test_button_reads_serial_from_running_server(self):
+        w = self.w
+        b, port = self._start("dell")
+        ip = f"127.0.0.1:{port}"
+        w.table.item(0, 0).setText(ip)
+        w.table.item(0, 1).setText("calvin")
+        w.read_serials()
+        self.assertTrue(self._wait(lambda: w.cell(0, 6) == b.serial), f"Seriennummer fehlt: {w.cell(0, 6)!r}")
+
+    def test_wrong_password_leaves_cell_empty(self):
+        w = self.w
+        b, port = self._start("lenovo")
+        w.table.item(0, 0).setText(f"127.0.0.1:{port}")
+        w.table.item(0, 1).setText("falsch")
+        w.read_serials()
+        self._wait(lambda: False, 2)
+        self.assertEqual(w.cell(0, 6), "")
+
+
 class TestSsdp(_WebBase):
     """SSDP-Erkennung: der virtuelle Server antwortet auf M-SEARCH mit seiner Redfish-Adresse."""
 
@@ -886,12 +937,14 @@ class TestTestlabTab(unittest.TestCase):
         w.vbmc_run_mode = "rz"
         w.vbmc_rz_addrs.setText("192.168.0.1/24")
         w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "192.168.0.101", "ip": "192.168.0.101",
-                            "factory_user": "root", "factory_pass": "Dell4711", "mask": "255.255.255.0"},
+                            "factory_user": "root", "factory_pass": "Dell4711", "mask": "255.255.255.0",
+                            "serial": "CN7K2"},
                            {"id": 2, "vendor": "smc", "addr": "", "ip": "", "factory_pass": "X"}])
         w.table.setRowCount(0)
         w.vbmc_adopt()
         self.assertEqual(w.table.rowCount(), 1, "nur Server mit Adresse")
         self.assertEqual([w.cell(0, c) for c in (0, 1, 2)], ["192.168.0.101", "Dell4711", "192.168.0.51"])
+        self.assertEqual(w.cell(0, 6), "CN7K2", "Seriennummer geht mit in die Serverliste")
         w.vbmc_show_state([])
 
     def test_save_log(self):
