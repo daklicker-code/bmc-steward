@@ -17,7 +17,8 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QWidget
 from bmc_steward.main import Window
-from bmc_steward.monitor import NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch, logo_stages
+from bmc_steward.monitor import (GLOW_FADE_MS, LOGO_MS, NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch,
+                                 glow_strength, logo_stages)
 from bmc_steward.sidenav import ACCENT_ROLE, SideNav
 
 
@@ -153,6 +154,51 @@ class TestMonitorWidget(unittest.TestCase):
     def test_logo_is_painted_at_every_stage(self):
         for t in (0.0, 0.2, 0.5, 0.8, 0.95, 1.0):
             self.m._logo_progress = lambda t=t: t
+            self.assertFalse(self.m.grab().isNull())
+
+    def test_glow_rises_with_check_mark_then_fades_slowly(self):
+        for ms in (0, LOGO_MS * 0.5, LOGO_MS * 0.9):        # vor dem Häkchen kein Schein
+            self.assertEqual(glow_strength(ms), 0)
+        self.assertEqual(glow_strength(LOGO_MS), 1)         # Häkchen fertig = hellster Moment
+        rise = LOGO_MS * 0.1                                 # Anstieg dauert so lange wie das Häkchen ...
+        self.assertLess(rise, GLOW_FADE_MS)                  # ... das Abklingen deutlich länger
+        prev = 0
+        for i in range(0, 101):                              # steigt nur ...
+            cur = glow_strength(LOGO_MS * 0.9 + rise * i / 100)
+            self.assertGreaterEqual(cur, prev)
+            prev = cur
+        for i in range(0, 101):                              # ... und fällt danach nur
+            cur = glow_strength(LOGO_MS + GLOW_FADE_MS * i / 100)
+            self.assertLessEqual(cur, prev)
+            prev = cur
+        self.assertEqual(glow_strength(LOGO_MS + GLOW_FADE_MS), 0)
+        self.assertEqual(glow_strength(LOGO_MS * 10), 0)
+
+    def test_logo_is_centered_and_large(self):
+        from PyQt6.QtGui import QColor, QImage
+        self.m.resize(272, 196)
+        self.m._noise = QImage(NOISE_W, NOISE_H, QImage.Format.Format_Grayscale8)
+        self.m._noise.fill(QColor(0, 0, 0))                  # schwarzes Bild: nur das Logo leuchtet
+        self.m._logo_progress = lambda: 1.0
+        self.m._logo_glow = lambda: 0.0
+        img = self.m.grab().toImage()
+        scr = self.m._screen()
+        xs, ys = [], []
+        for y in range(int(scr.top()), int(scr.bottom())):
+            for x in range(int(scr.left()), int(scr.right())):
+                if img.pixelColor(x, y).green() > 120:
+                    xs.append(x)
+                    ys.append(y)
+        width = max(xs) - min(xs)
+        old = 77 / 120 * 46                                  # Schild samt Strich, früher in 46er-Quadrat: ~30 px
+        self.assertGreater(width, old * 1.7)                 # fast doppelt so groß wie früher
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2, scr.center().x(), delta=3)
+        self.assertLess(abs((min(ys) + max(ys)) / 2 - scr.center().y()), 8)
+
+    def test_logo_with_glow_is_painted(self):
+        self.m._logo_progress = lambda: 1.0
+        for g in (0.0, 0.5, 1.0):
+            self.m._logo_glow = lambda g=g: g
             self.assertFalse(self.m.grab().isNull())
 
     def test_logo_clock_runs_only_while_noise_is_shown(self):

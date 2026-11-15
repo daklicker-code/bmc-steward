@@ -8,7 +8,7 @@ anzuzeigen ist, und macht von dem Widget nur Bildschirmfotos (grab), es greift n
 import os
 from PyQt6.QtCore import QElapsedTimer, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
-                         QTextOption)
+                         QRadialGradient, QTextOption)
 from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton, QWidget
 from .i18n import T
 
@@ -24,6 +24,9 @@ _NOISE_LUT = bytes(14 + i * 56 // 255 for i in range(256))
 # Gleiche Formen wie das Markenzeichen in branding.py (Koordinaten im 120er-Raster), hier als Pfade, damit sich
 # jedes Teil einzeln aufbauen lässt: erst das Schild, dann Leiterbahnen, Chip und Anschlüsse, zuletzt das Häkchen.
 LOGO_MS = 6000                  # Dauer des ganzen Aufbaus
+LOGO_SIZE = 88                  # Kantenlänge des Logos im Bildschirm (zentriert)
+CHECK_START = 0.90              # ab hier (Anteil von LOGO_MS) zeichnet sich das Häkchen
+GLOW_FADE_MS = 2800             # so lange klingt der grüne Schein nach dem fertigen Häkchen aus
 
 
 def _line(x1, y1, x2, y2):
@@ -60,7 +63,21 @@ def logo_stages(t):
         return _ease((t - a) / (b - a))
     return {"shield": stage(0.00, 0.35), "fill": stage(0.25, 0.45), "traces": stage(0.40, 0.55),
             "dots": stage(0.52, 0.62), "chip": stage(0.58, 0.76), "pins": stage(0.74, 0.88),
-            "check": stage(0.90, 1.00)}
+            "check": stage(CHECK_START, 1.00)}
+
+
+def glow_strength(ms):
+    """Stärke (0..1) des grünen Scheins ums Logo, ms nach Beginn des Aufbaus: Er wächst zügig, während sich das
+    Häkchen zeichnet, ist mit dem fertigen Häkchen am hellsten und klingt danach langsam aus."""
+    start = CHECK_START * LOGO_MS
+    if ms <= start:
+        return 0.0
+    if ms <= LOGO_MS:
+        return _ease((ms - start) / (LOGO_MS - start))
+    x = (ms - LOGO_MS) / GLOW_FADE_MS
+    if x >= 1:
+        return 0.0
+    return (1 - x) ** 2                         # erst schneller, dann immer sanfter
 
 
 def _stroke(p, path, color, width, frac):
@@ -78,8 +95,28 @@ def _stroke(p, path, color, width, frac):
     p.drawPath(path)
 
 
-def draw_logo(p, rect, t):
-    """Zeichnet das Logo teilweise aufgebaut (t = 0 nichts, t = 1 fertig) in das Quadrat rect."""
+def _draw_glow(p, g):
+    """Grüner Schein ums Schild (Logo-Koordinaten), g = Stärke 0..1."""
+    if g <= 0:
+        return
+    halo = QRadialGradient(QPointF(60, 66), 78)
+    halo.setColorAt(0.0, QColor(52, 211, 153, int(120 * g)))
+    halo.setColorAt(0.55, QColor(52, 211, 153, int(55 * g)))
+    halo.setColorAt(1.0, QColor(52, 211, 153, 0))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QBrush(halo))
+    p.drawEllipse(QPointF(60, 66), 78, 78)
+    for width, alpha in ((26, 28), (17, 45), (10, 70)):    # weich auslaufender Rand am Schild entlang
+        pen = QPen(QColor(52, 211, 153, int(alpha * g)), width)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(_SHIELD)
+
+
+def draw_logo(p, rect, t, glow=0.0):
+    """Zeichnet das Logo teilweise aufgebaut (t = 0 nichts, t = 1 fertig) in das Quadrat rect,
+    mit grünem Schein der Stärke glow (0..1)."""
     st = logo_stages(t)
     green, teal = QColor("#34d399"), QColor("#2dd4bf")
     p.save()
@@ -87,6 +124,7 @@ def draw_logo(p, rect, t):
     p.translate(rect.x(), rect.y())
     k = min(rect.width(), rect.height()) / 120.0
     p.scale(k, k)
+    _draw_glow(p, glow)
     if st["fill"] > 0:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(11, 46, 40, int(255 * st["fill"])))
@@ -183,6 +221,12 @@ class MonitorWidget(QWidget):
             return 0.0
         return min(1.0, self._logo_clock.elapsed() / LOGO_MS)
 
+    def _logo_glow(self):
+        """Stärke des grünen Scheins ums Logo (0..1)."""
+        if not self._logo_clock.isValid():
+            return 0.0
+        return glow_strength(self._logo_clock.elapsed())
+
     def _set_interval(self, ms):
         if self._timer.interval() != ms:
             self._timer.setInterval(ms)
@@ -228,7 +272,9 @@ class MonitorWidget(QWidget):
         else:
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
             p.drawImage(scr, self._noise)
-            draw_logo(p, QRectF(scr.x() + 10, scr.y() + 8, 46, 46), self._logo_progress())   # oben links
+            size = min(LOGO_SIZE, scr.width() - 8, scr.height() - 8)
+            box = QRectF(scr.center().x() - size / 2, scr.center().y() - size / 2, size, size)   # mittig
+            draw_logo(p, box, self._logo_progress(), self._logo_glow())
         sheen = QLinearGradient(scr.topLeft(), scr.bottomLeft())    # leichter Glasglanz oben
         sheen.setColorAt(0.0, QColor(255, 255, 255, 22))
         sheen.setColorAt(0.45, QColor(255, 255, 255, 0))
