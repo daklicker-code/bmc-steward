@@ -1567,7 +1567,7 @@ class BiosReadThread(QThread):
 
 class VendorProbeThread(QObject):
     """Ermittelt einmalig Hersteller/Typ einer Adresse, ohne Anmeldung (wie vendor()); läuft im Hintergrund,
-    damit die Serverliste (Reiter 2) beim Eintragen der Aktuelle-IP nicht blockiert.
+    damit die Serverliste („Neuware“) beim Eintragen der Aktuelle-IP nicht blockiert.
     Bewusst ein Daemon-Thread statt QThread: Eine Abfrage an eine tote Adresse kann bis zur Zeitüberschreitung
     dauern, und ein noch laufender QThread bricht das Programm beim Beenden ab."""
     done = pyqtSignal(str, str, str)     # Aktuelle IP, Anzeigetext, Tooltip

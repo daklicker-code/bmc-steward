@@ -37,7 +37,7 @@ class FirmwareTabMixin:
         self.fw_user.setPlaceholderText(T("automatisch je Hersteller"))
         self.fw_pass = self._pw()
         box_login = QGroupBox(T("Login (Werksbenutzer, gilt für alle Server der Liste)"))
-        box_login.setToolTip(T("Das Update läuft über alle Server der Serverliste (Reiter 2); grüne unter "
+        box_login.setToolTip(T("Das Update läuft über alle Server der Serverliste („Neuware“); grüne unter "
                                "ihrer neuen Adresse. Angemeldet wird mit dem Werksbenutzer."))
         f = QFormLayout(box_login)
         self.tip_row(f, T("Hersteller"), self.fw_vendor,
@@ -55,7 +55,7 @@ class FirmwareTabMixin:
         iv = QVBoxLayout(inv_box)
         self.fw_ref_ip = QComboBox()
         self.fw_ref_ip.setEditable(True)
-        self.fw_ref_ip.setToolTip(T("Adresse eines Geräts zum Auslesen. Vorschläge aus der Serverliste (Reiter 2)."))
+        self.fw_ref_ip.setToolTip(T("Adresse eines Geräts zum Auslesen. Vorschläge aus der Serverliste („Neuware“)."))
         refresh = QPushButton("↻")
         refresh.setFixedWidth(36)
         refresh.clicked.connect(self.fw_refresh_ips)
@@ -263,7 +263,7 @@ class FirmwareTabMixin:
             return
         rows = [(ip, pw or self.fw_pass.text()) for ip, pw in self.reachable_rows()]
         if not rows:
-            QMessageBox.warning(self, T("Firmware"), T("Die Serverliste (Reiter 2) ist leer."))
+            QMessageBox.warning(self, T("Firmware"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.fw_dry.isChecked()
         src = (T("Datei {0}").format(os.path.basename(cfg["file"])) if cfg["source"] == "file"

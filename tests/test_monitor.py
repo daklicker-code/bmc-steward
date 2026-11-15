@@ -3,7 +3,7 @@
 Der Monitor zeigt Rauschen, solange keine Konsole verbunden ist, sonst deren Miniatur. Der Schalter
 darunter wählt die Konsolen-Variante (HTML5, Text, Browser) und muss mit der Auswahl „Anzeige“ der
 Konsolenseite im Gleichschritt laufen. Das Menü links ersetzt die Reiterleiste; Seiten werden weiter
-über ihre Nummer angesprochen (z. B. Seite 1 = „Server konfigurieren“).
+über ihre Nummer angesprochen (z. B. Seite 1 = „Neuware“).
 Alles läuft offscreen, ein echter BMC wird nicht gebraucht.
 """
 import unittest
@@ -18,7 +18,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QWidget
 from bmc_steward.main import Window
 from bmc_steward.monitor import NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch
-from bmc_steward.sidenav import SideNav
+from bmc_steward.sidenav import ACCENT_ROLE, SideNav
 
 
 class TestSideNav(unittest.TestCase):
@@ -35,6 +35,13 @@ class TestSideNav(unittest.TestCase):
         self.assertEqual(seen, [2])
         self.assertEqual(nav.indexOf(pages[1]), 1)
         self.assertEqual(nav.count(), 3)
+
+    def test_accent_entry_is_marked(self):
+        nav = SideNav()
+        nav.addTab(QWidget(), "gelb", accent="#c9a100")
+        nav.addTab(QWidget(), "normal")
+        self.assertEqual(nav.menu.item(0).data(ACCENT_ROLE), "#c9a100")
+        self.assertIsNone(nav.menu.item(1).data(ACCENT_ROLE))
 
     def test_click_in_menu_switches_page(self):
         nav = SideNav()
@@ -142,10 +149,19 @@ class TestWindowLayout(unittest.TestCase):
         cls.w = Window()
 
     def test_page_order_is_unchanged(self):
-        # Der übrige Code springt über Nummern: 1 = Server konfigurieren, 3 = UEFI, 6 = Konsole
+        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = UEFI, 6 = Konsole
         self.assertEqual(self.w.tabs.count(), 9)
         self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 6)
-        self.assertEqual(self.w.tabs.menu.item(1).text(), "2 · Server konfigurieren")
+        names = [self.w.tabs.menu.item(i).text() for i in range(9)]
+        self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
+                                 "Firmware", "UEFI-Konsole", "Testlabor", "Hilfe"])      # ohne Nummern
+
+    def test_only_dhcp_entry_is_dark_yellow_button(self):
+        menu = self.w.tabs.menu
+        self.assertEqual(menu.item(0).data(ACCENT_ROLE), "#c9a100")
+        self.assertTrue(all(not menu.item(i).data(ACCENT_ROLE) for i in range(1, menu.count())))
+        pm = menu.grab()                            # Zeichnen mit Delegate wirft nichts
+        self.assertFalse(pm.isNull())
 
     def test_switch_follows_mode_combo(self):
         for i in range(3):

@@ -1,4 +1,4 @@
-<h1><img src="docs/logo.svg" width="44" align="center" alt="">&nbsp; BMC-Steward</h1>
+<h1><img src="docs/logo.svg" height="36" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
 
 *Deutsche Fassung: [README.de.md](README.de.md)*
 
@@ -13,39 +13,39 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 ![BMC-Steward screenshot](docs/screenshot.png)
 
 <details>
-<summary>Screenshots of all tabs</summary>
+<summary>Screenshots of all pages</summary>
 
 | | |
 |---|---|
-| **1 · DHCP server** | **2 · Configure servers** (above) |
+| **DHCP server** | **New hardware** (above) |
 | ![DHCP server](docs/screenshot-1-dhcp.png) | |
-| **2b · Existing servers** (connection test) | **3 · UEFI settings** |
+| **Existing servers** (connection test) | **UEFI settings** |
 | ![Existing servers](docs/screenshot-2b-existing.png) | ![UEFI settings](docs/screenshot-3-uefi.png) |
-| **4 · Services** | **5 · UEFI console** |
+| **Services** | **UEFI console** |
 | ![Services](docs/screenshot-4-services.png) | ![UEFI console](docs/screenshot-5-console.png) |
-| **6 · Help** | |
+| **Help** | |
 | ![Help](docs/screenshot-6-help.png) | |
 
 </details>
 
 ## What BMC-Steward does
 
-Since version 3.0 the tab bar is replaced by a **menu** on the left; the selected page opens next to it. Work through the entries in order or use only what you need. (The texts still say “tab 2” etc., meaning the menu entry with that number.)
+Since version 3.0 the tab bar is replaced by a **menu** on the left; the selected page opens next to it. Work through the entries in order or use only what you need. **DHCP server** sits at the top as a dark-yellow button, because that is where you start.
 
 **Monitor at the top left:** while no console is connected it shows subtle black-and-white noise. Once connected, the server console appears there as a thumbnail; a click on it opens it full size right away. The switch below the monitor picks the console variant: **HTML5** (embedded), **Text** (SOL/SSH) or **Browser**. A hidden web view cannot be redrawn, so the monitor then keeps the last picture as a still frame.
 
 | Menu entry | What it does |
 |---|---|
-| **1 · DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list with one click. |
-| **2 · Configure servers** | The core: creates the new administrator, sets the hostname and switches the BMC to a static IP (address, subnet mask, gateway). Servers can be done one after another; finished rows turn green and are skipped on the next run. |
-| **↳ Phone scanner** | Opens a camera-based input from tab 2: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
-| **2b · Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to tabs 2–4. |
-| **3 · UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
-| **4 · Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
-| **5 · Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
-| **6 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
-| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **data centre** (virtual staging switch, DHCP from tab 1) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
-| **7 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
+| **DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list with one click. |
+| **New hardware** | The core, for fresh servers: creates the new administrator, sets the hostname and switches the BMC to a static IP (address, subnet mask, gateway). Servers can be done one after another; finished rows turn green and are skipped on the next run. |
+| **↳ Phone scanner** | Opens a camera-based input from “New hardware”: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
+| **Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to “New hardware”, “UEFI settings” and “Services”. |
+| **UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
+| **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
+| **Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
+| **UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
+| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **data centre** (virtual staging switch, DHCP from “DHCP server”) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
+| **Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:
 
@@ -53,7 +53,7 @@ On top of that:
 - **Profiles** remember recurring settings (never passwords, never the server list).
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
-- **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the Test lab tab or standalone from the command line.
+- **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
 ## Built to forgive mistakes
@@ -152,14 +152,14 @@ python3 bmc-steward.py
 
 1. Connect your computer and the new servers' BMC ports to a **separate staging switch**. Give your
    network card a static address without a gateway, e.g. `192.168.0.1/24`.
-2. Tab 1: start the DHCP server. The BMCs get an address and appear in the list. Add them to the server
+2. “DHCP server”: start the DHCP server. The BMCs get an address and appear in the list. Add them to the server
    list.
-3. Tab 2: enter the factory login, the new administrator and, per server, the new IP, subnet mask,
+3. “New hardware”: enter the factory login, the new administrator and, per server, the new IP, subnet mask,
    gateway and hostname.
 4. Start a dry run and read the log.
 5. Untick "Dry run", start the live run and confirm.
 
-The built-in help (tab 6) explains every step and the differences between the vendors.
+The built-in help (menu entry “Help”) explains every step and the differences between the vendors.
 
 ## CSV format
 
@@ -181,7 +181,7 @@ The password column may be left out. Semicolons work too, so an Excel export can
 | Supermicro | X12/X13 | tested against simulated BMCs only |
 | Lenovo | XCC2/XCC3 | tested against simulated BMCs only |
 
-The UEFI settings, the management services (tab 4) and the Windows DHCP server have also only been
+The UEFI settings, the management services (“Services”) and the Windows DHCP server have also only been
 tested against simulations. Service coverage: NTP on all four vendors; syslog on Dell and HPE only
 (skipped on Supermicro/Lenovo); LDAP with group mapping on all four; HTTPS certificate import is
 experimental and vendor-specific (on HPE the key must come from a CSR generated on the iLO). Services

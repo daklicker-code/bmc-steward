@@ -533,12 +533,12 @@ class ConsoleMixin:
             self.con_vendor.addItem(text, key)
         self.con_ip = QComboBox()
         self.con_ip.setEditable(True)
-        self.con_ip.setToolTip(T("Adresse des BMC. Vorschläge aus der Serverliste (Reiter 2), es geht aber jede\n"
+        self.con_ip.setToolTip(T("Adresse des BMC. Vorschläge aus der Serverliste („Neuware“), es geht aber jede\n"
                                "erreichbare Adresse."))
         self.con_ip.activated.connect(self.console_pick_ip)
         refresh = QPushButton("↻")
         refresh.setFixedWidth(36)
-        refresh.setToolTip(T("Adressen aus der Serverliste (Reiter 2) neu einlesen"))
+        refresh.setToolTip(T("Adressen aus der Serverliste („Neuware“) neu einlesen"))
         refresh.clicked.connect(self.console_refresh_ips)
         iprow = QHBoxLayout()
         iprow.addWidget(self.con_ip, 1)
@@ -745,7 +745,7 @@ class ConsoleMixin:
             self.con_ip.setEditText(keep)
 
     def console_pick_ip(self, *_):
-        """Übernimmt das Passwort der Zeile aus Reiter 2 (nur im Feld, gespeichert wird nichts)."""
+        """Übernimmt das Passwort der Zeile aus „Neuware“ (nur im Feld, gespeichert wird nichts)."""
         pw = self.con_pws.get(self.con_ip.currentText(), "") or self.cur_pass.text()
         if pw:
             self.con_pass.setText(pw)
