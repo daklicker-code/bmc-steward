@@ -13,7 +13,8 @@ außen wie ein echter BMC:
     UEFI-/Text-Konsole von BMC-Steward - nur im Modus --console, weil BMC-Steward
     dafür die Standardports 22 (SSH) und 623 (IPMI) sowie Redfish auf 443 anspricht.
 
-Grundbetrieb braucht nur die Python-Standardbibliothek (openssl fürs Zertifikat).
+Grundbetrieb braucht nur die Python-Standardbibliothek (openssl fürs Zertifikat). Mit --netlab rz/router
+bekommt jeder Server eine eigene Netzwerkkarte in einem Namespace (root, iproute2), siehe netlab.py.
 --console braucht zusätzlich die Pakete paramiko und pyghmi sowie erhöhte Rechte
 (Ports < 1024). Ohne diese Pakete/Rechte läuft der Redfish-Teil normal weiter.
 
@@ -29,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __license__ = "MIT"
 
 import argparse
@@ -48,6 +49,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
+
+# Ausgaben aus mehreren Threads nie ineinander schreiben (die GUI liest zeilenweise mit)
+_PRINT_LOCK = threading.RLock()
+_print = print
+
+
+def print(*a, **k):                     # noqa: A001 - bewusst modulweit
+    k.setdefault("flush", True)
+    with _PRINT_LOCK:
+        _print(*a, **k)
 
 # Optionale Abhängigkeiten nur für die Konsole (--console):
 try:
@@ -74,6 +85,26 @@ MODELS = {"dell": "PowerEdge R6625", "hpe": "ProLiant DL365 Gen11",
           "hpe_old": "ProLiant DL360p Gen8", "smc": "AS-2015HS-TNR",
           "lenovo": "ThinkSystem SR655 V3"}
 FW = {"dell": "7.10.30.00", "hpe": "3.09", "hpe_old": "2.78", "smc": "01.05.02", "lenovo": "5.30"}
+
+# Firmware-Generationen je Hersteller: Kürzel -> (Anzeige, Firmware, Modell)
+GENS = {
+    "dell": {"idrac9": ("iDRAC9", "7.10.30.00", "PowerEdge R6625"),
+             "idrac10": ("iDRAC10", "1.20.25.00", "PowerEdge R770"),
+             "idrac8": ("iDRAC8", "2.83.83.83", "PowerEdge R630"),
+             "idrac8_alt": ("iDRAC8 (Firmware < 2.50.50.50)", "2.40.40.40", "PowerEdge R630")},
+    "hpe": {"ilo6": ("iLO 6", "1.62", "ProLiant DL365 Gen11"),
+            "ilo5": ("iLO 5", "3.09", "ProLiant DL360 Gen10 Plus"),
+            "ilo4": ("iLO 4", "2.78", "ProLiant DL360p Gen8"),
+            "ilo3": ("iLO 3", "1.94", "ProLiant DL380 G7")},
+    "lenovo": {"xcc2": ("XCC2", "5.30", "ThinkSystem SR655 V3"),
+               "xcc3": ("XCC3", "1.10", "ThinkSystem SR650 V4"),
+               "xcc1": ("XCC", "9.90", "ThinkSystem SR650")},
+    "smc": {"x13": ("X13/H13", "01.05.02", "AS-2015HS-TNR"),
+            "x12": ("X12", "01.03.09", "SYS-120U-TNR"),
+            "x11": ("X11", "01.74.11", "SYS-1029U-TR4")},
+}
+DEFAULT_GEN = {"dell": "idrac9", "hpe": "ilo6", "hpe_old": "ilo4", "lenovo": "xcc2", "smc": "x13"}
+OLD_ILO = ("ilo3", "ilo4")              # laufen über RIBCL (Hersteller-Kürzel hpe_old)
 # SSH-Befehl, mit dem BMC-Steward die serielle Konsole startet (smc nutzt IPMI-SOL)
 SSH_SOL_CMD = {"dell": "console com2", "hpe": "vsp", "hpe_old": "vsp", "lenovo": "console 1"}
 
@@ -112,18 +143,55 @@ def ssh_hostkey():
 
 
 # ------------------------------------------------------------------ Zustand
+def mask_of(prefix):
+    import ipaddress
+    return str(ipaddress.IPv4Network(f"0.0.0.0/{int(prefix)}").netmask)
+
+
+def prefix_of(mask, default=24):
+    import ipaddress
+    try:
+        return ipaddress.IPv4Network(f"0.0.0.0/{mask}").prefixlen if mask else default
+    except ValueError:
+        return default
+
+
 class BMC:
-    def __init__(self, vendor, host, port, serial=None, model=None, user=None, password=None):
+    def __init__(self, vendor, host, port, serial=None, model=None, user=None, password=None,
+                 gen=None, mac=None, net=None, ip=None, mask=None, gw=None, busy_slots=None, idx=0):
+        # HPE iLO 3/4 laufen über RIBCL: intern Hersteller hpe_old
+        if vendor == "hpe" and gen in OLD_ILO:
+            vendor = "hpe_old"
+        if vendor == "hpe_old" and gen not in OLD_ILO:
+            gen = "ilo4"
         self.vendor = vendor
+        self.family = "hpe" if vendor == "hpe_old" else vendor
+        self.gen = gen if gen in GENS[self.family] else DEFAULT_GEN[vendor]
+        self.gen_label, self.fw, gen_model = GENS[self.family][self.gen]
+        self.idx = idx
         self.host, self.port = host, port
         self.console_host = host        # feste Adresse für SSH/IPMI (wandert bei Migration nicht)
-        self.model = model or MODELS[vendor]
+        self.model = model or gen_model
         self.serial = serial or self._gen_serial()
+        self.mac = mac
         fu, fp = FACTORY[vendor]
         self.factory_user = user or fu
-        self.accounts = {self.factory_user: {"password": password or fp,
-                                             "role": "Administrator", "enabled": True}}
+        self.factory_pass = password or fp
+        # Konten mit festem Slot (Dell: 2 = root, neue Benutzer ab 3)
+        self.accounts = {self.factory_user: {"password": self.factory_pass,
+                                             "role": "Administrator", "enabled": True, "slot": 2}}
+        for slot, who in (busy_slots or {}).items():
+            if who and who not in self.accounts:
+                self.accounts[who] = {"password": "Fremd123!", "role": "Operator", "enabled": True,
+                                      "slot": int(slot)}
         self.hostname = ""
+        # Werkszustand Netz (nur im Netzlabor wirksam): DHCP oder feste Werks-IP
+        self.factory_net = "static" if (net == "static" and ip) else "dhcp"
+        self.factory_ip, self.factory_mask, self.factory_gw = ip, mask or "255.255.255.0", gw or ""
+        self.netns = None               # Netzwerk-Namespace im Netzlabor
+        self.dhcpc = None               # laufender DHCP-Client
+        self.link_up = True
+        self.status = ""
         self.dhcp = True
         self.ipv4 = {"Address": host, "SubnetMask": "255.255.255.0", "Gateway": ""}
         self.power = "On"
@@ -133,9 +201,7 @@ class BMC:
         self.extra = {}
         # Firmware-Inventar (Name -> {version, updateable}) und laufende Update-Tasks
         self.firmware = {
-            "BMC": {"version": FW[vendor], "updateable": True,
-                    "name": {"dell": "iDRAC", "hpe": "iLO 5", "hpe_old": "iLO 4",
-                             "smc": "BMC", "lenovo": "XCC"}[vendor]},
+            "BMC": {"version": self.fw, "updateable": True, "name": self.gen_label},
             "BIOS": {"version": "1.8.2", "updateable": True, "name": "BIOS/UEFI"},
             "NIC.1": {"version": "22.5.9", "updateable": True, "name": "NIC Slot 1"},
             "PSU.1": {"version": "00.0A.0C", "updateable": False, "name": "Power Supply 1"},
@@ -154,11 +220,51 @@ class BMC:
 
     @property
     def addr(self):
+        """Adresse, unter der BMC-Steward den Server erreicht. Im Netzlabor die echte IP (Port 443,
+        daher ohne :Port) - leer, solange noch keine Adresse vom DHCP-Server da ist."""
+        if self.netns:
+            return self.ipv4.get("Address") or ""
         return f"{self.host}:{self.port}"
 
     def check_auth(self, user, pw):
         a = self.accounts.get(user)
         return bool(a) and a.get("enabled", True) and a.get("password") == pw
+
+    def dhcp_hostname(self):
+        """Name, mit dem sich der BMC ab Werk beim DHCP-Server meldet (wie die echten Geräte)."""
+        return {"dell": f"idrac-{self.serial[-7:]}", "hpe": f"ILO{self.serial}", "hpe_old": f"ILO{self.serial}",
+                "lenovo": f"XCC-{self.serial}", "smc": ""}[self.vendor]
+
+    def slot_of(self, token):
+        """Kontoname zu einer Konto-Id (Slot-Nummer oder Name) oder None."""
+        if token in self.accounts:
+            return token
+        try:
+            slot = int(token)
+        except ValueError:
+            return None
+        return next((n for n, a in self.accounts.items() if a.get("slot") == slot), None)
+
+    def free_slot(self):
+        used = {a.get("slot") for a in self.accounts.values()}
+        return next(s for s in range(3, 64) if s not in used)
+
+    def add_account(self, user, password, role="Administrator", enabled=True, slot=None):
+        self.accounts[user] = {"password": password, "role": role, "enabled": enabled,
+                               "slot": slot if slot is not None else self.free_slot()}
+
+    def state(self):
+        """Zustand für die Übersicht im Testlabor (JSON)."""
+        a = self.accounts.get(self.factory_user)
+        return {"id": self.idx, "vendor": self.vendor, "name": NAME[self.vendor], "gen": self.gen,
+                "gen_label": self.gen_label, "model": self.model, "serial": self.serial,
+                "mac": self.mac or "", "addr": self.addr, "ip": self.ipv4.get("Address") or "",
+                "mask": self.ipv4.get("SubnetMask") or "", "gw": self.ipv4.get("Gateway") or "",
+                "dhcp": self.dhcp, "hostname": self.hostname, "link": self.link_up,
+                "netns": self.netns or "", "status": self.status,
+                "factory_user": self.factory_user, "factory_pass": self.factory_pass,
+                "factory_valid": bool(a and a.get("password") == self.factory_pass),
+                "users": sorted(self.accounts)}
 
 
 DELL_ATTRS = {
@@ -207,6 +313,18 @@ def console_reply(bmc, data):
         else:
             out.append(ch)         # Echo
     return "".join(out).encode("latin-1", "replace")
+
+
+# ------------------------------------------------------------------ Netzlabor-Helfer
+netlab = None                           # wird nur im Netzlabor geladen (Linux, root)
+
+
+def _ns(name):
+    """Kontext: Sockets im Namespace `name` anlegen (ohne Netzlabor: nichts tun)."""
+    import contextlib
+    if not name or netlab is None:
+        return contextlib.nullcontext()
+    return netlab.in_netns(name)
 
 
 # ------------------------------------------------------------------ SSH-Konsole (paramiko)
@@ -277,10 +395,11 @@ def _ssh_serve_conn(bmc, client):
 
 
 def start_ssh(bmc):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind((bmc.console_host, SSH_PORT))
-    sock.listen(5)
+    with _ns(bmc.netns):                # im Netzlabor: Socket gehört zum Namespace des Servers
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((bmc.console_host, SSH_PORT))
+        sock.listen(5)
 
     def loop():
         while True:
@@ -301,8 +420,34 @@ def start_ssh(bmc):
 import multiprocessing
 
 
-def _ipmi_process(vendor, host, port, serial, model, hostname, accounts):
+class _LiveAuth:
+    """Benutzer/Passwörter für den IPMI-Kindprozess, laufend aus einer Datei des Hauptprozesses gelesen -
+    wie bei einem echten BMC gilt ein neu angelegter Benutzer sofort auch für IPMI."""
+
+    def __init__(self, path, initial):
+        self.path, self.data, self.mtime = path, dict(initial), 0
+
+    def get(self, user, default=None):
+        try:
+            m = os.stat(self.path).st_mtime
+            if m != self.mtime:
+                self.data = json.loads(Path(self.path).read_text())
+                self.mtime = m
+        except (OSError, ValueError):
+            pass
+        return self.data.get(user, default)
+
+
+def _auth_snapshot(bmc):
+    return {u: a["password"] for u, a in bmc.accounts.items() if a.get("enabled", True)}
+
+
+def _ipmi_process(vendor, host, port, serial, model, hostname, accounts, netns=None, authfile=None):
     """Läuft im Kindprozess: ein einzelner IPMI-SOL-BMC."""
+    if netns:                           # Netzlabor: der ganze Kindprozess lebt im Namespace des Servers
+        import netlab
+        netlab.enter_netns(netns)
+        host = "0.0.0.0"                # alle IPv4-Adressen der Server-Karte (wandert mit beim Umzug)
     try:
         from pyghmi.ipmi import bmc as B
         from pyghmi.ipmi.private import session as S
@@ -323,7 +468,7 @@ def _ipmi_process(vendor, host, port, serial, model, hostname, accounts):
         return _orig(self, request)
     SS.ServerSession.create_open_session_response = _patched
 
-    shim = BMC(vendor, host, port, serial=serial, model=model)
+    shim = BMC(vendor, "127.0.0.1", port, serial=serial, model=model)
     shim.hostname = hostname
     shim.accounts = accounts
 
@@ -331,7 +476,8 @@ def _ipmi_process(vendor, host, port, serial, model, hostname, accounts):
 
     class Fake(B.Bmc):
         def __init__(self):
-            super().__init__({u: a["password"] for u, a in accounts.items()}, port=port, address=host)
+            auth = {u: a["password"] for u, a in accounts.items()}
+            super().__init__(_LiveAuth(authfile, auth) if authfile else auth, port=port, address=host)
             self.iohandler = self._key
             self._t = None
             self._q = _queue.Queue()
@@ -405,11 +551,32 @@ def _ipmi_process(vendor, host, port, serial, model, hostname, accounts):
 _MP = multiprocessing.get_context("spawn")
 
 
+_AUTH_DIR = None
+
+
+def _write_auth(bmc):
+    """Aktuelle Benutzer für den IPMI-Kindprozess ablegen (nur root/Besitzer lesbar)."""
+    global _AUTH_DIR
+    import tempfile
+    if _AUTH_DIR is None:
+        _AUTH_DIR = tempfile.mkdtemp(prefix="vbmc-ipmi-")
+    snap = _auth_snapshot(bmc)
+    if getattr(bmc, "_auth_last", None) == snap:
+        return
+    path = os.path.join(_AUTH_DIR, f"{bmc.idx}.json")
+    tmp = path + ".tmp"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump(snap, f)
+    os.replace(tmp, path)
+    bmc._auth_last, bmc._authfile = snap, path
+
+
 def start_ipmi(bmc):
+    _write_auth(bmc)
     p = _MP.Process(
         target=_ipmi_process,
         args=(bmc.vendor, bmc.console_host, IPMI_PORT, bmc.serial, bmc.model,
-              bmc.hostname, dict(bmc.accounts)),
+              bmc.hostname, dict(bmc.accounts), bmc.netns, bmc._authfile),
         daemon=True)
     p.start()
     bmc._ipmi = p
@@ -506,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
         p = self.norm()
         b = self.bmc
         if p in ("/redfish/v1", "/redfish/v1/"):
-            if b.vendor == "hpe_old":
+            if b.vendor == "hpe_old" and b.gen == "ilo3":
                 return self.send(404, rf_error("kein Redfish"))
             return self.send(200, self.root_doc())
         if p == "/xmldata":
@@ -520,6 +687,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == mgr:
             return self.send(200, self.manager_doc())
         if p == mgr + "/Attributes":
+            if b.gen == "idrac8_alt":
+                return self.send(404, rf_error("Ressource nicht vorhanden (Firmware zu alt)"))
             return self.send(200, {"@odata.id": p, "Attributes": b.attributes})
         if p == mgr + "/DateTime":
             return self.send(200, {"@odata.id": p, "DateTime": time.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
@@ -585,7 +754,7 @@ class Handler(BaseHTTPRequestHandler):
             self.read_raw()
             self.send(200, {"ok": True})
             if b.pending_ip:
-                self.server.fleet.migrate(b, b.pending_ip)
+                self.server.fleet.migrate(b, *b.pending_ip)
                 b.pending_ip = None
             return
         if p == sysp + "/Actions/ComputerSystem.Reset":
@@ -614,6 +783,8 @@ class Handler(BaseHTTPRequestHandler):
         mgr = f"/redfish/v1/Managers/{MGR[b.vendor]}"
         sysp = f"/redfish/v1/Systems/{SYS[b.vendor]}"
         if p == mgr + "/Attributes":
+            if b.gen == "idrac8_alt":
+                return self.send(404, rf_error("Ressource nicht vorhanden (Firmware zu alt)"))
             return self.dell_attributes(data)
         if p == mgr + "/DateTime":
             b.extra["ntp"] = data.get("StaticNTPServers", [])
@@ -640,10 +811,13 @@ class Handler(BaseHTTPRequestHandler):
     def root_doc(self):
         b = self.bmc
         oem = {"dell": {"Dell": {"@odata.type": "#DellService.v1_0_0.DellService"}},
-               "hpe": {"Hpe": {"@odata.type": "#HpeiLO.v2_7_0.HpeiLO", "Manager": [{"ManagerType": "iLO 5"}]}},
+               "hpe": {"Hpe": {"@odata.type": "#HpeiLO.v2_7_0.HpeiLO",
+                               "Manager": [{"ManagerType": b.gen_label, "ManagerFirmwareVersion": b.fw}]}},
+               "hpe_old": {"Hp": {"@odata.type": "#HpiLOServiceExt.1.0.0.HpiLOServiceExt",
+                                  "Manager": [{"ManagerType": b.gen_label, "ManagerFirmwareVersion": b.fw}]}},
                "smc": {"Supermicro": {"@odata.type": "#SmcService.v1_0_0.SmcService"}},
                "lenovo": {"Lenovo": {"@odata.type": "#LenovoService.v1_0_0.LenovoService"}}}[b.vendor]
-        vf = {"dell": "Dell", "hpe": "HPE", "smc": "Supermicro", "lenovo": "Lenovo"}[b.vendor]
+        vf = {"dell": "Dell", "hpe": "HPE", "hpe_old": "", "smc": "Supermicro", "lenovo": "Lenovo"}[b.vendor]
         return {"@odata.id": "/redfish/v1/", "RedfishVersion": "1.12.0", "Vendor": vf, "Oem": oem,
                 "Managers": {"@odata.id": "/redfish/v1/Managers"},
                 "Systems": {"@odata.id": "/redfish/v1/Systems"},
@@ -653,7 +827,7 @@ class Handler(BaseHTTPRequestHandler):
     def manager_doc(self):
         b = self.bmc
         d = {"@odata.id": f"/redfish/v1/Managers/{MGR[b.vendor]}", "Id": MGR[b.vendor],
-             "ManagerType": "BMC", "FirmwareVersion": FW[b.vendor], "Model": NAME[b.vendor],
+             "ManagerType": "BMC", "FirmwareVersion": b.fw, "Model": b.gen_label,
              "PowerState": "On",
              "Actions": {"#Manager.Reset": {
                  "target": f"/redfish/v1/Managers/{MGR[b.vendor]}/Actions/Manager.Reset"}}}
@@ -673,8 +847,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def accounts_doc(self):
         b = self.bmc
-        members = [{"@odata.id": f"/redfish/v1/AccountService/Accounts/{i + 2}"}
-                   for i in range(len(b.accounts))]
+        members = [{"@odata.id": f"/redfish/v1/AccountService/Accounts/{s}"}
+                   for s in sorted(a.get("slot", 2) for a in b.accounts.values())]
         return {"@odata.id": "/redfish/v1/AccountService/Accounts",
                 "Members@odata.count": len(members), "Members": members}
 
@@ -770,17 +944,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- Konten ------------------------------------------------------------
     def resolve_account(self, token):
-        b = self.bmc
-        if token in b.accounts:
-            return token
-        try:
-            idx = int(token) - 2
-            names = list(b.accounts.keys())
-            if 0 <= idx < len(names):
-                return names[idx]
-        except ValueError:
-            pass
-        return None
+        return self.bmc.slot_of(token)
 
     def account_get(self, token):
         b = self.bmc
@@ -800,9 +964,8 @@ class Handler(BaseHTTPRequestHandler):
         with b.lock:
             if user in b.accounts:
                 return self.send(409, rf_error("Benutzer existiert bereits."))
-            b.accounts[user] = {"password": data.get("Password", ""),
-                                "role": data.get("RoleId", "Administrator"),
-                                "enabled": data.get("Enabled", True)}
+            b.add_account(user, data.get("Password", ""), data.get("RoleId", "Administrator"),
+                          data.get("Enabled", True))
         return self.send(201, {"UserName": user})
 
     def account_patch(self, token, data):
@@ -813,9 +976,11 @@ class Handler(BaseHTTPRequestHandler):
                 user = data.get("UserName")
                 if not user:
                     return self.send(400, rf_error("Konto nicht gefunden."))
-                b.accounts[user] = {"password": data.get("Password", ""),
-                                    "role": data.get("RoleId", "Administrator"),
-                                    "enabled": data.get("Enabled", True)}
+                if user in b.accounts:
+                    return self.send(409, rf_error("Benutzer existiert bereits in einem anderen Slot."))
+                slot = int(token) if token.isdigit() else None      # leerer Slot: genau dort anlegen
+                b.add_account(user, data.get("Password", ""), data.get("RoleId", "Administrator"),
+                              data.get("Enabled", True), slot=slot)
                 return self.send(200, {"ok": True})
             a = b.accounts[name]
             if "Password" in data:
@@ -838,7 +1003,13 @@ class Handler(BaseHTTPRequestHandler):
         if attrs.get("IPv4Static.1.Address"):
             b.dhcp = False
             self.send(200, {"ok": True})
-            self.server.fleet.migrate(b, attrs["IPv4Static.1.Address"])
+            self.server.fleet.migrate(b, attrs["IPv4Static.1.Address"],
+                                      b.attributes.get("IPv4Static.1.Netmask"),
+                                      b.attributes.get("IPv4Static.1.Gateway"))
+            return
+        if str(attrs.get("IPv4.1.DHCPEnable", "")).lower() == "enabled" and not b.dhcp:
+            self.send(200, {"ok": True})
+            self.server.fleet.set_dhcp(b)
             return
         return self.send(200, {"ok": True})
 
@@ -849,6 +1020,7 @@ class Handler(BaseHTTPRequestHandler):
             host = (data["Oem"].get("Hpe") or {}).get("HostName")
         if host:
             b.hostname = host
+        was_dhcp = b.dhcp
         if isinstance(data.get("DHCPv4"), dict) and "DHCPEnabled" in data["DHCPv4"]:
             b.dhcp = data["DHCPv4"]["DHCPEnabled"]
         if isinstance(data.get("Oem"), dict):
@@ -858,14 +1030,18 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(sub, dict) and "DHCPEnabled" in sub:
                     b.dhcp = sub["DHCPEnabled"]
         addr = data.get("IPv4StaticAddresses") or data.get("IPv4Addresses")
-        if addr and isinstance(addr, list) and addr[0].get("Address"):
+        if addr and isinstance(addr, list) and isinstance(addr[0], dict) and addr[0].get("Address"):
             b.dhcp = False
-            new = addr[0]["Address"]
+            new = (addr[0]["Address"], addr[0].get("SubnetMask"), addr[0].get("Gateway"))
             if b.vendor == "hpe":
-                b.pending_ip = new
+                b.pending_ip = new          # iLO: wirkt erst nach dem Neustart
                 return self.send(200, {"ok": True})
             self.send(200, {"ok": True})
-            self.server.fleet.migrate(b, new)
+            self.server.fleet.migrate(b, *new)
+            return
+        if b.dhcp and not was_dhcp:
+            self.send(200, {"ok": True})
+            self.server.fleet.set_dhcp(b)
             return
         return self.send(200, {"ok": True})
 
@@ -875,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
         if b.vendor != "hpe_old":
             return self.send(404, rf_error("kein xmldata"))
         xml = (f'<?xml version="1.0"?>\r\n<RIMP><HSI><SPN>{b.model}</SPN></HSI>'
-               f'<MP><PN>Integrated Lights-Out 4 (iLO 4)</PN><FWRI>{FW["hpe_old"]}</FWRI>'
+               f'<MP><PN>Integrated Lights-Out {b.gen[-1]} (iLO {b.gen[-1]})</PN><FWRI>{b.fw}</FWRI>'
                f'<SN>{b.serial}</SN></MP></RIMP>\r\n')
         return self.send_text(200, xml, "text/xml")
 
@@ -890,7 +1066,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_text(200, self._ribcl_resp(0x005F, "Login failed"), "text/xml")
         parts = [self._ribcl_resp(0x0000, "No error")]
         if "GET_FW_VERSION" in raw:
-            parts.append(f'<GET_FW_VERSION FIRMWARE_VERSION="{FW["hpe_old"]}" MANAGEMENT_PROCESSOR="iLO4"/>\r\n'
+            parts.append(f'<GET_FW_VERSION FIRMWARE_VERSION="{b.fw}" MANAGEMENT_PROCESSOR="iLO{b.gen[-1]}"/>\r\n'
                          + self._ribcl_resp(0x0000, "No error"))
         if "GET_ALL_USERS" in raw:
             users = "".join(f'<USER_LOGIN VALUE="{u}"/>' for u in b.accounts)
@@ -899,9 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
             seg = raw[raw.find("ADD_USER"):]
             nu = re.search(r'USER_LOGIN\s*=\s*"([^"]*)"', seg)
             np_ = re.search(r'PASSWORD\s*=\s*"([^"]*)"', seg)
-            if nu:
-                b.accounts[nu.group(1)] = {"password": np_.group(1) if np_ else "",
-                                           "role": "Administrator", "enabled": True}
+            if nu and nu.group(1) not in b.accounts:
+                b.add_account(nu.group(1), np_.group(1) if np_ else "")
             parts.append(self._ribcl_resp(0x0000, "No error"))
         if "MOD_USER" in raw:
             seg = raw[raw.find("MOD_USER"):]
@@ -913,16 +1088,18 @@ class Handler(BaseHTTPRequestHandler):
         new_ip = None
         if "MOD_NETWORK_SETTINGS" in raw:
             seg = raw[raw.find("MOD_NETWORK_SETTINGS"):]
-            mi = re.search(r'IP_ADDRESS\s+value\s*=\s*"([^"]*)"', seg)
+            mi = re.search(r'<IP_ADDRESS\s+value\s*=\s*"([^"]*)"', seg)
+            mm = re.search(r'SUBNET_MASK\s+value\s*=\s*"([^"]*)"', seg)
+            mg = re.search(r'GATEWAY_IP_ADDRESS\s+value\s*=\s*"([^"]*)"', seg)
             mn = re.search(r'DNS_NAME\s+value\s*=\s*"([^"]*)"', seg)
             if mn:
                 b.hostname = mn.group(1)
             if mi:
-                new_ip, b.dhcp = mi.group(1), False
+                new_ip, b.dhcp = (mi.group(1), mm.group(1) if mm else None, mg.group(1) if mg else None), False
             parts.append(self._ribcl_resp(0x0000, "No error"))
         self.send_text(200, "".join(parts), "text/xml")
         if new_ip:
-            self.server.fleet.migrate(b, new_ip)
+            self.server.fleet.migrate(b, *new_ip)
 
     @staticmethod
     def _ribcl_resp(status, message):
@@ -935,7 +1112,7 @@ class Handler(BaseHTTPRequestHandler):
             f"<!doctype html><meta charset=utf-8><title>vbmc {b.addr}</title>"
             f"<body style='font-family:system-ui;background:#111;color:#ddd;padding:2rem'>"
             f"<h1>Virtueller BMC</h1><p>Hersteller: <b>{NAME[b.vendor]}</b></p>"
-            f"<p>Modell: {b.model}<br>Seriennummer: {b.serial}<br>Firmware: {FW[b.vendor]}</p>"
+            f"<p>Modell: {b.model}<br>Seriennummer: {b.serial}<br>Firmware: {b.gen_label} {b.fw}</p>"
             f"<p>Adresse: {b.addr}<br>Hostname: {b.hostname or '(nicht gesetzt)'}<br>"
             f"DHCP: {'an' if b.dhcp else 'aus'}</p>"
             f"<p style='color:#888'>Reines Test-/Demo-Gerät für BMC-Steward.</p></body>",
@@ -944,18 +1121,41 @@ class Handler(BaseHTTPRequestHandler):
 
 # ------------------------------------------------------------------ Flotte
 class Fleet:
-    def __init__(self, ctx, redfish_ports, console=False):
+    """Alle laufenden virtuellen Server. Ohne Netzlabor (lab=None) laufen sie auf 127.x-Adressen dieses
+    Rechners; mit Netzlabor hat jeder Server einen eigenen Netzwerk-Namespace mit echter Karte."""
+
+    def __init__(self, ctx, redfish_ports, console=False, lab=None, emit=None, legacy_ctx=None):
         self.ctx = ctx
-        self.redfish_ports = redfish_ports      # z. B. [8443] oder [8443, 443]
+        self.legacy_ctx = legacy_ctx            # TLS 1.0 für iLO 3 (wenn das System es noch kann)
+        self.redfish_ports = redfish_ports      # z. B. [8443] oder [8443, 443]; Netzlabor: [443]
         self.console = console
-        self.bmcs = {}                          # addr -> BMC
+        self.lab = lab
+        self.emit = emit or (lambda: None)
+        self.bmcs = {}                          # idx -> BMC
         self.lock = threading.Lock()
+        threading.Thread(target=self._sync_auth, daemon=True).start()
+
+    def _sync_auth(self):
+        """Benutzeränderungen (Redfish/RIBCL) laufend an die IPMI-Kindprozesse weitergeben."""
+        while True:
+            time.sleep(1)
+            for b in self.table():
+                if b._ipmi is not None:
+                    try:
+                        _write_auth(b)
+                    except OSError:
+                        pass
+
+    def _ctx_for(self, bmc):
+        return self.legacy_ctx if (bmc.gen == "ilo3" and self.legacy_ctx) else self.ctx
 
     def _bind_redfish(self, bmc):
         bmc._redfish = []
         for port in self.redfish_ports:
             try:
-                srv = Server((bmc.host, port), bmc, self)
+                with _ns(bmc.netns):
+                    srv = Server((bmc.host, port), bmc, self)
+                    srv.socket = self._ctx_for(bmc).wrap_socket(srv.socket, server_side=True)
             except PermissionError:
                 print(f"  [redfish] {bmc.host}:{port} nicht gebunden (Rechte für Port < 1024). "
                       f"Konsolen-Reiter braucht Redfish auf 443 -> mit sudo starten.", file=sys.stderr)
@@ -963,7 +1163,6 @@ class Fleet:
             except OSError as e:
                 print(f"  [redfish] {bmc.host}:{port} nicht gebunden ({e.errno}).", file=sys.stderr)
                 continue
-            srv.socket = self.ctx.wrap_socket(srv.socket, server_side=True)
             threading.Thread(target=srv.serve_forever, daemon=True).start()
             bmc._redfish.append(srv)
         if not bmc._redfish:
@@ -977,14 +1176,98 @@ class Fleet:
 
     def start(self, bmc):
         with self.lock:
-            if bmc.addr in self.bmcs:
+            if bmc.idx in self.bmcs:
+                raise ValueError(f"Server {bmc.idx} läuft bereits")
+            if not self.lab and any(b.addr == bmc.addr for b in self.bmcs.values()):
                 raise ValueError(f"Adresse {bmc.addr} läuft bereits")
-            self._bind_redfish(bmc)
+            if self.lab:
+                if not bmc.mac:
+                    bmc.mac = netlab.mac_for(bmc.vendor, bmc.serial)
+                bmc.netns = self.lab.add_server(bmc.idx, bmc.mac)
+                bmc.host = bmc.console_host = "0.0.0.0"     # alle Adressen der eigenen Karte
+                bmc.port = REDFISH_STD
+                bmc.ipv4 = {"Address": "", "SubnetMask": "", "Gateway": ""}
+            try:
+                self._bind_redfish(bmc)
+            except Exception:
+                if self.lab and bmc.netns:
+                    self.lab.remove_server(bmc.netns)
+                raise
             if self.console:
                 self._start_console(bmc)
-            self.bmcs[bmc.addr] = bmc
-            return bmc
+            self.bmcs[bmc.idx] = bmc
+        if self.lab:
+            self._factory_network(bmc)
+        else:
+            bmc.status = "läuft (Loopback)"
+        self.emit()
+        return bmc
 
+    # -- Netz im Labor ---------------------------------------------------
+    def _factory_network(self, bmc):
+        if bmc.factory_net == "static":
+            prefix = prefix_of(bmc.factory_mask)
+            self.lab.set_address(bmc.netns, bmc.factory_ip, prefix, bmc.factory_gw or None)
+            bmc.ipv4 = {"Address": bmc.factory_ip, "SubnetMask": mask_of(prefix), "Gateway": bmc.factory_gw}
+            bmc.dhcp = False
+            bmc.status = "feste Werks-IP"
+            print(f"  [netz] {NAME[bmc.vendor]} {bmc.serial}: feste Werks-IP {bmc.factory_ip}")
+        else:
+            self._start_dhcp(bmc)
+
+    def _start_dhcp(self, bmc):
+        bmc.dhcp = True
+        bmc.status = "sucht DHCP-Server"
+
+        def bound(ip, prefix, gw, lease, server):
+            if not bmc.dhcp:
+                return
+            self.lab.set_address(bmc.netns, ip, prefix, gw)
+            bmc.ipv4 = {"Address": ip, "SubnetMask": mask_of(prefix), "Gateway": gw or ""}
+            bmc.status = f"Adresse per DHCP von {server}"
+            print(f"  [dhcp] {NAME[bmc.vendor]} {bmc.serial} ({bmc.mac}): {ip}/{prefix} von {server}")
+            self.emit()
+
+        def lost():
+            self.lab.clear_address(bmc.netns)
+            bmc.ipv4 = {"Address": "", "SubnetMask": "", "Gateway": ""}
+            bmc.status = "Adresse verloren, sucht DHCP-Server"
+            self.emit()
+
+        bmc.dhcpc = netlab.DhcpClient("eth0", bmc.mac, ns=bmc.netns, hostname=bmc.dhcp_hostname(),
+                                      on_bound=bound, on_lost=lost, log=print)
+        bmc.dhcpc.start()
+
+    def _stop_dhcp(self, bmc, release=True):
+        if bmc.dhcpc:
+            bmc.dhcpc.stop(release=release)
+            bmc.dhcpc = None
+
+    def set_dhcp(self, bmc):
+        """BMC wieder auf DHCP stellen (Konfigurationsänderung von außen)."""
+        bmc.dhcp = True
+        if not self.lab:
+            return
+
+        def do():
+            time.sleep(0.6)
+            self.lab.clear_address(bmc.netns)
+            bmc.ipv4 = {"Address": "", "SubnetMask": "", "Gateway": ""}
+            if not bmc.dhcpc:
+                self._start_dhcp(bmc)
+            self.emit()
+        threading.Thread(target=do, daemon=True).start()
+
+    def set_link(self, idx, up):
+        bmc = self.bmcs.get(idx)
+        if not bmc or not self.lab:
+            return False
+        self.lab.set_link(bmc.idx, bmc.netns, up)
+        bmc.link_up = up
+        self.emit()
+        return True
+
+    # -- Konsole -----------------------------------------------------------
     def _start_console(self, bmc):
         notes = []
         if paramiko is not None:
@@ -1006,13 +1289,25 @@ class Fleet:
         else:
             notes.append("IPMI (pyghmi fehlt)")
         if notes:
-            print(f"  [console] {bmc.console_host}: nicht gestartet: {', '.join(notes)}", file=sys.stderr)
+            where = bmc.serial if bmc.netns else bmc.console_host
+            print(f"  [console] {where}: nicht gestartet: {', '.join(notes)}", file=sys.stderr)
 
-    def stop(self, addr):
+    def find(self, key):
+        """Server über Nummer, Adresse (mit/ohne Port) oder Seriennummer."""
         with self.lock:
-            bmc = self.bmcs.pop(addr, None)
+            for b in self.bmcs.values():
+                if str(b.idx) == str(key) or b.addr == key or b.serial == key or \
+                        (b.addr and b.addr.split(":")[0] == key):
+                    return b
+        return None
+
+    def stop(self, key):
+        bmc = key if isinstance(key, BMC) else self.find(key)
         if not bmc:
             return False
+        with self.lock:
+            self.bmcs.pop(bmc.idx, None)
+        self._stop_dhcp(bmc, release=True)
         self._unbind_redfish(bmc)
         if bmc._ssh:
             try:
@@ -1026,33 +1321,64 @@ class Fleet:
             except Exception:
                 pass
             bmc._ipmi = None
+        if self.lab and bmc.netns:
+            self.lab.remove_server(bmc.netns)
+            bmc.netns = None
         return True
 
-    def migrate(self, bmc, new_addr):
-        """Nur die Redfish-Adresse wandert; SSH/IPMI bleiben auf der Startadresse."""
-        host, _, port = new_addr.partition(":")
-        port = int(port or bmc.port)
+    def migrate(self, bmc, new_addr, mask=None, gw=None):
+        """Neue Adresse übernehmen (wie ein echter BMC kurz nach der Antwort). Im Netzlabor bekommt die
+        Karte des Servers die neue Adresse; ohne Netzlabor wandert der Redfish-Dienst auf die 127.x-Adresse
+        (SSH/IPMI bleiben dort auf der Startadresse)."""
+        host, _, port = str(new_addr).partition(":")
         old = bmc.addr
+
+        if self.lab:
+            def do_lab():
+                time.sleep(0.6)
+                self._stop_dhcp(bmc, release=True)
+                prefix = prefix_of(mask or bmc.ipv4.get("SubnetMask"))
+                try:
+                    self.lab.set_address(bmc.netns, host, prefix, gw or None)
+                except Exception as e:
+                    bmc.status = f"Umstellen fehlgeschlagen: {e}"
+                    print(f"  [migrate] {old} -> {host} fehlgeschlagen: {e}", file=sys.stderr)
+                    self.emit()
+                    return
+                bmc.ipv4 = {"Address": host, "SubnetMask": mask_of(prefix), "Gateway": gw or ""}
+                bmc.dhcp = False
+                bmc.status = "feste IP (umgestellt)"
+                print(f"  [migrate] {old or '(ohne Adresse)'} -> {host}/{prefix} ({NAME[bmc.vendor]})")
+                self.emit()
+            threading.Thread(target=do_lab, daemon=True).start()
+            return
+
+        port = int(port or bmc.port)
 
         def do():
             time.sleep(0.6)
             with self.lock:
-                self.bmcs.pop(old, None)
                 self._unbind_redfish(bmc)
                 bmc.host, bmc.port = host, port
                 bmc.ipv4["Address"] = host
+                if mask:
+                    bmc.ipv4["SubnetMask"] = mask
+                if gw is not None:
+                    bmc.ipv4["Gateway"] = gw
                 try:
                     self._bind_redfish(bmc)
-                    self.bmcs[bmc.addr] = bmc
                 except Exception as e:
+                    bmc.status = f"Umstellen fehlgeschlagen: {e}"
                     print(f"  [migrate] {old} -> {new_addr} fehlgeschlagen: {e}", file=sys.stderr)
+                    self.emit()
                     return
             print(f"  [migrate] {old} -> {bmc.addr} ({NAME[bmc.vendor]})")
+            self.emit()
         threading.Thread(target=do, daemon=True).start()
 
     def table(self):
         with self.lock:
-            return sorted(self.bmcs.values(), key=lambda b: b.addr)
+            return sorted(self.bmcs.values(), key=lambda b: b.idx)
 
 
 # ------------------------------------------------------------------ CLI
@@ -1060,12 +1386,15 @@ def auto_host(index, base):
     return f"{base}.{11 + index}"
 
 
+ALIASES = {"hp": "hpe", "ilo": "hpe", "idrac": "dell", "xcc": "lenovo", "supermicro": "smc",
+           "ipmi": "smc", "hpe4": "hpe_old", "ilo4": "hpe_old", "ilo3": "hpe_old"}
+
+
 def parse_spec(spec, index, base, port):
     vendor, _, where = spec.partition("@")
     vendor = vendor.strip().lower()
-    aliases = {"hp": "hpe", "ilo": "hpe", "idrac": "dell", "xcc": "lenovo",
-               "supermicro": "smc", "ipmi": "smc", "hpe4": "hpe_old", "ilo4": "hpe_old", "ilo3": "hpe_old"}
-    vendor = aliases.get(vendor, vendor)
+    gen = "ilo3" if vendor == "ilo3" else None
+    vendor = ALIASES.get(vendor, vendor)
     if vendor not in VENDORS:
         raise ValueError(f"unbekannter Hersteller: {spec} (erlaubt: {', '.join(VENDORS)})")
     if where:
@@ -1073,24 +1402,48 @@ def parse_spec(spec, index, base, port):
         port = int(p or port)
     else:
         host = auto_host(index, base)
-    return BMC(vendor, host, port)
+    return BMC(vendor, host, port, gen=gen, idx=index + 1)
 
 
-def build_fleet(args):
+def load_config(path):
+    """Szenario-Datei: Liste von Servern oder {"servers": [...], "mode": ..., ...}."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        return {"servers": data}
+    if not isinstance(data, dict):
+        raise ValueError("Szenario muss eine Liste oder ein Objekt mit \"servers\" sein")
+    data.setdefault("servers", [])
+    return data
+
+
+def bmc_from_entry(e, idx, base, port):
+    vendor = ALIASES.get(str(e.get("vendor", "")).lower(), str(e.get("vendor", "")).lower())
+    if vendor not in VENDORS:
+        raise ValueError(f"unbekannter Hersteller in der Konfiguration: {e.get('vendor')!r}")
+    busy = e.get("busy_slots") or {}
+    if isinstance(busy, (int, str)) and str(busy).strip():
+        busy = {str(busy).strip(): "operator"}
+    return BMC(vendor, e.get("host") or auto_host(idx, base), int(e.get("port", port)),
+               serial=e.get("serial") or None, model=e.get("model") or None,
+               user=e.get("user") or None, password=e.get("password") or None,
+               gen=e.get("gen") or None, mac=(e.get("mac") or "").lower() or None,
+               net=e.get("net"), ip=e.get("ip") or None, mask=e.get("mask") or None,
+               gw=e.get("gw") or None, busy_slots=busy, idx=idx + 1)
+
+
+def build_fleet(args, cfg=None):
     bmcs, idx = [], 0
-    if args.config:
-        for e in json.loads(Path(args.config).read_text()):
-            bmcs.append(BMC(e["vendor"], e.get("host") or auto_host(idx, args.base),
-                            int(e.get("port", args.port)), serial=e.get("serial"), model=e.get("model"),
-                            user=e.get("user"), password=e.get("password")))
+    if cfg:
+        for e in cfg["servers"]:
+            bmcs.append(bmc_from_entry(e, idx, args.base, args.port))
             idx += 1
     if args.preset:
         for v in ("dell", "hpe", "lenovo", "smc"):
-            bmcs.append(BMC(v, auto_host(idx, args.base), args.port))
+            bmcs.append(BMC(v, auto_host(idx, args.base), args.port, idx=idx + 1))
             idx += 1
     if args.vendor:
         for _ in range(args.count):
-            bmcs.append(BMC(args.vendor, auto_host(idx, args.base), args.port))
+            bmcs.append(BMC(args.vendor, auto_host(idx, args.base), args.port, idx=idx + 1))
             idx += 1
     for spec in args.specs:
         bmcs.append(parse_spec(spec, idx, args.base, args.port))
@@ -1103,20 +1456,28 @@ def print_table(fleet):
     if not bmcs:
         print("  (keine Server aktiv)")
         return
-    w = max(len(b.addr) for b in bmcs)
-    extra = "  SSH/IPMI (Konsole)" if fleet.console else ""
-    print(f"  {'Redfish-Adresse'.ljust(w)}  Hersteller            Werks-Login{extra}")
-    print(f"  {'-'*w}  --------------------  -------------------------"
-          + ("  ------------------" if fleet.console else ""))
+    lab = fleet.lab is not None
+    w = max([15] + [len(b.addr) for b in bmcs])
+    head = f"  {'Nr':>2}  {'Adresse'.ljust(w)}  {'Hersteller'.ljust(20)}  {'Generation'.ljust(12)}  Werks-Login"
+    if lab:
+        head += "                   MAC"
+    elif fleet.console:
+        head += "                   SSH/IPMI (Konsole)"
+    print(head)
+    print("  " + "-" * (len(head) - 2))
     for b in bmcs:
-        u = b.factory_user
-        pw = b.accounts[u]["password"] if u in b.accounts else "?"
-        con = f"  {b.console_host} (22/623)" if fleet.console else ""
-        print(f"  {b.addr.ljust(w)}  {NAME[b.vendor].ljust(20)}  {u} / {pw}{con}")
+        login = f"{b.factory_user} / {b.factory_pass}"
+        addr = b.addr or ("(DHCP …)" if b.dhcp else "?")
+        line = f"  {b.idx:>2}  {addr.ljust(w)}  {NAME[b.vendor].ljust(20)}  {b.gen_label[:12].ljust(12)}  {login.ljust(24)}"
+        if lab:
+            line += f"  {b.mac}"
+        elif fleet.console:
+            line += f"  {b.console_host} (22/623)"
+        print(line)
 
 
 def interactive(fleet, args):
-    print("\nKonsole: add <hersteller> [host[:port]] | list | rm <adresse> | quit")
+    print("\nKonsole: add <hersteller> [host[:port]] | list | rm <adresse|nr> | link <nr> up|down | quit")
     while True:
         try:
             line = input("vbmc> ").strip()
@@ -1136,42 +1497,110 @@ def interactive(fleet, args):
                 continue
             spec = rest[0] if "@" in rest[0] else (rest[0] + "@" + rest[1] if len(rest) > 1 else rest[0])
             try:
-                b = parse_spec(spec, len(fleet.table()), args.base, args.port)
+                nr = max([b.idx for b in fleet.table()] + [0])
+                b = parse_spec(spec, nr, args.base, args.port)
                 fleet.start(b)
-                print(f"  gestartet: {b.addr}  {NAME[b.vendor]}  Login {b.factory_user} / "
-                      f"{b.accounts[b.factory_user]['password']}")
+                print(f"  gestartet: {b.addr or '(DHCP …)'}  {NAME[b.vendor]}  Login {b.factory_user} / "
+                      f"{b.factory_pass}")
             except Exception as e:
                 print(f"  Fehler: {e}")
         elif cmd in ("rm", "del", "stop"):
             if not rest:
-                print("  Nutzung: rm 127.9.0.11[:8443]")
+                print("  Nutzung: rm 127.9.0.11[:8443] | rm <nr>")
                 continue
             target = rest[0]
-            if ":" not in target:
-                cand = [b.addr for b in fleet.table() if b.host == target]
-                target = cand[0] if cand else f"{target}:{args.port}"
+            if ":" not in target and not fleet.find(target):
+                target = f"{target}:{args.port}"
             print("  entfernt" if fleet.stop(target) else "  nicht gefunden")
+        elif cmd == "link" and len(rest) == 2:
+            print("  ok" if fleet.set_link(int(rest[0]), rest[1] == "up") else "  nicht möglich (nur Netzlabor)")
         else:
-            print("  unbekannt. Befehle: add | list | rm | quit")
+            print("  unbekannt. Befehle: add | list | rm | link | quit")
+
+
+def control_loop(fleet):
+    """Steuerung über stdin für den Testlabor-Reiter von BMC-Steward (eine Zeile je Befehl)."""
+    for line in sys.stdin:
+        cmd, *rest = line.split() or [""]
+        try:
+            if cmd == "link" and len(rest) == 2:
+                fleet.set_link(int(rest[0]), rest[1] == "up")
+            elif cmd == "state":
+                fleet.emit()
+            elif cmd in ("quit", "exit"):
+                return
+        except Exception as e:
+            print(f"  [steuerung] {line.strip()}: {e}", file=sys.stderr)
+
+
+def make_emitter(fleet_ref, enabled):
+    """@@STATE-Zeile mit dem Zustand aller Server (für die Übersicht im Testlabor-Reiter)."""
+    def emit():
+        if not enabled or not fleet_ref:
+            return
+        data = [b.state() for b in fleet_ref[0].table()]
+        with _PRINT_LOCK:
+            sys.stdout.write("@@STATE " + json.dumps(data, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+    return emit
+
+
+def legacy_tls_ctx(cert, key):
+    """TLS 1.0 wie ein iLO 3 - nur, wenn OpenSSL es auf diesem System noch zulässt."""
+    try:
+        c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        c.minimum_version = ssl.TLSVersion.TLSv1
+        c.maximum_version = ssl.TLSVersion.TLSv1
+        c.set_ciphers("DEFAULT:@SECLEVEL=0")
+        c.load_cert_chain(cert, key)
+        return c
+    except (ssl.SSLError, ValueError, AttributeError):
+        return None
 
 
 def main():
+    global netlab
     ap = argparse.ArgumentParser(
         description="Virtuelle BMC-Flotte (Dell/HPE/Lenovo/Supermicro) zum Testen von BMC-Steward.")
     ap.add_argument("specs", nargs="*", help="Server, z. B. dell  hpe@127.9.0.12  lenovo@127.9.0.13:8443")
     ap.add_argument("--preset", action="store_true", help="je ein Server pro Hersteller")
     ap.add_argument("--vendor", choices=VENDORS, help="mit --count: N Server eines Herstellers")
     ap.add_argument("--count", type=int, default=1)
-    ap.add_argument("--config", help="JSON-Datei mit einer Liste von Servern")
+    ap.add_argument("--config", help="Szenario (JSON): Liste von Servern oder {\"servers\": [...]}")
     ap.add_argument("--base", default="127.9.0", help="Basis für automatische 127.x-Adressen (Vorgabe 127.9.0)")
     ap.add_argument("--port", type=int, default=8443, help="Redfish-Port (Vorgabe 8443)")
     ap.add_argument("--console", action="store_true",
                     help="zusätzlich echtes SSH (22), IPMI-SOL (623) und Redfish auf 443 "
                          "(braucht paramiko+pyghmi und root/Rechte für Ports < 1024)")
+    ap.add_argument("--netlab", choices=("rz", "router"),
+                    help="Netzlabor (root): rz = isolierter Staging-Switch bmclab0, router = echtes LAN "
+                         "über die Kabel-Netzwerkkarte (--parent)")
+    ap.add_argument("--host-addr", action="append", default=[],
+                    help="rz: Adresse(n) dieses Rechners am Staging-Switch, z. B. 192.168.0.1/24 "
+                         "(mehrfach oder durch Komma getrennt)")
+    ap.add_argument("--parent", help="router: Kabel-Netzwerkkarte, z. B. enp3s0")
+    ap.add_argument("--state", action="store_true", help="Zustand als @@STATE-JSON-Zeilen ausgeben (GUI)")
+    ap.add_argument("--control", action="store_true", help="Befehle zeilenweise über stdin (GUI)")
     ap.add_argument("--interactive", "-i", action="store_true", help="Steuerkonsole offen lassen")
     args = ap.parse_args()
 
-    bmcs = build_fleet(args)
+    try:
+        cfg = load_config(args.config) if args.config else None
+    except (OSError, ValueError) as e:
+        sys.exit(f"Szenario nicht lesbar: {e}")
+    mode = args.netlab or (cfg or {}).get("mode")
+    if mode not in ("rz", "router"):
+        mode = None
+    raw = args.host_addr or (cfg or {}).get("host_addrs") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    host_addrs = [a.strip() for chunk in raw for a in str(chunk).split(",") if a.strip()]
+    parent = args.parent or (cfg or {}).get("parent")
+
+    try:
+        bmcs = build_fleet(args, cfg)
+    except (ValueError, KeyError) as e:
+        sys.exit(f"Konfiguration fehlerhaft: {e}")
     if not bmcs and not args.interactive:
         ap.print_help()
         print("\nBeispiel:  python3 vbmc.py --preset")
@@ -1180,54 +1609,100 @@ def main():
     cert, key = ensure_cert()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
+    legacy = legacy_tls_ctx(cert, key) if any(b.gen == "ilo3" for b in bmcs) else None
+    if any(b.gen == "ilo3" for b in bmcs) and not legacy:
+        print("Hinweis: TLS 1.0 ist auf diesem System abgeschaltet, iLO 3 läuft mit moderner "
+              "Verschlüsselung.", file=sys.stderr)
 
-    redfish_ports = [args.port]
-    if args.console and REDFISH_STD not in redfish_ports:
-        redfish_ports.append(REDFISH_STD)     # Konsolen-Reiter prüft Redfish auf 443
-    if args.console:
+    lab = None
+    console = args.console
+    if mode:
+        try:
+            import netlab as _netlab
+        except ImportError as e:
+            sys.exit(f"Netzlabor nicht verfügbar: {e}")
+        netlab = _netlab
+        lab = netlab.NetLab(mode, host_addrs or (["192.168.0.1/24"] if mode == "rz" else []),
+                            parent=parent, log=print)
+        try:
+            lab.setup()
+        except Exception as e:
+            lab.teardown()
+            sys.exit(f"Netzlabor konnte nicht starten: {e}")
+        redfish_ports = [REDFISH_STD]
+        console = True                          # root und eigene Adresse: Konsole auf Standardports
+    else:
+        redfish_ports = [args.port]
+        if args.console and REDFISH_STD not in redfish_ports:
+            redfish_ports.append(REDFISH_STD)     # Konsolen-Reiter prüft Redfish auf 443
+    if console:
         miss = []
         if paramiko is None:
             miss.append("paramiko")
         if _ipmibmc is None:
             miss.append("pyghmi")
         if miss:
-            print(f"Hinweis: für --console fehlen Pakete: {', '.join(miss)} "
-                  f"(z. B. sudo pacman -S python-paramiko python-pyghmi).", file=sys.stderr)
+            print(f"Hinweis: für die Konsole fehlen Pakete: {', '.join(miss)} "
+                  f"(sudo pacman -S python-paramiko; sudo pip install --break-system-packages pyghmi).",
+                  file=sys.stderr)
 
-    fleet = Fleet(ctx, redfish_ports, console=args.console)
-    started = []
-    for b in bmcs:
-        try:
-            fleet.start(b)
-            started.append(b)
-        except Exception as e:
-            print(f"Start {b.addr} fehlgeschlagen: {e}", file=sys.stderr)
-    if not started and not args.interactive:
-        sys.exit("Kein Server gestartet.")
-
-    print(f"vbmc {__version__} - {len(started)} virtuelle Server laufen "
-          f"(HTTPS, selbstsigniert). In BMC-Steward eintragen:\n")
-    print_table(fleet)
-    if args.console:
-        print("\nKonsole: im Reiter „UEFI-Konsole“ die reine IP (ohne :Port) eintragen; "
-              "Redfish-Konfig im Haupt-Reiter weiter als IP:PORT.")
-    print("\nBeenden mit Strg-C." + ("" if args.interactive else "  (Steuerkonsole: --interactive)"))
-
+    ref = []
+    fleet = Fleet(ctx, redfish_ports, console=console, lab=lab,
+                  emit=make_emitter(ref, args.state), legacy_ctx=legacy)
+    ref.append(fleet)
     # SIGTERM (z. B. Stop-Knopf der GUI) wie Strg-C behandeln, damit die Aufräumroutine
     # unten läuft und auch die IPMI-Kindprozesse beendet werden.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-
+    started = []
     try:
+        for b in bmcs:
+            try:
+                fleet.start(b)
+                started.append(b)
+            except Exception as e:
+                print(f"Start {NAME.get(b.vendor, b.vendor)} {b.addr or b.serial} fehlgeschlagen: {e}",
+                      file=sys.stderr)
+        if not started and not args.interactive:
+            print("Kein Server gestartet.", file=sys.stderr)
+            raise SystemExit(1)
+
+        where = {"rz": "am Staging-Switch bmclab0", "router": f"im LAN an {parent}"}.get(
+            mode, "(HTTPS, selbstsigniert)")
+        print(f"vbmc {__version__} - {len(started)} virtuelle Server laufen {where}. In BMC-Steward eintragen:\n")
+        print_table(fleet)
+        if mode == "rz":
+            print("\nDie Server holen sich ihre Adresse per DHCP: im Reiter 1 von BMC-Steward den DHCP-Server "
+                  "auf bmclab0 starten (oder feste Werks-IP im Szenario).")
+        elif mode == "router":
+            print("\nDie Server holen sich ihre Adresse vom Router und erscheinen dort als eigene Geräte.")
+        elif args.console:
+            print("\nKonsole: im Reiter „UEFI-Konsole“ die reine IP (ohne :Port) eintragen; "
+                  "Redfish-Konfig im Haupt-Reiter weiter als IP:PORT.")
+        print("\nBeenden mit Strg-C." + ("" if (args.interactive or args.control) else "  (Steuerkonsole: --interactive)"))
+        fleet.emit()
+
         if args.interactive:
             interactive(fleet, args)
+        elif args.control:
+            control_loop(fleet)
         else:
             while True:
                 time.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
         pass
-    print("\nbeende...")
-    for b in fleet.table():
-        fleet.stop(b.addr)
+    finally:
+        print("\nbeende...")
+        stoppers = [threading.Thread(target=fleet.stop, args=(b,)) for b in fleet.table()]
+        for t in stoppers:                      # parallel: Leases freigeben, Dienste beenden
+            t.start()
+        for t in stoppers:
+            t.join(10)
+        if lab:
+            lab.teardown()
+        if _AUTH_DIR:
+            import shutil
+            shutil.rmtree(_AUTH_DIR, ignore_errors=True)
+        fleet.emit()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+{
+  "mode": "loopback",
+  "base": "127.9.0",
+  "port": 8443,
+  "servers": [
+    {"vendor": "dell", "serial": "CN7LOOP"},
+    {"vendor": "hpe", "serial": "CZLOOP00002"},
+    {"vendor": "lenovo", "serial": "JLOOP00003"},
+    {"vendor": "smc", "serial": "SLOOP00004"}
+  ]
+}

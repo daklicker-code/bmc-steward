@@ -1,0 +1,8 @@
+{
+  "mode": "rz",
+  "host_addrs": "192.168.0.1/24",
+  "servers": [
+    {"vendor": "dell", "gen": "idrac9", "serial": "CN7FIX1", "net": "static", "ip": "192.168.0.120"},
+    {"vendor": "dell", "gen": "idrac9", "serial": "CN7FIX2", "net": "static", "ip": "192.168.0.120"}
+  ]
+}

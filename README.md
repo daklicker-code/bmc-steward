@@ -42,7 +42,7 @@ Everything is organised into tabs; work through them in order or use only what y
 | **4 · Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
 | **5 · Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
 | **6 · UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
-| **Test lab** | Starts a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) that behave like the real thing, so you can test and demo BMC-Steward without hardware – start, status and stop right from the tab. |
+| **Test lab** | Builds a fleet of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **data centre** (virtual staging switch, DHCP from tab 1) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
 | **7 · Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:

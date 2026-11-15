@@ -1,21 +1,55 @@
-"""BMC-Steward: Reiter „Testlabor" - startet, überwacht und stoppt die virtuelle
-BMC-Flotte (tools/vbmc/vbmc.py) zum Testen ohne echte Hardware."""
+"""BMC-Steward: Reiter „Testlabor" - stellt eine virtuelle BMC-Flotte (tools/vbmc/vbmc.py) zusammen,
+startet, überwacht und stoppt sie. Drei Netz-Modi:
+
+  loopback  ohne Root, nur dieser PC: Server auf 127.x:Port (wie bisher)
+  rz        Rechenzentrum: isolierter Staging-Switch bmclab0, DHCP über Reiter 1 oder feste Werks-IP
+  router    Zuhause: Server hängen an der Kabel-Netzwerkkarte, Adresse vom Router (z. B. FritzBox)
+
+Jeder Server ist einzeln einstellbar (Hersteller, Firmware-Generation, Werkszustand Netz, Werks-Login,
+Modell/Seriennummer, belegter Dell-Slot); die Zusammenstellung lässt sich als Szenario speichern und
+genauso wieder laden. Gleiche Seriennummer = gleiche MAC = der Router vergibt dieselbe Adresse."""
+import ipaddress
+import json
+import os
+import random
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
+                             QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+                             QPushButton, QSpinBox, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
+                             QVBoxLayout, QWidget)
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import QProcess, QTimer, Qt
+from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 
 from .i18n import HERE, T
 from .core import WINDOWS, local_network
 
-# Reihenfolge und Beschriftung der wählbaren virtuellen Hersteller
-VBMC_VENDORS = [("dell", "Dell (iDRAC)"), ("hpe", "HPE (iLO 5/6)"),
-                ("lenovo", "Lenovo (XCC)"), ("smc", "Supermicro"),
-                ("hpe_old", "HPE (iLO 3/4)")]
+# Muss zu tools/vbmc/vbmc.py passen (GENS / FACTORY)
+VENDORS = [("dell", "Dell (iDRAC)"), ("hpe", "HPE (iLO)"), ("lenovo", "Lenovo (XCC)"), ("smc", "Supermicro")]
+GENS = {
+    "dell": [("idrac9", "iDRAC9"), ("idrac10", "iDRAC10"), ("idrac8", "iDRAC8"),
+             ("idrac8_alt", "iDRAC8, Firmware zu alt (< 2.50.50.50)")],
+    "hpe": [("ilo6", "iLO 6"), ("ilo5", "iLO 5"), ("ilo4", "iLO 4 (RIBCL)"), ("ilo3", "iLO 3 (RIBCL, TLS 1.0)")],
+    "lenovo": [("xcc2", "XCC2"), ("xcc3", "XCC3"), ("xcc1", "XCC (1. Generation)")],
+    "smc": [("x13", "X13/H13"), ("x12", "X12"), ("x11", "X11")],
+}
+FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
+           "lenovo": ("USERID", "PASSW0RD"), "smc": ("ADMIN", "ADMIN")}
+SERIAL_PREFIX = {"dell": "CN", "hpe": "CZ", "lenovo": "J", "smc": "S"}
+DELL_STATIC = "192.168.0.120"            # Dell ab Werk ohne DHCP
+
+MODES = [("loopback", "Loopback – ohne Root, nur dieser PC (127.x:Port)"),
+         ("rz", "Rechenzentrum – isolierter Staging-Switch (bmclab0)"),
+         ("router", "Zuhause/Router – echtes LAN über die Kabel-Netzwerkkarte")]
+
+# Spalten der Flotten-Tabelle
+C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT = range(9)
+# Spalten der Übersicht laufender Server
+S_NR, S_DEV, S_ID, S_MAC, S_ADDR, S_STATE, S_LOGIN, S_LINK = range(8)
 
 
 def _vbmc_script():
@@ -24,105 +58,538 @@ def _vbmc_script():
     return cand if cand.exists() else None
 
 
+def _scenario_dir():
+    d = HERE / "tools" / "vbmc" / "szenarien"
+    return d if d.is_dir() else HERE
+
+
+def random_serial(vendor):
+    chars = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ"
+    return SERIAL_PREFIX[vendor] + "".join(random.choice(chars) for _ in range(9 if vendor != "dell" else 5))
+
+
+def random_password(vendor):
+    """Werkspasswort wie auf dem Aufkleber (Muster je Hersteller, nur fürs Labor)."""
+    up = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    if vendor == "smc":
+        return "".join(random.choice(up) for _ in range(10))
+    if vendor == "hpe":
+        return "".join(random.choice(up + "23456789") for _ in range(8))
+    mix = up + up.lower() + "23456789"
+    return "".join(random.choice(mix) for _ in range(10))
+
+
+def wired_nics():
+    """Kabel-Netzwerkkarten (und Bridges) für den Router-Modus: [(Name, Anzeige)]. Kein WLAN, keine
+    virtuellen Karten, keine Ports einer Bridge (dann die Bridge selbst)."""
+    out = []
+    base = "/sys/class/net"
+    if WINDOWS or not os.path.isdir(base):
+        return out
+    skip = ("lo", "bmclab", "bmcshim", "vbh-", "vbm-", "veth", "docker", "virbr", "br-", "tun", "tap", "wg")
+    for dev in sorted(os.listdir(base)):
+        p = f"{base}/{dev}"
+        if dev.startswith(skip) or os.path.isdir(p + "/wireless") or os.path.isdir(p + "/phy80211"):
+            continue
+        try:
+            if Path(p + "/type").read_text().strip() != "1" or os.path.exists(p + "/master"):
+                continue
+        except OSError:
+            continue
+        if not (os.path.exists(p + "/device") or os.path.isdir(p + "/bridge")):
+            continue
+        try:
+            carrier = Path(p + "/carrier").read_text().strip() == "1"
+        except OSError:
+            carrier = False
+        ips = []
+        nic = QNetworkInterface.interfaceFromName(dev)
+        for e in nic.addressEntries():
+            if e.ip().protocol() == QAbstractSocket.NetworkLayerProtocol.IPv4Protocol:
+                ips.append(f"{e.ip().toString()}/{e.prefixLength()}")
+        label = f"{dev}  –  " + (", ".join(ips) if ips else T("keine IPv4")) + \
+            ("" if carrier else "  " + T("(kein Kabel)"))
+        out.append((dev, label, carrier and bool(ips)))
+    return out
+
+
 class VbmcTabMixin:
     """Reiter „Testlabor" des Hauptfensters."""
 
+    # ================================================================ Aufbau
     def build_vbmc(self):
         self.vbmc_script = _vbmc_script()
         self.vbmc_proc = None
+        self.vbmc_servers = []           # letzter Zustand der laufenden Server (aus @@STATE)
+        self.vbmc_buf = ""
+        self.vbmc_cfgfile = None
+        self.vbmc_run_mode = None
 
-        intro = QLabel(T("Startet virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs "
-                         "verhalten - zum Testen und Vorführen ohne Hardware. Die hier gezeigten Adressen "
-                         "trägt man im Haupt-Reiter als IP:PORT ein."))
+        intro = QLabel(T("Virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs verhalten - zum "
+                         "Testen und Vorführen ohne Hardware. Im Modus Rechenzentrum oder Router bekommt jeder "
+                         "Server eine eigene Netzwerkkarte mit MAC, holt sich per DHCP eine Adresse (oder hat "
+                         "eine feste Werks-IP) und zieht beim Umstellen wirklich um."))
         intro.setWordWrap(True)
 
-        # --- Flotte zusammenstellen ---
-        box = QGroupBox(T("Flotte zusammenstellen"))
-        f = QFormLayout(box)
-        self.vbmc_checks = {}
-        vrow = QHBoxLayout()
-        for key, label in VBMC_VENDORS:
-            cb = QCheckBox(label)
-            cb.setChecked(False)
-            self.vbmc_checks[key] = cb
-            vrow.addWidget(cb)
-        vrow.addStretch()
-        vwrap = QWidget()
-        vwrap.setLayout(vrow)
-        f.addRow(T("Hersteller"), vwrap)
+        # --- Netz-Modus ---
+        mbox = QGroupBox(T("Netz"))
+        mf = QFormLayout(mbox)
+        self.vbmc_mode = QComboBox()
+        for key, label in MODES:
+            self.vbmc_mode.addItem(T(label), key)
+        if WINDOWS:
+            for i in (1, 2):
+                self.vbmc_mode.model().item(i).setEnabled(False)
+        self.vbmc_mode.setToolTip(T("Loopback: läuft ohne Root nur auf diesem PC, Adressen als IP:PORT.\n"
+                                    "Rechenzentrum: eigener virtueller Staging-Switch, DHCP über Reiter 1.\n"
+                                    "Router: die Server hängen im echten LAN und erscheinen im Router.\n"
+                                    "Rechenzentrum und Router brauchen beim Start einmal Root (pkexec)."))
+        self.vbmc_mode.currentIndexChanged.connect(self.vbmc_mode_changed)
+        mf.addRow(T("Modus"), self.vbmc_mode)
 
-        self.vbmc_count = QSpinBox()
-        self.vbmc_count.setRange(1, 50)
-        self.vbmc_count.setToolTip(T("Wie viele Server je angehaktem Hersteller."))
-        f.addRow(T("Anzahl je Hersteller"), self.vbmc_count)
-
+        self.vbmc_opts = QStackedWidget()
+        # Loopback
+        lw = QWidget()
+        lf = QFormLayout(lw)
+        lf.setContentsMargins(0, 0, 0, 0)
         self.vbmc_base = QLineEdit("127.9.0")
         self.vbmc_base.setToolTip(T("Basis für die automatischen Loopback-Adressen, z. B. 127.9.0 -> 127.9.0.11, .12, ..."))
-        f.addRow(T("Basis-Adresse"), self.vbmc_base)
-
+        lf.addRow(T("Basis-Adresse"), self.vbmc_base)
         self.vbmc_port = QSpinBox()
         self.vbmc_port.setRange(1, 65535)
         self.vbmc_port.setValue(8443)
         self.vbmc_port.setToolTip(T("Redfish-Port. Port 443 bräuchte Root; mit 8443 geht es ohne."))
-        f.addRow(T("Redfish-Port"), self.vbmc_port)
-
+        lf.addRow(T("Redfish-Port"), self.vbmc_port)
         self.vbmc_console = QCheckBox(T("UEFI-Konsole aktivieren (echtes SSH + IPMI, braucht Root)"))
         self.vbmc_console.setToolTip(T("Zusätzlich SSH (22), IPMI-SOL (623) und Redfish auf 443. Diese Ports "
                                        "verlangen Root-Rechte und die Pakete paramiko + pyghmi. Der Start "
                                        "läuft dann über eine Rechteabfrage (pkexec)."))
-        f.addRow("", self.vbmc_console)
+        lf.addRow("", self.vbmc_console)
+        self.vbmc_opts.addWidget(lw)
+        # Rechenzentrum
+        rw = QWidget()
+        rf = QFormLayout(rw)
+        rf.setContentsMargins(0, 0, 0, 0)
+        self.vbmc_rz_addrs = QLineEdit("192.168.0.1/24")
+        self.vbmc_rz_addrs.setToolTip(T("Adresse(n) dieses PCs am Staging-Switch, ohne Gateway - wie die Staging-"
+                                        "Karte im RZ. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, "
+                                        "damit auch die neuen Adressen im Zielnetz erreichbar sind."))
+        rf.addRow(T("Dieser PC"), self.vbmc_rz_addrs)
+        rinfo = QLabel(T("Nach dem Start ist im Reiter 1 die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
+                         "starten (wie am Staging-Switch). Server mit fester Werks-IP sind sofort da - zwei mit "
+                         "derselben IP stören sich wie in echt."))
+        rinfo.setWordWrap(True)
+        rf.addRow("", rinfo)
+        self.vbmc_opts.addWidget(rw)
+        # Router
+        hw = QWidget()
+        hf = QFormLayout(hw)
+        hf.setContentsMargins(0, 0, 0, 0)
+        nrow = QHBoxLayout()
+        self.vbmc_nic = QComboBox()
+        self.vbmc_nic.setEditable(True)
+        self.vbmc_nic.setToolTip(T("Kabel-Netzwerkkarte, die am Router hängt. WLAN geht nicht: ein WLAN-Router "
+                                   "nimmt von einem Client keine zusätzlichen MAC-Adressen an."))
+        nrow.addWidget(self.vbmc_nic, 1)
+        nref = QPushButton("↻")
+        nref.setFixedWidth(32)
+        nref.setToolTip(T("Netzwerkkarten neu einlesen"))
+        nref.clicked.connect(self.vbmc_fill_nics)
+        nrow.addWidget(nref)
+        nwrap = QWidget()
+        nwrap.setLayout(nrow)
+        hf.addRow(T("Netzwerkkarte"), nwrap)
+        hinfo = QLabel(T("Jeder Server bekommt eine eigene MAC (Hersteller-Kennung) und holt sich seine Adresse "
+                         "vom Router; er erscheint dort als eigenes Gerät. Dieser PC erreicht die Server über einen "
+                         "eigenen Labor-Anschluss „bmcshim“ (bekommt ebenfalls eine Adresse vom Router)."))
+        hinfo.setWordWrap(True)
+        hf.addRow("", hinfo)
+        self.vbmc_opts.addWidget(hw)
+        mf.addRow(self.vbmc_opts)
 
-        # --- Knöpfe ---
+        # --- Flotte ---
+        fbox = QGroupBox(T("Flotte (jede Zeile ein Server)"))
+        fl = QVBoxLayout(fbox)
+        self.vbmc_fleet = QTableWidget(0, 9)
+        self.vbmc_fleet.setHorizontalHeaderLabels([T("Hersteller"), T("Generation"), T("Werks-Netz"), T("Werks-IP"),
+                                                   T("Werks-Benutzer"), T("Werks-Passwort"), T("Modell"),
+                                                   T("Seriennummer"), T("Belegter Slot")])
+        tips = [T("Hersteller des virtuellen Servers"),
+                T("Firmware-Generation. „iDRAC8, Firmware zu alt“ und iLO 3/4 prüfen die Sonderwege von BMC-Steward."),
+                T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Rechenzentrum/Router."),
+                T("Feste Werks-IP (nur bei „Feste IP“)"),
+                T("Werksbenutzer, mit dem BMC-Steward sich anmeldet"),
+                T("Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in Reiter 2."),
+                T("Leer = Standardmodell der Generation"),
+                T("Bestimmt auch die MAC-Adresse: gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse."),
+                T("Nur Dell: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). "
+                  "BMC-Steward darf ihn nicht überschreiben.")]
+        for c, tip in enumerate(tips):
+            self.vbmc_fleet.horizontalHeaderItem(c).setToolTip(tip)
+        hh = self.vbmc_fleet.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(C_MODEL, QHeaderView.ResizeMode.Stretch)
+        self.vbmc_fleet.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.vbmc_fleet.setMinimumHeight(150)
+        fl.addWidget(self.vbmc_fleet)
+        frow = QHBoxLayout()
+        self.vbmc_add_btns = []
+        for key, label in VENDORS:
+            b = QPushButton("+ " + label.split(" (")[0])
+            b.setToolTip(T("Einen virtuellen Server dieses Herstellers hinzufügen"))
+            b.clicked.connect(lambda _=False, k=key: self.vbmc_add_server(k))
+            frow.addWidget(b)
+            self.vbmc_add_btns.append(b)
+        self.vbmc_one_each = QPushButton(T("Je Hersteller einer"))
+        self.vbmc_one_each.clicked.connect(lambda: [self.vbmc_add_server(k) for k, _ in VENDORS])
+        self.vbmc_del_btn = QPushButton(T("Entfernen"))
+        self.vbmc_del_btn.clicked.connect(self.vbmc_remove_rows)
+        self.vbmc_rand_btn = QPushButton(T("Zufällige Werkspasswörter"))
+        self.vbmc_rand_btn.setToolTip(T("Setzt für die markierten Zeilen (ohne Markierung: alle) zufällige "
+                                        "Passwörter im Stil der Aufkleber, wie bei neuen Geräten."))
+        self.vbmc_rand_btn.clicked.connect(self.vbmc_random_passwords)
+        self.vbmc_load_btn = QPushButton(T("Szenario laden …"))
+        self.vbmc_load_btn.clicked.connect(self.vbmc_load_scenario)
+        self.vbmc_save_btn = QPushButton(T("Szenario speichern …"))
+        self.vbmc_save_btn.setToolTip(T("Speichert Modus, Netz und alle Server (inkl. Seriennummern und "
+                                        "Werkspasswörter) als JSON, um den Aufbau genau so nachzustellen."))
+        self.vbmc_save_btn.clicked.connect(self.vbmc_save_scenario)
+        for b in (self.vbmc_one_each, self.vbmc_del_btn, self.vbmc_rand_btn):
+            frow.addWidget(b)
+        frow.addStretch()
+        frow.addWidget(self.vbmc_load_btn)
+        frow.addWidget(self.vbmc_save_btn)
+        fl.addLayout(frow)
+
+        # --- Start/Stopp ---
         self.vbmc_start_btn = QPushButton(T("Flotte starten"))
         self.vbmc_start_btn.setMinimumHeight(30)
         self.vbmc_start_btn.clicked.connect(self.vbmc_start)
         self.vbmc_stop_btn = QPushButton(T("Flotte stoppen"))
         self.vbmc_stop_btn.setEnabled(False)
         self.vbmc_stop_btn.clicked.connect(self.vbmc_stop)
-        self.vbmc_adopt_btn = QPushButton(T("Adressen in Serverliste übernehmen (Reiter 2)"))
+        btns = QHBoxLayout()
+        btns.addWidget(self.vbmc_start_btn)
+        btns.addWidget(self.vbmc_stop_btn)
+        btns.addStretch()
+        self.vbmc_status = QLabel()
+        self.vbmc_status.setWordWrap(True)
+
+        # --- Laufende Server ---
+        rbox = QGroupBox(T("Laufende Server"))
+        rl = QVBoxLayout(rbox)
+        self.vbmc_run = QTableWidget(0, 8)
+        self.vbmc_run.setHorizontalHeaderLabels([T("Nr"), T("Gerät"), T("Modell · Seriennummer"), T("MAC"),
+                                                 T("Adresse"), T("Zustand"), T("Werks-Login"), T("Kabel")])
+        self.vbmc_run.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.vbmc_run.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        rh = self.vbmc_run.horizontalHeader()
+        rh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        rh.setSectionResizeMode(S_STATE, QHeaderView.ResizeMode.Stretch)
+        self.vbmc_run.verticalHeader().setVisible(False)
+        rl.addWidget(self.vbmc_run)
+        arow = QHBoxLayout()
+        self.vbmc_adopt_btn = QPushButton(T("In Serverliste übernehmen (Reiter 2)"))
         self.vbmc_adopt_btn.setEnabled(False)
-        self.vbmc_adopt_btn.setToolTip(T("Trägt die laufenden virtuellen Server mit Adresse (inkl. :Port) und "
-                                         "Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor."))
+        self.vbmc_adopt_btn.setToolTip(T("Trägt die markierten (ohne Markierung: alle) laufenden Server mit ihrer "
+                                         "aktuellen Adresse und ihrem Werks-Passwort in die Serverliste ein und "
+                                         "schlägt neue Adressen vor."))
         self.vbmc_adopt_btn.clicked.connect(self.vbmc_adopt)
         self.vbmc_adopt_mode = QComboBox()
         self.vbmc_adopt_mode.addItem(T("Neue IP: echtes Netz (Router) – zum Üben"), "net")
         self.vbmc_adopt_mode.addItem(T("Neue IP: Loopback – scharfe Migration läuft grün"), "loopback")
-        self.vbmc_adopt_mode.setToolTip(T("Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit "
-                                          "deinem Präfix vorgefüllt (ideal für Trockenlauf). Loopback: die neue "
-                                          "IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft."))
-        btns = QHBoxLayout()
-        btns.addWidget(self.vbmc_start_btn)
-        btns.addWidget(self.vbmc_stop_btn)
-        btns.addWidget(self.vbmc_adopt_btn)
-        btns.addWidget(self.vbmc_adopt_mode)
-        btns.addStretch()
-
-        self.vbmc_status = QLabel()
-        self.vbmc_status.setWordWrap(True)
+        self.vbmc_adopt_mode.setToolTip(T("Nur im Loopback-Modus. Echtes Netz: Gateway/Subnetz werden erkannt und "
+                                          "die neue IP mit deinem Präfix vorgefüllt (nur Trockenlauf). Loopback: die "
+                                          "neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft."))
+        arow.addWidget(self.vbmc_adopt_btn)
+        arow.addWidget(self.vbmc_adopt_mode)
+        arow.addStretch()
+        rl.addLayout(arow)
 
         self.vbmc_log = QPlainTextEdit()
         self.vbmc_log.setReadOnly(True)
         self.vbmc_log.setFont(QFont("monospace"))
-        self.vbmc_log.setPlaceholderText(T("Ausgabe der Flotte (Adressen, Werks-Logins, Statusmeldungen) …"))
+        self.vbmc_log.setPlaceholderText(T("Ausgabe der Flotte (DHCP, Umzüge, Hinweise) …"))
 
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(intro)
+        tl.addWidget(mbox)
+        tl.addWidget(fbox, 1)
+        tl.addLayout(btns)
+        tl.addWidget(self.vbmc_status)
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(top)
+        split.addWidget(rbox)
+        split.addWidget(self.vbmc_log)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        split.setStretchFactor(2, 1)
         lay = QVBoxLayout()
-        lay.addWidget(intro)
-        lay.addWidget(box)
-        lay.addLayout(btns)
-        lay.addWidget(self.vbmc_status)
-        lay.addWidget(self.vbmc_log, 1)
+        lay.addWidget(split)
         page = QWidget()
         page.setLayout(lay)
 
+        self.vbmc_fill_nics()
+        self.vbmc_mode_changed()
         if self.vbmc_script is None:
             self.vbmc_start_btn.setEnabled(False)
             self.vbmc_set_status(T("tools/vbmc/vbmc.py nicht gefunden. Der Reiter funktioniert nur, wenn "
                                    "BMC-Steward aus dem Quellcode läuft."), True)
         else:
-            self.vbmc_set_status(T("Bereit."))
+            self.vbmc_set_status(T("Bereit. Server hinzufügen (oder Szenario laden) und „Flotte starten“."))
         return page
 
-    # ---------- Bedienung ----------
+    # ================================================================ Flotten-Tabelle
+    def vbmc_current_mode(self):
+        return self.vbmc_mode.currentData()
+
+    def vbmc_mode_changed(self, *_):
+        mode = self.vbmc_current_mode()
+        self.vbmc_opts.setCurrentIndex({"loopback": 0, "rz": 1, "router": 2}[mode])
+        lab = mode != "loopback"
+        for r in range(self.vbmc_fleet.rowCount()):
+            self._vbmc_net_enable(r)
+        self.vbmc_fleet.setColumnHidden(C_NET, not lab)
+        self.vbmc_fleet.setColumnHidden(C_IP, not lab)
+
+    def vbmc_fill_nics(self):
+        cur = self.vbmc_nic.currentText().split()[0] if self.vbmc_nic.currentText() else ""
+        self.vbmc_nic.clear()
+        best = 0
+        for i, (dev, label, good) in enumerate(wired_nics()):
+            self.vbmc_nic.addItem(label, dev)
+            if good and not best:
+                best = i
+            if dev == cur:
+                best = i
+        if self.vbmc_nic.count():
+            self.vbmc_nic.setCurrentIndex(best)
+
+    def vbmc_selected_nic(self):
+        i = self.vbmc_nic.currentIndex()
+        if i >= 0 and self.vbmc_nic.itemText(i) == self.vbmc_nic.currentText():
+            return self.vbmc_nic.itemData(i)
+        return (self.vbmc_nic.currentText().split() or [""])[0]
+
+    def _vbmc_combo(self, items, value=None):
+        cb = QComboBox()
+        for key, label in items:
+            cb.addItem(T(label), key)
+        if value is not None:
+            i = cb.findData(value)
+            if i >= 0:
+                cb.setCurrentIndex(i)
+        return cb
+
+    def vbmc_add_server(self, vendor, entry=None):
+        """Zeile anlegen; `entry` ist ein Server-Eintrag aus einem Szenario."""
+        e = entry or {}
+        t = self.vbmc_fleet
+        r = t.rowCount()
+        t.insertRow(r)
+        vcb = self._vbmc_combo(VENDORS, vendor)
+        t.setCellWidget(r, C_VENDOR, vcb)
+        gen = e.get("gen")
+        if vendor == "hpe" and e.get("vendor") == "hpe_old" and gen not in ("ilo3", "ilo4"):
+            gen = "ilo4"
+        t.setCellWidget(r, C_GEN, self._vbmc_combo(GENS[vendor], gen))
+        net = e.get("net") or ("dhcp")
+        ncb = self._vbmc_combo([("dhcp", "DHCP"), ("static", "Feste IP")], net)
+        t.setCellWidget(r, C_NET, ncb)
+        user, pw = FACTORY[vendor]
+        vals = {C_IP: e.get("ip") or (DELL_STATIC if vendor == "dell" else ""),
+                C_USER: e.get("user") or user, C_PASS: e.get("password") or pw,
+                C_MODEL: e.get("model") or "", C_SERIAL: e.get("serial") or random_serial(vendor),
+                C_SLOT: ""}
+        busy = e.get("busy_slots") or {}
+        if isinstance(busy, dict) and busy:
+            vals[C_SLOT] = ",".join(sorted(busy))
+        elif isinstance(busy, (int, str)):
+            vals[C_SLOT] = str(busy)
+        for c, v in vals.items():
+            t.setItem(r, c, QTableWidgetItem(v))
+        vcb.currentIndexChanged.connect(lambda _=0, w=vcb: self._vbmc_vendor_changed(w))
+        ncb.currentIndexChanged.connect(lambda _=0, w=ncb: self._vbmc_net_enable(self._vbmc_row_of(w, C_NET)))
+        self._vbmc_net_enable(r)
+        self._vbmc_slot_enable(r)
+
+    def _vbmc_row_of(self, widget, col):
+        for r in range(self.vbmc_fleet.rowCount()):
+            if self.vbmc_fleet.cellWidget(r, col) is widget:
+                return r
+        return -1
+
+    def _vbmc_vendor_changed(self, widget):
+        r = self._vbmc_row_of(widget, C_VENDOR)
+        if r < 0:
+            return
+        t = self.vbmc_fleet
+        vendor = widget.currentData()
+        t.setCellWidget(r, C_GEN, self._vbmc_combo(GENS[vendor]))
+        user, pw = FACTORY[vendor]
+        t.item(r, C_USER).setText(user)
+        t.item(r, C_PASS).setText(pw)
+        t.item(r, C_SERIAL).setText(random_serial(vendor))
+        t.item(r, C_MODEL).setText("")
+        if not t.item(r, C_IP).text().strip() and vendor == "dell":
+            t.item(r, C_IP).setText(DELL_STATIC)
+        self._vbmc_slot_enable(r)
+
+    def _vbmc_editable(self, item, on):
+        if item is None:
+            return
+        flags = item.flags()
+        item.setFlags(flags | Qt.ItemFlag.ItemIsEditable if on else flags & ~Qt.ItemFlag.ItemIsEditable)
+        item.setForeground(self.palette().text() if on else self.palette().placeholderText())
+
+    def _vbmc_net_enable(self, r):
+        if r < 0:
+            return
+        ncb = self.vbmc_fleet.cellWidget(r, C_NET)
+        static = bool(ncb) and ncb.currentData() == "static" and self.vbmc_current_mode() != "loopback"
+        self._vbmc_editable(self.vbmc_fleet.item(r, C_IP), static)
+
+    def _vbmc_slot_enable(self, r):
+        vcb = self.vbmc_fleet.cellWidget(r, C_VENDOR)
+        item = self.vbmc_fleet.item(r, C_SLOT)
+        dell = bool(vcb) and vcb.currentData() == "dell"
+        if not dell and item:
+            item.setText("")
+        self._vbmc_editable(item, dell)
+
+    def vbmc_remove_rows(self):
+        rows = sorted({i.row() for i in self.vbmc_fleet.selectedIndexes()}, reverse=True)
+        for r in rows:
+            self.vbmc_fleet.removeRow(r)
+
+    def vbmc_random_passwords(self):
+        rows = sorted({i.row() for i in self.vbmc_fleet.selectedIndexes()}) or range(self.vbmc_fleet.rowCount())
+        for r in rows:
+            vendor = self.vbmc_fleet.cellWidget(r, C_VENDOR).currentData()
+            self.vbmc_fleet.item(r, C_PASS).setText(random_password(vendor))
+
+    def vbmc_entries(self):
+        """Flotte als Liste von Server-Einträgen (Szenario-Format) - oder (None, Fehlertext)."""
+        t = self.vbmc_fleet
+        out, serials = [], set()
+        lab = self.vbmc_current_mode() != "loopback"
+        for r in range(t.rowCount()):
+            vendor = t.cellWidget(r, C_VENDOR).currentData()
+            gen = t.cellWidget(r, C_GEN).currentData()
+            net = t.cellWidget(r, C_NET).currentData()
+            cell = {c: (t.item(r, c).text().strip() if t.item(r, c) else "") for c in
+                    (C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT)}
+            if not cell[C_PASS]:
+                return None, T("Zeile {0}: Werks-Passwort fehlt.").format(r + 1)
+            if not cell[C_SERIAL]:
+                cell[C_SERIAL] = random_serial(vendor)
+                t.item(r, C_SERIAL).setText(cell[C_SERIAL])
+            if cell[C_SERIAL] in serials:
+                return None, T("Zeile {0}: Seriennummer {1} kommt doppelt vor (sie bestimmt die MAC-Adresse).").format(
+                    r + 1, cell[C_SERIAL])
+            serials.add(cell[C_SERIAL])
+            e = {"vendor": vendor, "gen": gen, "serial": cell[C_SERIAL], "user": cell[C_USER] or None,
+                 "password": cell[C_PASS], "model": cell[C_MODEL] or None, "net": net}
+            if net == "static":
+                if lab:
+                    try:
+                        ipaddress.IPv4Address(cell[C_IP])
+                    except ValueError:
+                        return None, T("Zeile {0}: Werks-IP „{1}“ ist keine gültige IPv4-Adresse.").format(
+                            r + 1, cell[C_IP])
+                e["ip"] = cell[C_IP]
+                e["mask"] = "255.255.255.0"
+            if vendor == "dell" and cell[C_SLOT]:
+                slots = {}
+                for s in cell[C_SLOT].replace(";", ",").split(","):
+                    s = s.strip()
+                    if not s:
+                        continue
+                    if not s.isdigit() or not 3 <= int(s) <= 16:
+                        return None, T("Zeile {0}: Belegter Slot „{1}“ - erlaubt sind 3 bis 16.").format(r + 1, s)
+                    slots[s] = "operator" if not slots else f"operator{len(slots) + 1}"
+                e["busy_slots"] = slots
+            out.append({k: v for k, v in e.items() if v not in (None, "")})
+        return out, None
+
+    def vbmc_scenario(self):
+        entries, err = self.vbmc_entries()
+        if err:
+            return None, err
+        sc = {"mode": self.vbmc_current_mode(), "servers": entries}
+        if sc["mode"] == "rz":
+            sc["host_addrs"] = self.vbmc_rz_addrs.text().strip()
+        elif sc["mode"] == "router":
+            sc["parent"] = self.vbmc_selected_nic()
+        else:
+            sc["base"] = self.vbmc_base.text().strip() or "127.9.0"
+            sc["port"] = self.vbmc_port.value()
+        return sc, None
+
+    def vbmc_save_scenario(self):
+        sc, err = self.vbmc_scenario()
+        if err:
+            QMessageBox.warning(self, T("Szenario speichern"), err)
+            return
+        path, _ = QFileDialog.getSaveFileName(self, T("Szenario speichern"), str(_scenario_dir() / "szenario.json"),
+                                              T("Szenario (*.json)"))
+        if not path:
+            return
+        try:
+            Path(path).write_text(json.dumps(sc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, T("Szenario speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
+            return
+        self.vbmc_set_status(T("Szenario gespeichert: {0}").format(path))
+
+    def vbmc_load_scenario(self, path=None):
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, T("Szenario laden"), str(_scenario_dir()),
+                                                  T("Szenario (*.json);;Alle Dateien (*)"))
+            if not path:
+                return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                data = {"servers": data}
+            servers = data.get("servers") or []
+        except (OSError, ValueError, AttributeError) as e:
+            QMessageBox.warning(self, T("Szenario laden"), T("Datei nicht lesbar:\n{0}").format(e))
+            return
+        self.vbmc_fleet.setRowCount(0)
+        i = self.vbmc_mode.findData(data.get("mode", "loopback"))
+        if i >= 0 and self.vbmc_mode.model().item(i).isEnabled():
+            self.vbmc_mode.setCurrentIndex(i)
+        if data.get("host_addrs"):
+            ha = data["host_addrs"]
+            self.vbmc_rz_addrs.setText(", ".join(ha) if isinstance(ha, list) else str(ha))
+        if data.get("parent"):
+            j = self.vbmc_nic.findData(data["parent"])
+            if j >= 0:
+                self.vbmc_nic.setCurrentIndex(j)
+            else:
+                self.vbmc_nic.setEditText(data["parent"])
+        if data.get("base"):
+            self.vbmc_base.setText(str(data["base"]))
+        if data.get("port"):
+            self.vbmc_port.setValue(int(data["port"]))
+        skipped = 0
+        for e in servers:
+            v = str(e.get("vendor", "")).lower()
+            v = "hpe" if v == "hpe_old" else v
+            if v not in FACTORY:
+                skipped += 1
+                continue
+            self.vbmc_add_server(v, e)
+        self.vbmc_mode_changed()
+        msg = T("Szenario geladen: {0} Server").format(self.vbmc_fleet.rowCount())
+        if skipped:
+            msg += " " + T("({0} unbekannte Einträge übersprungen)").format(skipped)
+        self.vbmc_set_status(msg)
+
+    # ================================================================ Start/Stopp
     def vbmc_set_status(self, text, err=False):
         self.vbmc_status.setText(text)
         self.vbmc_status.setStyleSheet("color: #c9302c;" if err else "color: #2e9e4f;")
@@ -130,152 +597,265 @@ class VbmcTabMixin:
     def vbmc_running(self):
         return self.vbmc_proc is not None and self.vbmc_proc.state() != QProcess.ProcessState.NotRunning
 
+    def _vbmc_lock(self, running):
+        for w in (self.vbmc_mode, self.vbmc_opts, self.vbmc_fleet, self.vbmc_one_each, self.vbmc_del_btn,
+                  self.vbmc_rand_btn, self.vbmc_load_btn, *self.vbmc_add_btns):
+            w.setEnabled(not running)
+        self.vbmc_start_btn.setEnabled(not running and self.vbmc_script is not None)
+        self.vbmc_stop_btn.setEnabled(running)
+
     def vbmc_start(self):
         if self.vbmc_running() or self.vbmc_script is None:
             return
-        specs = []
-        for key, cb in self.vbmc_checks.items():
-            if cb.isChecked():
-                specs += [key] * self.vbmc_count.value()
-        if not specs:
-            self.vbmc_set_status(T("Bitte mindestens einen Hersteller anhaken."), True)
+        sc, err = self.vbmc_scenario()
+        if not err and not sc["servers"]:
+            err = T("Bitte mindestens einen Server hinzufügen (oder ein Szenario laden).")
+        mode = sc["mode"] if sc else None
+        if not err and mode == "rz":
+            try:
+                addrs = [str(ipaddress.IPv4Interface(a.strip())) for a in sc["host_addrs"].split(",") if a.strip()]
+            except ValueError as e:
+                addrs, err = None, T("Rechenzentrum, Adresse dieses PCs: {0}").format(e)
+            if addrs is not None and not addrs:
+                err = T("Rechenzentrum: Adresse dieses PCs fehlt, z. B. 192.168.0.1/24.")
+        if not err and mode == "router" and not sc["parent"]:
+            err = T("Router: bitte die Kabel-Netzwerkkarte wählen.")
+        need_root = mode in ("rz", "router") or (mode == "loopback" and self.vbmc_console.isChecked())
+        root = not WINDOWS and os.geteuid() == 0
+        if not err and need_root and not root and (WINDOWS or not shutil.which("pkexec")):
+            err = T("Für diesen Modus sind Root-Rechte nötig; pkexec ist nicht verfügbar. Bitte im Terminal starten:") \
+                + f"\n  sudo python3 {self.vbmc_script} --config <szenario.json>"
+        if err:
+            self.vbmc_set_status(err, True)
             return
 
-        # Adressen vorab berechnen (wie vbmc: base.(11+index)) - für den Übernahme-Knopf
-        base = self.vbmc_base.text().strip() or "127.9.0"
-        port = self.vbmc_port.value()
-        self.vbmc_servers = [(v, f"{base}.{11 + i}:{port}") for i, v in enumerate(specs)]
-
-        args = [str(self.vbmc_script), *specs, "--base", base, "--port", str(port)]
-        program, pre = sys.executable, ["-u"]       # -u: Ausgabe sofort, Liste erscheint live
-        if self.vbmc_console.isChecked():
-            args.append("--console")
-            if not WINDOWS and shutil.which("pkexec"):
-                program, pre = "pkexec", [sys.executable, "-u"]   # grafische Rechteabfrage
-            else:
-                cmd = "sudo python3 " + " ".join([str(self.vbmc_script), *specs,
-                      "--base", self.vbmc_base.text().strip() or "127.9.0",
-                      "--port", str(self.vbmc_port.value()), "--console"])
-                self.vbmc_set_status(T("Für die Konsole sind Root-Rechte nötig; pkexec ist nicht verfügbar. "
-                                       "Bitte im Terminal starten:") + "\n  " + cmd, True)
-                return
+        fd, cfg = tempfile.mkstemp(prefix="bmc-testlabor-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(sc, f)
+        self.vbmc_cfgfile = cfg
+        args = [str(self.vbmc_script), "--config", cfg, "--state", "--control"]
+        if mode == "rz":
+            args += ["--netlab", "rz", "--host-addr", ",".join(addrs)]
+        elif mode == "router":
+            args += ["--netlab", "router", "--parent", sc["parent"]]
+        else:
+            args += ["--base", sc["base"], "--port", str(sc["port"])]
+            if self.vbmc_console.isChecked():
+                args.append("--console")
+        if need_root and not root:
+            program, pre = "pkexec", [sys.executable, "-u"]       # grafische Rechteabfrage
+        else:
+            program, pre = sys.executable, ["-u"]                 # -u: Ausgabe sofort
 
         self.vbmc_log.clear()
+        self.vbmc_buf = ""
+        self.vbmc_servers = []
+        self.vbmc_run_mode = mode
+        self.vbmc_iface_done = False
+        self.vbmc_show_state([])
         self.vbmc_proc = QProcess(self)
         self.vbmc_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.vbmc_proc.readyReadStandardOutput.connect(self.vbmc_read)
         self.vbmc_proc.finished.connect(self.vbmc_finished)
         self.vbmc_proc.errorOccurred.connect(self.vbmc_error)
         self.vbmc_proc.start(program, pre + args)
-
-        self.vbmc_start_btn.setEnabled(False)
-        self.vbmc_stop_btn.setEnabled(True)
-        self.vbmc_adopt_btn.setEnabled(True)
-        for w in (*self.vbmc_checks.values(), self.vbmc_count, self.vbmc_base,
-                  self.vbmc_port, self.vbmc_console):
-            w.setEnabled(False)
-        self.vbmc_set_status(T("Flotte läuft. Adressen stehen unten; mit „Flotte stoppen“ beenden."))
+        self._vbmc_lock(True)
+        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_adopt_mode.setVisible(mode == "loopback")
+        self.vbmc_set_status(T("Flotte startet …") if not (need_root and not root)
+                             else T("Flotte startet … (Rechteabfrage bestätigen)"))
 
     def vbmc_stop(self):
+        """Über den Steuerkanal beenden: braucht keine Rechte, die Flotte räumt Netz und Leases selbst auf."""
         if not self.vbmc_running():
             return
         self.vbmc_stop_btn.setEnabled(False)
-        self.vbmc_proc.terminate()      # SIGTERM -> vbmc räumt auf (inkl. IPMI-Kindprozesse)
-        QTimer.singleShot(4000, lambda: self.vbmc_proc.kill()
-                          if self.vbmc_running() else None)
+        self.vbmc_set_status(T("Flotte wird gestoppt (Adressen werden freigegeben) …"))
+        self.vbmc_proc.write(b"quit\n")
+        self.vbmc_proc.closeWriteChannel()
+        QTimer.singleShot(15000, self._vbmc_force_stop)
 
-    def vbmc_read(self):
-        data = bytes(self.vbmc_proc.readAllStandardOutput()).decode("utf-8", "replace")
-        self.vbmc_log.appendPlainText(data.rstrip("\n"))
-
-    def vbmc_error(self, _err):
-        self.vbmc_set_status(T("Start fehlgeschlagen: {0}").format(self.vbmc_proc.errorString()), True)
-
-    def vbmc_finished(self, *_):
-        self.vbmc_start_btn.setEnabled(self.vbmc_script is not None)
-        self.vbmc_stop_btn.setEnabled(False)
-        self.vbmc_adopt_btn.setEnabled(False)
-        for w in (*self.vbmc_checks.values(), self.vbmc_count, self.vbmc_base,
-                  self.vbmc_port, self.vbmc_console):
-            w.setEnabled(True)
-        self.vbmc_set_status(T("Flotte gestoppt."))
-
-    # Werks-Logins der virtuellen Server (müssen zu tools/vbmc/vbmc.py passen)
-    FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
-               "hpe_old": ("Administrator", "Admin123!"), "smc": ("ADMIN", "ADMIN"),
-               "lenovo": ("USERID", "PASSW0RD")}
-
-    def vbmc_adopt(self):
-        """Laufende virtuelle Server in die Serverliste (Reiter 2) eintragen."""
-        servers = getattr(self, "vbmc_servers", [])
-        if not servers:
-            return
-        existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
-        base = self.vbmc_base.text().strip() or "127.9.0"
-        port = self.vbmc_port.value()
-        # Modus: echtes Netz (Router) zum Üben oder Loopback (scharfe Migration läuft grün)
-        net = local_network() if self.vbmc_adopt_mode.currentData() == "net" else None
-        if net:
-            mask, gw, new_prefix, new_port = net["mask"], net["gateway"], net["prefix"], ""
-            if not self.def_mask.text().strip():
-                self.def_mask.setText(mask)
-            if not self.def_gw.text().strip():
-                self.def_gw.setText(gw)
-        else:
-            mask, gw, new_prefix, new_port = "255.255.255.0", "", base, f":{port}"
-        # Leere Zeilen (z. B. die leere Startzeile) entfernen, damit die Daten oben beginnen
-        for r in reversed(range(self.table.rowCount())):
-            if not any(self.cell(r, c) for c in (0, 2, 5)):
-                self.table.removeRow(r)
-        added, logins = 0, {}
-        for i, (vendor, addr) in enumerate(servers):
-            if addr in existing:
-                continue
-            user, pw = self.FACTORY.get(vendor, ("", ""))
-            logins[vendor] = (user, pw)
-            self.add_row()
-            r = self.table.rowCount() - 1
-            self.table.item(r, 0).setText(addr)                        # Aktuelle IP (mit :Port)
-            # Passwort direkt je Zeile eintragen (Werte unterscheiden sich je Hersteller; das eine
-            # globale Werkspasswort-Feld oben könnte nur einen davon abdecken).
-            self.table.item(r, 1).setText(pw)
-            # Neue IP: Präfix vorgefüllt, letzte Ziffer bleibt offen (beim Fallback komplett)
-            self.table.item(r, 2).setText(f"{new_prefix}.{str(51 + i) + new_port if not net else ''}")
-            self.table.item(r, 3).setText(mask)                        # Subnetzmaske
-            self.table.item(r, 4).setText(gw)                          # Gateway
-            self.table.item(r, 5).setText(f"vsrv-{vendor}-{i + 1}")    # Hostname-Vorschlag
-            added += 1
-        # Benutzer bleibt leer: Der Hauptablauf erkennt ihn automatisch je Hersteller (DEFAULT_USER),
-        # solange "Werksbenutzer" oben leer bleibt. Passwort steht jetzt direkt je Zeile.
-        self.update_count()
-        self.touch()
-        self.tabs.setCurrentIndex(1)
-        if not added:
-            return
-        hint = ", ".join(f"{v}: {u}/{p}" for v, (u, p) in logins.items())
-        if net:
-            self.status.setText(T("{0} Server übernommen (Passwörter stehen schon in der Liste). Netz erkannt "
-                                  "(Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen. "
-                                  "Werks-Login(s): {3}.").format(added, gw or "?", mask, hint))
-        else:
-            self.status.setText(T("{0} Server übernommen (Loopback, Passwörter stehen schon in der Liste). "
-                                  "Werks-Login(s): {1}.").format(added, hint))
-
-    def vbmc_shutdown(self):
-        """Beim Schließen des Programms die Flotte mitnehmen."""
+    def _vbmc_force_stop(self):
         if not self.vbmc_running():
             return
         pid = self.vbmc_proc.processId()
-        via_pkexec = self.vbmc_proc.program() == "pkexec"
         self.vbmc_proc.terminate()
-        if self.vbmc_proc.waitForFinished(3000):
-            return
-        if self.vbmc_running() and via_pkexec and not WINDOWS and shutil.which("pkexec"):
-            # Mit --console läuft die Flotte dauerhaft als root (Ports < 1024); ein Signal von diesem,
-            # nicht privilegierten Prozess aus verhallt wirkungslos. Wie beim DHCP-Server: über pkexec
-            # selbst beenden, das darf root-Prozesse signalisieren.
+        if not self.vbmc_proc.waitForFinished(3000) and self.vbmc_proc.program() == "pkexec" \
+                and not WINDOWS and shutil.which("pkexec"):
             QProcess.execute("pkexec", ["kill", str(pid)])
             self.vbmc_proc.waitForFinished(3000)
         if self.vbmc_running():
             self.vbmc_proc.kill()
-            self.vbmc_proc.waitForFinished(1000)
+
+    def vbmc_read(self):
+        data = bytes(self.vbmc_proc.readAllStandardOutput()).decode("utf-8", "replace")
+        self.vbmc_buf += data
+        lines = self.vbmc_buf.split("\n")
+        self.vbmc_buf = lines.pop()
+        out = []
+        for line in lines:
+            if line.startswith("@@STATE "):
+                try:
+                    self.vbmc_show_state(json.loads(line[8:]))
+                except ValueError:
+                    pass
+                self._vbmc_drop_cfg()       # die Flotte hat das Szenario gelesen
+            else:
+                out.append(line.rstrip("\r"))
+        if out:
+            self.vbmc_log.appendPlainText("\n".join(out).rstrip("\n"))
+
+    def _vbmc_drop_cfg(self):
+        if self.vbmc_cfgfile:
+            try:
+                os.unlink(self.vbmc_cfgfile)
+            except OSError:
+                pass
+            self.vbmc_cfgfile = None
+
+    def vbmc_error(self, err):
+        if err == QProcess.ProcessError.FailedToStart:
+            self.vbmc_set_status(T("Start fehlgeschlagen: {0}").format(self.vbmc_proc.errorString()), True)
+
+    def vbmc_finished(self, code=0, *_):
+        self._vbmc_drop_cfg()
+        if self.vbmc_buf.strip():
+            self.vbmc_log.appendPlainText(self.vbmc_buf.rstrip())
+            self.vbmc_buf = ""
+        self._vbmc_lock(False)
+        self.vbmc_adopt_btn.setEnabled(False)
+        self.vbmc_servers = []
+        self.vbmc_show_state([])
+        if code in (126, 127) and self.vbmc_proc and self.vbmc_proc.program() == "pkexec":
+            self.vbmc_set_status(T("Rechteabfrage abgebrochen, die Flotte wurde nicht gestartet."), True)
+        elif code:
+            last = [l for l in self.vbmc_log.toPlainText().splitlines() if l.strip()]
+            self.vbmc_set_status(T("Flotte beendet mit Fehler: {0}").format(last[-1] if last else code), True)
+        else:
+            self.vbmc_set_status(T("Flotte gestoppt."))
+
+    # ================================================================ Übersicht
+    def vbmc_show_state(self, servers):
+        self.vbmc_servers = servers
+        t = self.vbmc_run
+        t.setRowCount(len(servers))
+        lab = self.vbmc_run_mode in ("rz", "router")
+        t.setColumnHidden(S_MAC, not lab)
+        t.setColumnHidden(S_LINK, not lab)
+        for r, s in enumerate(servers):
+            addr = s.get("addr") or "—"
+            vals = {S_NR: str(s.get("id", r + 1)), S_DEV: f"{s.get('name', '')} · {s.get('gen_label', '')}",
+                    S_ID: f"{s.get('model', '')} · {s.get('serial', '')}", S_MAC: s.get("mac", ""),
+                    S_ADDR: addr, S_STATE: s.get("status", ""),
+                    S_LOGIN: f"{s.get('factory_user', '')} / {s.get('factory_pass', '')}"}
+            if not s.get("factory_valid", True):
+                vals[S_LOGIN] += "  " + T("(geändert)")
+            for c, v in vals.items():
+                it = QTableWidgetItem(v)
+                if c == S_ADDR and not s.get("addr"):
+                    it.setForeground(self.palette().placeholderText())
+                t.setItem(r, c, it)
+            if lab:
+                b = QPushButton(T("Kabel ziehen") if s.get("link", True) else T("Kabel stecken"))
+                b.clicked.connect(lambda _=False, i=s.get("id"), up=not s.get("link", True): self.vbmc_link(i, up))
+                t.setCellWidget(r, S_LINK, b)
+        self.vbmc_adopt_btn.setEnabled(any(s.get("addr") for s in servers))
+        if servers and self.vbmc_run_mode == "rz" and not getattr(self, "vbmc_iface_done", True):
+            self.vbmc_preselect_staging()
+        if servers and self.vbmc_running():
+            ready = sum(1 for s in servers if s.get("addr"))
+            if ready < len(servers) and self.vbmc_run_mode == "rz":
+                self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse. Die übrigen warten "
+                                       "auf DHCP - im Reiter 1 auf „bmclab0“ den DHCP-Server starten.").format(
+                                           ready, len(servers)))
+            elif ready < len(servers):
+                self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse, die übrigen warten "
+                                       "auf DHCP.").format(ready, len(servers)))
+            else:
+                self.vbmc_set_status(T("Flotte läuft: {0} Server erreichbar. Übernehmen in Reiter 2 oder dort "
+                                       "selbst eintragen.").format(ready))
+
+    def vbmc_preselect_staging(self):
+        """RZ-Modus: im DHCP-Reiter die Karte bmclab0 schon auswählen (wie die Staging-Karte im RZ)."""
+        self.vbmc_iface_done = True
+        try:
+            if self.dhcp_running():
+                return
+            self.fill_ifaces()
+            for i in range(self.iface.count()):
+                if (self.iface.itemData(i) or [None])[0] == "bmclab0":
+                    self.iface.setCurrentIndex(i)
+                    break
+        except AttributeError:
+            pass
+
+    def vbmc_link(self, idx, up):
+        if self.vbmc_running() and idx is not None:
+            self.vbmc_proc.write(f"link {int(idx)} {'up' if up else 'down'}\n".encode())
+
+    def vbmc_adopt(self):
+        """Laufende virtuelle Server in die Serverliste (Reiter 2) eintragen."""
+        sel = sorted({i.row() for i in self.vbmc_run.selectedIndexes()})
+        servers = [self.vbmc_servers[r] for r in sel if r < len(self.vbmc_servers)] or list(self.vbmc_servers)
+        servers = [s for s in servers if s.get("addr")]
+        if not servers:
+            return
+        existing = {self.cell(r, 0) for r in range(self.table.rowCount())}
+        mode = self.vbmc_run_mode
+        note = ""
+        if mode == "loopback":
+            base = self.vbmc_base.text().strip() or "127.9.0"
+            port = self.vbmc_port.value()
+            net = local_network() if self.vbmc_adopt_mode.currentData() == "net" else None
+            if net:
+                mask, gw, prefix, suffix, full = net["mask"], net["gateway"], net["prefix"], "", False
+                note = T("Netz erkannt (Gateway {0}, Maske {1}); bei „Neue IP“ nur noch die letzte Ziffer "
+                         "eintragen. Ein scharfer Lauf geht in diesem Übungsmodus nicht.").format(gw or "?", mask)
+            else:
+                mask, gw, prefix, suffix, full = "255.255.255.0", "", base, f":{port}", True
+        elif mode == "rz":
+            first = ipaddress.IPv4Interface(self.vbmc_rz_addrs.text().split(",")[0].strip())
+            mask, gw = str(first.netmask), ""
+            prefix, suffix, full = str(first.ip).rsplit(".", 1)[0], "", True
+            note = T("Neue IP im Staging-Netz vorgeschlagen; Gateway des Zielnetzes noch eintragen.")
+        else:
+            s0 = servers[0]
+            mask, gw = s0.get("mask") or "255.255.255.0", s0.get("gw") or ""
+            prefix, suffix, full = s0["ip"].rsplit(".", 1)[0], "", False
+            note = T("Router-Netz übernommen (Gateway {0}); bei „Neue IP“ eine freie letzte Ziffer außerhalb des "
+                     "DHCP-Bereichs des Routers eintragen.").format(gw or "?")
+        for r in reversed(range(self.table.rowCount())):          # leere Zeilen (z. B. Startzeile) entfernen
+            if not any(self.cell(r, c) for c in (0, 2, 5)):
+                self.table.removeRow(r)
+        added = 0
+        for i, s in enumerate(servers):
+            if s["addr"] in existing:
+                continue
+            self.add_row()
+            r = self.table.rowCount() - 1
+            self.table.item(r, 0).setText(s["addr"])                       # Aktuelle IP (Loopback mit :Port)
+            self.table.item(r, 1).setText(s.get("factory_pass", ""))       # Werks-Passwort je Zeile
+            self.table.item(r, 2).setText(f"{prefix}.{str(51 + i) + suffix if full else ''}")
+            self.table.item(r, 3).setText(mask)
+            self.table.item(r, 4).setText(gw)
+            vendor = "ilo" if s.get("vendor") == "hpe_old" else s.get("vendor", "srv")
+            self.table.item(r, 5).setText(f"vsrv-{vendor}-{s.get('id', i + 1)}")
+            added += 1
+        # Benutzer bleibt leer: der Hauptablauf nimmt je Hersteller den Werksbenutzer, solange oben keiner steht
+        self.update_count()
+        self.touch()
+        self.tabs.setCurrentIndex(1)
+        if added:
+            self.status.setText(T("{0} Server übernommen, Werks-Passwörter stehen schon in der Liste.").format(added)
+                                + (" " + note if note else ""))
+
+    def vbmc_shutdown(self):
+        """Beim Schließen des Programms die Flotte mitnehmen (räumt Netzlabor und Leases auf)."""
+        if not self.vbmc_running():
+            return
+        self.vbmc_proc.write(b"quit\n")
+        self.vbmc_proc.closeWriteChannel()
+        if self.vbmc_proc.waitForFinished(12000):
+            return
+        self._vbmc_force_stop()
+        self.vbmc_proc.waitForFinished(1000)

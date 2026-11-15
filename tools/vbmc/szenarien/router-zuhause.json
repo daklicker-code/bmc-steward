@@ -1,0 +1,9 @@
+{
+  "mode": "router",
+  "servers": [
+    {"vendor": "dell", "gen": "idrac9", "serial": "CN7HOM1"},
+    {"vendor": "hpe", "gen": "ilo5", "serial": "CZHOME00002", "password": "P3ZK8WQA"},
+    {"vendor": "lenovo", "gen": "xcc2", "serial": "JHOME00003"},
+    {"vendor": "smc", "gen": "x13", "serial": "SHOME00004", "password": "MNBVCXYLKJ"}
+  ]
+}

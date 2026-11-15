@@ -1,0 +1,12 @@
+{
+  "mode": "rz",
+  "host_addrs": "192.168.0.1/24",
+  "servers": [
+    {"vendor": "dell", "gen": "idrac8_alt", "serial": "CN7OLD1"},
+    {"vendor": "dell", "gen": "idrac9", "serial": "CN7SLOT", "busy_slots": {"3": "operator"}},
+    {"vendor": "hpe", "gen": "ilo4", "serial": "CZILO400004"},
+    {"vendor": "hpe", "gen": "ilo3", "serial": "CZILO300005"},
+    {"vendor": "lenovo", "gen": "xcc1", "serial": "JXCC100006"},
+    {"vendor": "smc", "gen": "x11", "serial": "SX11000007"}
+  ]
+}

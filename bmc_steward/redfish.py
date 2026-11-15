@@ -9,6 +9,7 @@ import ipaddress
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.error
 import warnings
@@ -1553,29 +1554,48 @@ class BiosReadThread(QThread):
             self.done.emit(None, "", T('Unerwarteter Fehler: {0!r}').format(e))
 
 
-class VendorProbeThread(QThread):
-    """Ermittelt einmalig Hersteller/Typ einer Adresse, ohne Anmeldung (wie vendor()); läuft im
-    Hintergrund, damit die Serverliste (Reiter 2) beim Eintragen der Aktuelle-IP nicht blockiert."""
+class VendorProbeThread(QObject):
+    """Ermittelt einmalig Hersteller/Typ einer Adresse, ohne Anmeldung (wie vendor()); läuft im Hintergrund,
+    damit die Serverliste (Reiter 2) beim Eintragen der Aktuelle-IP nicht blockiert.
+    Bewusst ein Daemon-Thread statt QThread: Eine Abfrage an eine tote Adresse kann bis zur Zeitüberschreitung
+    dauern, und ein noch laufender QThread bricht das Programm beim Beenden ab."""
     done = pyqtSignal(str, str, str)     # Aktuelle IP, Anzeigetext, Tooltip
 
     def __init__(self, parent, ip):
         super().__init__(parent)
         self.ip = ip
+        self._t = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self._t.start()
+
+    def isRunning(self):
+        return self._t.is_alive()
+
+    def wait(self, ms=0):
+        self._t.join(ms / 1000 if ms else None)
+        return not self._t.is_alive()
+
+    def _emit(self, *args):
+        try:
+            self.done.emit(*args)
+        except RuntimeError:            # Fenster schon geschlossen
+            pass
 
     def run(self):
         rc = RedfishClient(dry=True, log=lambda *a, **k: None)
         try:
             v = rc.vendor(self.ip)
         except Exception as e:
-            self.done.emit(self.ip, T("Fehler"), T('Unerwarteter Fehler: {0!r}').format(e))
+            self._emit(self.ip, T("Fehler"), T('Unerwarteter Fehler: {0!r}').format(e))
             return
         if v == "offline":
-            self.done.emit(self.ip, T("nicht erreichbar"),
-                            T("Gerät antwortet nicht (Zeitüberschreitung oder Verbindung abgelehnt)."))
+            self._emit(self.ip, T("nicht erreichbar"),
+                       T("Gerät antwortet nicht (Zeitüberschreitung oder Verbindung abgelehnt)."))
         elif v in RedfishClient.NAME:
             label = RedfishClient.NAME[v] + (f" ({rc.model})" if rc.model else "")
-            self.done.emit(self.ip, label, label)
+            self._emit(self.ip, label, label)
         else:
             label = T("unbekannt") + (f" ({rc.model})" if rc.model else "")
-            self.done.emit(self.ip, label, T("Weder Dell iDRAC, HPE iLO, Supermicro noch Lenovo XCC erkannt.")
-                            + (f"\n{rc.model}" if rc.model else ""))
+            self._emit(self.ip, label, T("Weder Dell iDRAC, HPE iLO, Supermicro noch Lenovo XCC erkannt.")
+                       + (f"\n{rc.model}" if rc.model else ""))
