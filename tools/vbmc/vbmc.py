@@ -591,6 +591,20 @@ class Server(ThreadingHTTPServer):
         super().__init__(addr, Handler)
         self.bmc, self.fleet = bmc, fleet
 
+    # Verbindungsabbrüche sind Alltag: BMC-Steward prüft TLS-Stufen und Erreichbarkeit mit kurzen
+    # Verbindungen, die es sofort wieder schließt, und beim Umzug reißt die alte Verbindung ab.
+    # Echte BMCs schweigen dazu - hier auch. Andere Fehler: eine Zeile statt Traceback.
+    QUIET = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError, ssl.SSLError)
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, self.QUIET):
+            return
+        import traceback
+        tb = traceback.extract_tb(exc.__traceback__)
+        where = f" ({Path(tb[-1].filename).name}:{tb[-1].lineno})" if tb else ""
+        print(f"  [redfish] Anfrage von {client_address[0]} fehlgeschlagen: {exc!r}{where}", file=sys.stderr)
+
 
 def jbody(obj):
     return json.dumps(obj).encode()
