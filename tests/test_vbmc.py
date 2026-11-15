@@ -1051,6 +1051,17 @@ class TestTestlabTab(unittest.TestCase):
         self.assertNotEqual(pull.toolTip(), plug.toolTip())
         w.vbmc_show_state([])
 
+    def test_mode_explanation_follows_selection(self):
+        w = self.w
+        seen = {}
+        for mode, needle in (("loopback", "127.9.0.11:8443"), ("rz", "bmclab0"), ("router", "FritzBox")):
+            w.vbmc_mode.setCurrentIndex(w.vbmc_mode.findData(mode))
+            seen[mode] = w.vbmc_mode_info.text()
+            self.assertIn(needle, seen[mode])
+            self.assertIn("Beispiel", seen[mode])
+        self.assertEqual(len(set(seen.values())), 3)
+        w.vbmc_mode.setCurrentIndex(w.vbmc_mode.findData("loopback"))
+
     def test_save_log(self):
         """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht
         erreichbar“ weiterzugeben."""

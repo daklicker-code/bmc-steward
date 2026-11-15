@@ -47,6 +47,12 @@ MODES = [("loopback", "Loopback – ohne Root, nur dieser PC (127.x:Port)"),
          ("rz", "Konfigraum – isolierter Staging-Switch (bmclab0)"),
          ("router", "Zuhause/Router – echtes LAN über die Kabel-Netzwerkkarte")]
 
+MODE_INFO = {
+    'loopback': 'Die virtuellen Server laufen nur auf diesem PC und lauschen auf 127.x-Adressen mit eigenem Port. Es gibt kein echtes Netz und kein DHCP, Root ist nicht nötig.\nBeispiel: Server 1 ist unter 127.9.0.11:8443 erreichbar; in „Neuware“ trägt man als Aktuelle IP 127.9.0.11:8443 ein. Gut, um Oberfläche und Abläufe schnell auszuprobieren.',
+    'rz': 'Ein virtueller, vom restlichen Netz getrennter Staging-Switch „bmclab0“ mit eigener Netzwerkkarte je Server, wie im Konfigraum. Die Server holen sich ihre Adresse vom DHCP-Server des Tools oder haben eine feste Werks-IP.\nBeispiel: Ein Dell mit fester Werks-IP 192.168.0.120 ist sofort unter https://192.168.0.120 erreichbar, ein HPE bekommt nach dem Start des DHCP-Servers z. B. 192.168.0.101. Braucht beim Start einmal Root.',
+    'router': 'Die Server hängen mit eigener MAC am echten LAN (Kabel-Netzwerkkarte) und bekommen ihre Adresse vom Router, z. B. einer FritzBox, wo sie als eigene Geräte erscheinen.\nBeispiel: Ein HPE meldet sich als „ILOCZ12345“ beim Router und bekommt 192.168.178.45; das Umstellen auf eine feste Adresse wie 192.168.178.201 läuft wirklich durch. Braucht beim Start einmal Root, WLAN geht nicht.',
+}
+
 # Spalten der Flotten-Tabelle
 C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT, C_LIC = range(10)
 # Spalten der Übersicht laufender Server
@@ -146,7 +152,16 @@ class VbmcTabMixin:
                                     "Router: die Server hängen im echten LAN und erscheinen im Router.\n"
                                     "Konfigraum und Router brauchen beim Start einmal Root (pkexec)."))
         self.vbmc_mode.currentIndexChanged.connect(self.vbmc_mode_changed)
-        mf.addRow(T("Modus"), self.vbmc_mode)
+        self.vbmc_mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.vbmc_mode_info = QLabel()                  # Erklärung samt Beispiel zum gewählten Modus, rechts daneben
+        self.vbmc_mode_info.setWordWrap(True)
+        self.vbmc_mode_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.vbmc_mode_info.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.vbmc_mode_info.setStyleSheet("color:#6b7280;")
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.vbmc_mode, 0, Qt.AlignmentFlag.AlignTop)
+        mode_row.addWidget(self.vbmc_mode_info, 1)
+        mf.addRow(T("Modus"), mode_row)
 
         self.vbmc_opts = QStackedWidget()
         # Loopback
@@ -369,6 +384,7 @@ class VbmcTabMixin:
 
     def vbmc_mode_changed(self, *_):
         mode = self.vbmc_current_mode()
+        self.vbmc_mode_info.setText(T(MODE_INFO[mode]))
         self.vbmc_opts.setCurrentIndex({"loopback": 0, "rz": 1, "router": 2}[mode])
         lab = mode != "loopback"
         for r in range(self.vbmc_fleet.rowCount()):
