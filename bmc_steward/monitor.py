@@ -16,17 +16,21 @@ from .i18n import T
 NOISE_W, NOISE_H = 96, 60       # Rauschbild; wird grob hochskaliert, das wirkt ruhiger als feines Korn
 NOISE_MS = 70                   # ca. 14 Bilder pro Sekunde
 GRAB_MS = 400                   # Konsolen-Miniatur: ca. 2,5 Bilder pro Sekunde reichen als Vorschau
-# Grauwerte nur zwischen 14 und 70 von 255: dunkel und kontrastarm, damit es nicht ablenkt
-_NOISE_LUT = bytes(14 + i * 56 // 255 for i in range(256))
+# Grauwerte nur zwischen 12 und 40 von 255: sehr dunkel und kontrastarm, damit es nicht ablenkt
+_NOISE_LUT = bytes(12 + i * 28 // 255 for i in range(256))
 
 
 # ---------------------------------------------------------------------------------------- Logo-Aufbau
 # Gleiche Formen wie das Markenzeichen in branding.py (Koordinaten im 120er-Raster), hier als Pfade, damit sich
-# jedes Teil einzeln aufbauen lässt: erst das Schild, dann Leiterbahnen, Chip und Anschlüsse, zuletzt das Häkchen.
-LOGO_MS = 6000                  # Dauer des ganzen Aufbaus
+# jedes Teil einzeln aufbauen lässt: erst die Kugel, dann Leiterbahnen, Chip und Anschlüsse, zuletzt das Häkchen.
+# Ein Durchlauf dauert CYCLE_MS und wiederholt sich: Aufbau, kurz stehen (mit grünem Schein), Abbau, Pause.
+CYCLE_MS = 8000                 # alle 8 Sekunden beginnt der Aufbau von vorn
+LOGO_MS = 4000                  # Dauer des Aufbaus
+HOLD_MS = 1800                  # fertiges Logo bleibt stehen; in dieser Zeit klingt der Schein aus
+UNBUILD_MS = 1700               # Dauer des Abbaus (rückwärts: das Häkchen geht zuerst)
 LOGO_SIZE = 88                  # Kantenlänge des Logos im Bildschirm (zentriert)
 CHECK_START = 0.90              # ab hier (Anteil von LOGO_MS) zeichnet sich das Häkchen
-GLOW_FADE_MS = 2800             # so lange klingt der grüne Schein nach dem fertigen Häkchen aus
+GLOW_FADE_MS = HOLD_MS          # so lange klingt der grüne Schein nach dem fertigen Häkchen aus
 
 
 def _line(x1, y1, x2, y2):
@@ -35,12 +39,11 @@ def _line(x1, y1, x2, y2):
     return path
 
 
-_SHIELD = QPainterPath(QPointF(24, 20))
-for _pt in ((96, 20), (96, 68)):
-    _SHIELD.lineTo(QPointF(*_pt))
-_SHIELD.quadTo(QPointF(96, 96), QPointF(60, 112))
-_SHIELD.quadTo(QPointF(24, 96), QPointF(24, 68))
-_SHIELD.closeSubpath()
+_SPHERE_C, _SPHERE_R = QPointF(60, 63), 45
+_SPHERE_RECT = QRectF(_SPHERE_C.x() - _SPHERE_R, _SPHERE_C.y() - _SPHERE_R, 2 * _SPHERE_R, 2 * _SPHERE_R)
+_SPHERE = QPainterPath()                    # Umriss beginnt oben und läuft gegen den Uhrzeigersinn einmal herum
+_SPHERE.arcMoveTo(_SPHERE_RECT, 90)
+_SPHERE.arcTo(_SPHERE_RECT, 90, 360)
 _CHIP = QPainterPath()
 _CHIP.addRoundedRect(QRectF(46, 50, 28, 28), 5, 5)
 _CHECK = QPainterPath(QPointF(53, 64))
@@ -61,14 +64,30 @@ def logo_stages(t):
     bei 90 % und ist damit immer das Letzte."""
     def stage(a, b):
         return _ease((t - a) / (b - a))
-    return {"shield": stage(0.00, 0.35), "fill": stage(0.25, 0.45), "traces": stage(0.40, 0.55),
+    return {"sphere": stage(0.00, 0.35), "fill": stage(0.25, 0.45), "traces": stage(0.40, 0.55),
             "dots": stage(0.52, 0.62), "chip": stage(0.58, 0.76), "pins": stage(0.74, 0.88),
             "check": stage(CHECK_START, 1.00)}
 
 
+def logo_progress(ms):
+    """Aufbaustand (0..1) des Logos, ms nach Beginn des Durchlaufs; wiederholt sich alle CYCLE_MS.
+    Aufbau, Stehen, Abbau (derselbe Weg rückwärts), danach eine kurze Pause ohne Logo."""
+    ms %= CYCLE_MS
+    if ms < LOGO_MS:
+        return ms / LOGO_MS
+    ms -= LOGO_MS
+    if ms < HOLD_MS:
+        return 1.0
+    ms -= HOLD_MS
+    if ms < UNBUILD_MS:
+        return 1.0 - ms / UNBUILD_MS
+    return 0.0
+
+
 def glow_strength(ms):
-    """Stärke (0..1) des grünen Scheins ums Logo, ms nach Beginn des Aufbaus: Er wächst zügig, während sich das
+    """Stärke (0..1) des grünen Scheins ums Logo, ms nach Beginn des Durchlaufs: Er wächst zügig, während sich das
     Häkchen zeichnet, ist mit dem fertigen Häkchen am hellsten und klingt danach langsam aus."""
+    ms %= CYCLE_MS
     start = CHECK_START * LOGO_MS
     if ms <= start:
         return 0.0
@@ -96,22 +115,22 @@ def _stroke(p, path, color, width, frac):
 
 
 def _draw_glow(p, g):
-    """Grüner Schein ums Schild (Logo-Koordinaten), g = Stärke 0..1."""
+    """Grüner Schein um die Kugel (Logo-Koordinaten), g = Stärke 0..1."""
     if g <= 0:
         return
-    halo = QRadialGradient(QPointF(60, 66), 78)
+    halo = QRadialGradient(_SPHERE_C, 80)
     halo.setColorAt(0.0, QColor(52, 211, 153, int(120 * g)))
     halo.setColorAt(0.55, QColor(52, 211, 153, int(55 * g)))
     halo.setColorAt(1.0, QColor(52, 211, 153, 0))
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(QBrush(halo))
-    p.drawEllipse(QPointF(60, 66), 78, 78)
-    for width, alpha in ((26, 28), (17, 45), (10, 70)):    # weich auslaufender Rand am Schild entlang
+    p.drawEllipse(_SPHERE_C, 80, 80)
+    for width, alpha in ((26, 28), (17, 45), (10, 70)):    # weich auslaufender Rand an der Kugel entlang
         pen = QPen(QColor(52, 211, 153, int(alpha * g)), width)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(_SHIELD)
+        p.drawPath(_SPHERE)
 
 
 def draw_logo(p, rect, t, glow=0.0):
@@ -125,11 +144,21 @@ def draw_logo(p, rect, t, glow=0.0):
     k = min(rect.width(), rect.height()) / 120.0
     p.scale(k, k)
     _draw_glow(p, glow)
-    if st["fill"] > 0:
+    if st["fill"] > 0:                      # Kugel: Licht von links oben, zum Rand hin dunkler
+        a = st["fill"]
+        shade = QRadialGradient(QPointF(_SPHERE_C.x() - 16, _SPHERE_C.y() - 18), _SPHERE_R * 1.45)
+        shade.setColorAt(0.0, QColor(30, 96, 82, int(255 * a)))
+        shade.setColorAt(0.55, QColor(13, 52, 45, int(255 * a)))
+        shade.setColorAt(1.0, QColor(5, 22, 19, int(255 * a)))
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(11, 46, 40, int(255 * st["fill"])))
-        p.drawPath(_SHIELD)
-    _stroke(p, _SHIELD, green, 5, st["shield"])
+        p.setBrush(QBrush(shade))
+        p.drawEllipse(_SPHERE_C, _SPHERE_R, _SPHERE_R)
+        shine = QRadialGradient(QPointF(_SPHERE_C.x() - 20, _SPHERE_C.y() - 24), 14)   # kleiner Glanzpunkt
+        shine.setColorAt(0.0, QColor(255, 255, 255, int(60 * a)))
+        shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setBrush(QBrush(shine))
+        p.drawEllipse(QPointF(_SPHERE_C.x() - 20, _SPHERE_C.y() - 24), 14, 14)
+    _stroke(p, _SPHERE, green, 5, st["sphere"])
     for path in _TRACES:
         _stroke(p, path, teal, 3.5, st["traces"])
     if st["dots"] > 0:
@@ -216,10 +245,10 @@ class MonitorWidget(QWidget):
         self.update()
 
     def _logo_progress(self):
-        """Wie weit das Logo aufgebaut ist (0..1)."""
+        """Wie weit das Logo gerade aufgebaut ist (0..1); läuft alle CYCLE_MS von vorn."""
         if not self._logo_clock.isValid():
             return 0.0
-        return min(1.0, self._logo_clock.elapsed() / LOGO_MS)
+        return logo_progress(self._logo_clock.elapsed())
 
     def _logo_glow(self):
         """Stärke des grünen Scheins ums Logo (0..1)."""

@@ -17,7 +17,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QWidget
 from bmc_steward.main import Window
-from bmc_steward.monitor import (GLOW_FADE_MS, LOGO_MS, NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch,
+from bmc_steward.monitor import (CYCLE_MS, GLOW_FADE_MS, LOGO_MS, logo_progress, _NOISE_LUT, NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch,
                                  glow_strength, logo_stages)
 from bmc_steward.sidenav import ACCENT_ROLE, SideNav
 
@@ -144,10 +144,10 @@ class TestMonitorWidget(unittest.TestCase):
             self.assertEqual(logo_stages(i / 100)["check"], 0)
         for i in range(90, 101):                            # ... und wenn es kommt, steht der Rest schon
             st = logo_stages(i / 100)
-            self.assertEqual((st["shield"], st["chip"], st["pins"]), (1, 1, 1))
+            self.assertEqual((st["sphere"], st["chip"], st["pins"]), (1, 1, 1))
         prev = 0
-        for i in range(0, 101):                             # Schild baut sich gleichmäßig auf, nie rückwärts
-            cur = logo_stages(i / 100)["shield"]
+        for i in range(0, 101):                             # Kugel baut sich gleichmäßig auf, nie rückwärts
+            cur = logo_stages(i / 100)["sphere"]
             self.assertGreaterEqual(cur, prev)
             prev = cur
 
@@ -174,6 +174,29 @@ class TestMonitorWidget(unittest.TestCase):
         self.assertEqual(glow_strength(LOGO_MS + GLOW_FADE_MS), 0)
         self.assertEqual(glow_strength(LOGO_MS * 10), 0)
 
+    def test_logo_builds_up_and_down_every_8_seconds(self):
+        self.assertEqual(CYCLE_MS, 8000)
+        self.assertEqual(logo_progress(0), 0)
+        self.assertEqual(logo_progress(LOGO_MS), 1)          # fertig aufgebaut ...
+        self.assertEqual(logo_progress(LOGO_MS + 1000), 1)   # ... bleibt kurz stehen ...
+        self.assertEqual(logo_progress(CYCLE_MS - 1), 0)     # ... ist vor dem nächsten Durchlauf wieder abgebaut
+        peak = max(range(0, CYCLE_MS, 10), key=logo_progress)
+        prev = 1
+        for ms in range(peak, CYCLE_MS, 10):                 # nach dem Höhepunkt geht es nur noch abwärts
+            cur = logo_progress(ms)
+            self.assertLessEqual(cur, prev)
+            prev = cur
+        for ms in (0, 1234, 4321, 7777):                     # wiederholt sich genau alle 8 Sekunden
+            self.assertEqual(logo_progress(ms), logo_progress(ms + 3 * CYCLE_MS))
+            self.assertEqual(glow_strength(ms), glow_strength(ms + 3 * CYCLE_MS))
+        for ms in range(0, CYCLE_MS, 10):                    # Schein nur, solange das Logo ganz steht
+            if glow_strength(ms) > 0:
+                self.assertGreater(logo_progress(ms), 0.9)
+
+    def test_noise_is_subtle(self):
+        self.assertLessEqual(max(_NOISE_LUT), 40)
+        self.assertLessEqual(max(_NOISE_LUT) - min(_NOISE_LUT), 30)
+
     def test_logo_is_centered_and_large(self):
         from PyQt6.QtGui import QColor, QImage
         self.m.resize(272, 196)
@@ -190,7 +213,7 @@ class TestMonitorWidget(unittest.TestCase):
                     xs.append(x)
                     ys.append(y)
         width = max(xs) - min(xs)
-        old = 77 / 120 * 46                                  # Schild samt Strich, früher in 46er-Quadrat: ~30 px
+        old = 77 / 120 * 46                                  # früheres Schild samt Strich im 46er-Quadrat: ~30 px
         self.assertGreater(width, old * 1.7)                 # fast doppelt so groß wie früher
         self.assertAlmostEqual((min(xs) + max(xs)) / 2, scr.center().x(), delta=3)
         self.assertLess(abs((min(ys) + max(ys)) / 2 - scr.center().y()), 8)
