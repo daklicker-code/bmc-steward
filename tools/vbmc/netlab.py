@@ -8,9 +8,9 @@ auf die neue Adresse um.
 
 Zwei Aufbauten:
 
-  rz      Rechenzentrum: eine isolierte Linux-Bridge "bmclab0" als Staging-Switch. Dieser
+  rz      Konfigraum: eine isolierte Linux-Bridge "bmclab0" als Staging-Switch. Dieser
           Rechner hängt mit festen Adressen daran (z. B. 192.168.0.1/24, ohne Gateway), so wie
-          die Staging-Karte im RZ. DHCP liefert der DHCP-Reiter von BMC-Steward (dnsmasq auf
+          die Staging-Karte im Konfigraum. DHCP liefert der DHCP-Reiter von BMC-Steward (dnsmasq auf
           bmclab0) - oder die Server haben eine feste Werks-IP.
 
   router  Zuhause: jeder Server hängt per macvlan an der Kabel-Netzwerkkarte, holt sich seine
@@ -34,9 +34,9 @@ import threading
 import time
 
 NS_PREFIX = "vbmc-"         # Namespaces vbmc-1, vbmc-2, ...
-BRIDGE = "bmclab0"          # RZ-Modus: Staging-Switch
+BRIDGE = "bmclab0"          # Konfigraum-Modus: Staging-Switch
 SHIM = "bmcshim"            # Router-Modus: Anschluss dieses Rechners an die macvlan-Geräte
-HOST_VETH = "vbh-"          # RZ-Modus: hostseitiges Ende der Kabel (vbh-1, ...)
+HOST_VETH = "vbh-"          # Konfigraum-Modus: hostseitiges Ende der Kabel (vbh-1, ...)
 MV_TMP = "vbm-"             # Router-Modus: macvlan vor dem Verschieben in den Namespace
 
 # Hersteller-Präfixe (OUI), damit Router und DHCP-Listen den Hersteller anzeigen
@@ -294,7 +294,7 @@ class NetLab:
                     sh("route", "del", f"{old}/32", "dev", SHIM, check=False)
 
     def set_link(self, idx, ns, up):
-        """Netzwerkkabel stecken/ziehen. RZ: am Switch-Port, Router: an der Server-Karte."""
+        """Netzwerkkabel stecken/ziehen. Konfigraum: am Switch-Port, Router: an der Server-Karte."""
         state = "up" if up else "down"
         if self.mode == "rz":
             sh("link", "set", f"{HOST_VETH}{idx}", state, check=False)

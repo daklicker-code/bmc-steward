@@ -58,7 +58,7 @@ in BMC-Steward einträgt.
 * **Reiter „UEFI-Konsole“ (nur mit `--console`):** die **reine IP ohne Port**,
   z. B. `127.9.0.11` (SSH/IPMI/Redfish liegen dort auf den Standardports 22/623/443).
 
-## Netzlabor: Rechenzentrum und Router (echte Netzwerkpräsenz)
+## Netzlabor: Konfigraum und Router (echte Netzwerkpräsenz)
 
 Mit `--netlab` bekommt jeder virtuelle Server einen eigenen **Netzwerk-Namespace** mit eigener
 Netzwerkkarte `eth0`, einer **MAC mit Hersteller-Kennung** (aus der Seriennummer abgeleitet, also
@@ -102,7 +102,7 @@ Ein Szenario ist eine JSON-Datei (der Testlabor-Reiter liest und schreibt dassel
 * `busy_slots`: Dell-User-Slots, die schon ein anderer Benutzer belegt.
 * `user`/`password`, `model`, `serial`, `mac`: Werks-Login, Typenschild, Kennung.
 
-Beispiele in `szenarien/`: gemischte RZ-Flotte, zwei Dells mit derselben festen Werks-IP,
+Beispiele in `szenarien/`: gemischte Konfigraum-Flotte, zwei Dells mit derselben festen Werks-IP,
 Sonderfälle (alte Firmware, belegter Slot, iLO 3/4), Heimnetz am Router, Loopback-Schnelltest.
 
 Für den Testlabor-Reiter gibt es zusätzlich `--state` (Zustand als `@@STATE`-JSON-Zeilen) und
