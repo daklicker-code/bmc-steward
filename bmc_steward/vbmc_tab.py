@@ -224,7 +224,8 @@ class VbmcTabMixin:
         mf.addRow(self.vbmc_opts)
 
         # --- Flotte ---
-        fbox = QGroupBox(T("Flotte (jede Zeile ein Server)"))
+        fbox = QGroupBox(T("Cluster-Konfiguration"))
+        fbox.setToolTip(T("Jede Zeile ist ein virtueller Server. „Flotte starten“ startet alle Zeilen zusammen."))
         fl = QVBoxLayout(fbox)
         self.vbmc_fleet = QTableWidget(0, 10)
         self.vbmc_fleet.setHorizontalHeaderLabels([T("Hersteller"), T("Generation"), T("Werks-Netz"), T("Werks-IP"),
