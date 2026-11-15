@@ -71,8 +71,11 @@ def build_texts():
         T("Subnetzmaske zur neuen Adresse, z. B. 255.255.255.0. Eingabe als /24 wird umgewandelt."),
         T("Gateway im Netz der neuen Adresse."),
         T("Name, den der BMC bekommt (iDRAC-, iLO- bzw. BMC-Hostname), nicht der Name des Betriebssystems."),
+        T("Seriennummer bzw. Service-Tag des Geräts, nur zur eigenen Übersicht; wird nirgends an den BMC "
+        "gesendet. Lässt sich auch per Handy-Scanner einscannen."),
     ]
-    COLS = [T("Aktuelle IP"), T("Passwort"), T("Neue IP"), T("Subnetzmaske"), T("Gateway"), T("Hostname")]
+    COLS = [T("Aktuelle IP"), T("Passwort"), T("Neue IP"), T("Subnetzmaske"), T("Gateway"), T("Hostname"),
+            T("Seriennummer")]
 
 
 

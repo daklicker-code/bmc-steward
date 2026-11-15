@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from . import i18n
 from .i18n import T
 from .core import WINDOWS, __version__, mask
 def _win():
@@ -694,9 +695,16 @@ class ScannerDialog(QDialog):
         self.wait_bar.hide()
         self.wait_timer = QTimer(self)
         self.wait_timer.timeout.connect(self.wait_tick)
-        self.setWindowTitle(T("Handy-Scanner (Passwort)"))
+        self.setWindowTitle(T("Handy-Scanner"))
         self.setMinimumWidth(480)
         self.setMinimumHeight(560)
+        self.target = QComboBox()
+        for i, name in enumerate(i18n.COLS):
+            self.target.addItem(name, i)
+        self.target.setCurrentIndex(1)       # Passwort, die bisherige (einzige) Voreinstellung
+        self.target.setToolTip(T("In welche Spalte der Serverliste die Scans eingetragen werden, z. B. "
+                                 "„Passwort“ oder „Seriennummer“. Lässt sich jederzeit umschalten, auch "
+                                 "während der Scanner läuft - ab dem nächsten Scan gilt die neue Spalte."))
         self.way = QComboBox()
         for key, text in self.WAYS:
             self.way.addItem(T(text), key)
@@ -736,9 +744,13 @@ class ScannerDialog(QDialog):
         self.tools_recheck.clicked.connect(self.refresh_tools)
         self.refresh_tools()
         intro = QLabel(T("Das Handy zeigt nur die Kamera. Bilder werden nicht auf dem Handy gespeichert: Der PC liest "
-                         "den Text und verwirft das Bild sofort. Der Wert landet im Feld „Passwort“ der markierten "
-                         "Zeile (sonst der ersten ohne Passwort); danach springt die Markierung eine Zeile weiter."))
+                         "den Text und verwirft das Bild sofort. Der Wert landet im unten gewählten Zielfeld der "
+                         "markierten Zeile (sonst der ersten offenen Zeile, in der dieses Feld noch leer ist); "
+                         "danach springt die Markierung eine Zeile weiter."))
         intro.setWordWrap(True)
+        row0 = QHBoxLayout()
+        row0.addWidget(QLabel(T("Zielfeld")))
+        row0.addWidget(self.target, 1)
         row1 = QHBoxLayout()
         row1.addWidget(QLabel(T("Verbindungsweg")))
         row1.addWidget(self.way, 1)
@@ -760,6 +772,7 @@ class ScannerDialog(QDialog):
         lay = QVBoxLayout(self)
         for w in (intro,):
             lay.addWidget(w)
+        lay.addLayout(row0)
         lay.addLayout(row1)
         lay.addLayout(row2)
         lay.addLayout(row3)
@@ -1046,11 +1059,17 @@ class ScannerDialog(QDialog):
         self.fill_ifaces()
 
     def on_value(self, value, holder):
-        """Ein Wert vom Handy ist da: ins Passwort-Feld, ohne ihn irgendwo anzuzeigen."""
-        row = self.win.scan_to_password(value)
+        """Ein Wert vom Handy ist da: ins gewählte Zielfeld, ohne ihn irgendwo anzuzeigen - auch nicht
+        im Protokoll, egal ob Passwort oder ein unkritisches Feld wie Seriennummer."""
+        col = self.target.currentData()
+        row = self.win.scan_to_row(value, col)
         holder["row"] = row
         holder["done"].set()
-        self.say(T("Passwort in Zeile {0} eingetragen").format(row) if row else T("Kein freies Feld, nichts eingetragen"))
+        label = self.target.currentText()
+        if row:
+            self.say(T('{0} in Zeile {1} eingetragen').format(label, row))
+        else:
+            self.say(T("Kein freies Feld, nichts eingetragen"))
 
     def closeEvent(self, event):
         self.stop_server()

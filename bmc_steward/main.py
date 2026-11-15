@@ -171,7 +171,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         again.clicked.connect(self.reopen_rows)
         load = QPushButton(T("Liste laden …"))
         load.setToolTip(T("Lädt eine gespeicherte Liste oder eine CSV-Datei, z. B. aus Excel:\n"
-                        "aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname"))
+                        "aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n"
+                        "(seriennummer ist optional, auch ganz ohne diese Spalte ladbar)"))
         load.clicked.connect(self.load_dialog)
         save = QPushButton(T("Liste speichern …"))
         save.setToolTip(T("Speichert die Liste in eine Datei. Das Tool speichert nie von selbst.\n"
@@ -681,13 +682,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             f = [x.strip() for x in line.replace(";", ",").split(",")]     # Excel exportiert mit Semikolon
             done = False
             vendor_text = ""
-            if len(f) == 8:               # 8. Spalte: Hersteller/Typ, nur Anzeige (neueres Format)
+            if len(f) == 9:               # 9. Spalte: Hersteller/Typ, nur Anzeige (neueres Format)
                 vendor_text = f.pop()
-            if len(f) == 7:              # 7. Spalte: „fertig“, Server schon umgestellt
+            if len(f) == 8:              # 8. Spalte: „fertig“, Server schon umgestellt
                 done = f.pop().lower() in ("fertig", "done", "1", "x")
-            if len(f) == 5:              # ohne Passwort-Spalte
+            if len(f) == 5:              # ohne Passwort-Spalte (ältestes Format)
                 f.insert(1, "")
-            if len(f) == 6:
+            if len(f) == 6:              # ohne Seriennummer-Spalte (Format vor deren Einführung)
+                f.append("")
+            if len(f) == 7:
                 self.add_row(f, vendor_text=vendor_text)
                 if done and f[0]:
                     self.table.item(self.table.rowCount() - 1, 0).setData(Qt.ItemDataRole.UserRole, f[0])
@@ -759,7 +762,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if with_passwords:
             settings += [("cur_pass", self.cur_pass.text()), ("new_pass", self.new_pass.text())]
         text = "".join(f"#@ {k}={v}\n" for k, v in settings)
-        text += "# aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,fertig,hersteller\n"
+        text += "# aktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer,fertig,hersteller\n"
         for r in range(self.table.rowCount()):
             vals = [self.cell(r, c) for c in range(len(i18n.COLS))]
             if not (vals[0] or vals[2] or vals[5]):
@@ -787,7 +790,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             if vals[0] or vals[2] or vals[5]:
                 rows[r] = vals
         errs = {r: row_errors(v) for r, v in rows.items()}
-        for c in (0, 2, 5):
+        for c in (0, 2, 5, 6):
             seen = {}
             for r, v in rows.items():
                 key = v[c].lower()
@@ -817,7 +820,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                     item.setBackground(ERR_BG if msg else MISS_BG)
                     item.setToolTip(msg if msg else i18n.COL_TIPS[c] + empty_tip)
                     out.append((r, c, msg))
-                elif not rows and c != 1 and not item.text().strip():
+                elif not rows and c not in (1, 6) and not item.text().strip():
                     item.setBackground(MISS_BG)         # Liste noch ganz leer: zeigen, wo es losgeht
                     item.setToolTip(i18n.COL_TIPS[c] + empty_tip)
                 elif done:
@@ -884,22 +887,23 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.scanner.show()
         self.scanner.raise_()
 
-    def scan_to_password(self, value):
-        """Trägt einen vom Handy gelesenen Wert als Passwort ein: markierte Zeile, sonst die erste offene ohne
-        Passwort. Gibt die Zeilennummer (ab 1) zurück, 0 wenn nichts frei war. Danach rückt die Markierung vor."""
+    def scan_to_row(self, value, col=1):
+        """Trägt einen vom Handy gelesenen Wert in die gewählte Spalte (Scanner-Fenster, Standard: Passwort)
+        ein: markierte Zeile, sonst die erste offene, in der genau diese Spalte noch leer ist. Gibt die
+        Zeilennummer (ab 1) zurück, 0 wenn nichts frei war. Danach rückt die Markierung vor."""
         n = self.table.rowCount()
         r = self.table.currentRow()
         if not 0 <= r < n or self.is_done(r):
-            r = next((i for i in range(n) if not self.is_done(i) and not self.cell(i, 1)), -1)
+            r = next((i for i in range(n) if not self.is_done(i) and not self.cell(i, col)), -1)
         if r < 0:
             return 0
-        item = self.table.item(r, 1)
+        item = self.table.item(r, col)
         if item is None:
             item = QTableWidgetItem()
-            self.table.setItem(r, 1, item)
+            self.table.setItem(r, col, item)
         item.setText(value)
         if r + 1 < n:
-            self.table.setCurrentCell(r + 1, 1)
+            self.table.setCurrentCell(r + 1, col)
         return r + 1
 
     def closeEvent(self, event):
@@ -1710,7 +1714,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if err:
             QMessageBox.warning(self, T("Eingabe prüfen"), err)
             return
-        todo = self.rows(open_only=True)       # fertige (grüne) Zeilen werden übersprungen
+        # Seriennummer (Spalte 7) ist reine Notiz und geht nicht an den BMC: nur die ersten 6 Felder
+        # weiterreichen, auf die Engine.run() angewiesen ist.
+        todo = [v[:6] for v in self.rows(open_only=True)]       # fertige (grüne) Zeilen werden übersprungen
         if not todo:
             QMessageBox.information(self, T("Nichts zu tun"), T("Alle Server der Liste sind schon umgestellt.\n\n"
                                     "Neue Zeilen eintragen."))
