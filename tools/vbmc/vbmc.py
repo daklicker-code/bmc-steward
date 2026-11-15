@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 __license__ = "MIT"
 
 import argparse
@@ -897,6 +897,11 @@ class Handler(BaseHTTPRequestHandler):
         user, pw = str(data.get("UserName", "")), str(data.get("Password", ""))
         if not b.check_auth(user, pw):
             b.sim.log("login_fail", user, self.client_ip)
+            acc = b.accounts.get(user)
+            why = ("Benutzer unbekannt (bekannt: " + ", ".join(sorted(b.accounts)) + ")" if not acc else
+                   "Konto deaktiviert" if not acc.get("enabled", True) else "Passwort falsch")
+            print(f"  [login] {NAME[b.vendor]} {b.addr or b.host}: Anmeldung von „{user}“ abgelehnt: {why}",
+                  file=sys.stderr)
             return self.send(401, rf_error("Anmeldung fehlgeschlagen: Benutzername oder Passwort falsch."))
         tok = b.sim.new_session(user, self.client_ip)
         body = jbody({"@odata.id": f"/redfish/v1/SessionService/Sessions/{tok[:8]}", "Id": tok[:8],

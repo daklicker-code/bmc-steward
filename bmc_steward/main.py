@@ -1003,6 +1003,20 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 pass
 
     # ---------- UEFI/BIOS-Einstellungen ----------
+    def row_login(self, ip):
+        """(Benutzer, Passwort) für eine Adresse aus der Serverliste. Eine fertig umgestellte (grüne) Zeile kennt
+        nur noch den neuen Benutzer mit dem neuen Passwort (oben eingetragen); sonst gilt das Passwort der Zeile
+        mit dem Werksbenutzer (Benutzer leer = automatisch je Hersteller)."""
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(i18n.COLS))]
+            done = self.is_done(r)
+            if (vals[2] if done else vals[0]) == ip:
+                nu, np_ = self.new_user.text().strip(), self.new_pass.text()
+                if done and nu and np_:
+                    return nu, np_
+                return "", vals[1]
+        return "", ""
+
     def reachable_rows(self):
         """(Adresse, Passwort) je Zeile; fertig umgestellte (grüne) Zeilen sind jetzt unter der neuen IP erreichbar."""
         out = []

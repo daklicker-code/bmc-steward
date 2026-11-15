@@ -704,6 +704,26 @@ class TestNeuwareSerial(_WebBase):
         self.assertEqual(w.cell(0, 6), "")
 
 
+class TestLoginDiagnostics(_WebBase):
+    """Abgelehnte Anmeldungen stehen mit Grund im Protokoll des Testlabors."""
+
+    def test_reason_is_logged(self):
+        import contextlib
+        import io
+        b, port = self._start("lenovo")
+        b.add_account("klicker", "Geheim123!")
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            self._login(port, "klicker", "falsch")
+            self._login(port, "niemand", "x")
+            b.accounts["klicker"]["enabled"] = False
+            self._login(port, "klicker", "Geheim123!")
+        out = buf.getvalue()
+        self.assertIn("„klicker“ abgelehnt: Passwort falsch", out)
+        self.assertIn("„niemand“ abgelehnt: Benutzer unbekannt (bekannt: USERID, klicker)", out)
+        self.assertIn("„klicker“ abgelehnt: Konto deaktiviert", out)
+
+
 class TestSsdp(_WebBase):
     """SSDP-Erkennung: der virtuelle Server antwortet auf M-SEARCH mit seiner Redfish-Adresse."""
 
@@ -946,6 +966,44 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual([w.cell(0, c) for c in (0, 1, 2)], ["192.168.0.101", "Dell4711", "192.168.0.51"])
         self.assertEqual(w.cell(0, 6), "CN7K2", "Seriennummer geht mit in die Serverliste")
         w.vbmc_show_state([])
+
+    def _done_row(self):
+        w = self.w
+        w.table.setRowCount(0)
+        w.add_row(["10.0.0.5", "PASSW0RD", "10.0.0.50", "255.255.255.0", "", "h1", ""])
+        w.new_user.setText("klicker")
+        w.new_pass.setText("Geheim123!")
+        return w
+
+    def test_console_login_of_done_row_is_new_user_and_password(self):
+        w = self._done_row()
+        w.console_refresh_ips()
+        w.con_user.clear()
+        w.con_ip.setEditText("10.0.0.5")
+        w.console_pick_ip()
+        self.assertEqual((w.con_user.text(), w.con_pass.text()), ("", "PASSW0RD"), "offene Zeile: Werksdaten")
+        w.mark_done("10.0.0.5")
+        w.console_refresh_ips()
+        w.con_ip.setEditText("10.0.0.50")
+        w.console_pick_ip()
+        self.assertEqual((w.con_user.text(), w.con_pass.text()), ("klicker", "Geheim123!"))
+        w.mark_done("10.0.0.5")
+        w.table.item(0, 0).setText("10.0.0.7")                  # nicht mehr fertig: Vorgabe wieder weg
+        w.console_refresh_ips()
+        w.con_ip.setEditText("10.0.0.7")
+        w.console_pick_ip()
+        self.assertEqual(w.con_user.text(), "")
+
+    def test_console_replaces_stale_factory_password_for_new_user(self):
+        w = self._done_row()
+        w.mark_done("10.0.0.5")
+        w.console_refresh_ips()
+        w.con_ip.setEditText("10.0.0.50")
+        w.con_user.setText("klicker")                           # von Hand getippt, Passwort noch das alte der Zeile
+        w.con_pass.setText("PASSW0RD")
+        self.assertEqual(w.console_creds()[1:3], ("klicker", "Geheim123!"))
+        w.con_pass.setText("Eigenes1!")                         # bewusst anderes Passwort bleibt unangetastet
+        self.assertEqual(w.console_creds()[2], "Eigenes1!")
 
     def test_save_log(self):
         """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht

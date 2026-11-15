@@ -745,8 +745,17 @@ class ConsoleMixin:
             self.con_ip.setEditText(keep)
 
     def console_pick_ip(self, *_):
-        """Übernimmt das Passwort der Zeile aus „Neuware“ (nur im Feld, gespeichert wird nichts)."""
-        pw = self.con_pws.get(self.con_ip.currentText(), "") or self.cur_pass.text()
+        """Übernimmt Benutzer und Passwort der Zeile aus „Neuware“ (nur in die Felder, gespeichert wird nichts).
+        Fertig umgestellte Zeilen kennen nur noch den neuen Benutzer mit dem neuen Passwort."""
+        ip = self.con_ip.currentText()
+        user, pw = self.row_login(ip)
+        pw = pw or self.cur_pass.text()
+        if user:
+            self.con_user.setText(user)
+            self.con_user_auto = user
+        elif getattr(self, "con_user_auto", "") and self.con_user.text().strip() == self.con_user_auto:
+            self.con_user.clear()                       # frühere automatische Vorgabe nicht auf andere Geräte mitnehmen
+            self.con_user_auto = ""
         if pw:
             self.con_pass.setText(pw)
 
@@ -784,6 +793,10 @@ class ConsoleMixin:
         if not ip:
             self.console_set_status(T("Bitte eine Adresse eintragen."), True)
             return None
+        nu, np_ = self.row_login(ip)
+        if nu and self.con_user.text().strip() == nu and self.con_pass.text() != np_ \
+                and self.con_pass.text() == self.con_pws.get(ip, self.con_pass.text()):
+            self.con_pass.setText(np_)                  # neuer Benutzer, aber noch das Werks-Passwort der Zeile im Feld
         return ip, self.con_user.text().strip(), self.con_pass.text(), self.con_vendor.currentData() or ""
 
     def console_copy_pw(self):
