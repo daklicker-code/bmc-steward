@@ -204,6 +204,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.abort)
+        log_open = QPushButton(T("Protokoll öffnen …"))
+        log_open.setToolTip(T("Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\n"
+                              "Ersetzt die aktuelle Anzeige, ändert aber nichts an den Servern."))
+        log_open.clicked.connect(self.open_log)
         log_save = QPushButton(T("Protokoll speichern …"))
         log_save.setToolTip(T("Speichert das Protokoll als Textdatei, z. B. für die Dokumentation.\n"
                               "Passwörter stehen nicht darin."))
@@ -211,6 +215,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         actions = QHBoxLayout()
         actions.addWidget(self.dry)
         actions.addStretch()
+        actions.addWidget(log_open)
         actions.addWidget(log_save)
         actions.addWidget(self.stop)
         actions.addWidget(self.start)
@@ -2595,6 +2600,20 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_start.setText(T("Trockenlauf für alle Server der Liste") if dry
                                 else T("Scharf auf allen Servern der Liste setzen"))
         self.bios_start.setStyleSheet("" if dry else LIVE_CSS)
+
+    def open_log(self):
+        """Zeigt eine zuvor gespeicherte Protokoll-Textdatei an (nur Ansicht, ändert nichts an den Servern)."""
+        path, _ = QFileDialog.getOpenFileName(self, T("Protokoll öffnen"), str(HERE),
+                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht lesbar:\n{0}').format(e))
+            return
+        self.log.setPlainText(text)
+        self.status.setText(T("Protokoll geladen aus {0}").format(path))
 
     def save_log(self):
         """Schreibt das Protokoll des letzten Laufs in eine Textdatei (enthält keine Passwörter)."""
