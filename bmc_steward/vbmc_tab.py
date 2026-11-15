@@ -2,7 +2,7 @@
 startet, überwacht und stoppt sie. Drei Netz-Modi:
 
   loopback  ohne Root, nur dieser PC: Server auf 127.x:Port (wie bisher)
-  rz        Rechenzentrum: isolierter Staging-Switch bmclab0, DHCP über Reiter 1 oder feste Werks-IP
+  rz        Rechenzentrum: isolierter Staging-Switch bmclab0, DHCP über „DHCP-Server“ oder feste Werks-IP
   router    Zuhause: Server hängen an der Kabel-Netzwerkkarte, Adresse vom Router (z. B. FritzBox)
 
 Jeder Server ist einzeln einstellbar (Hersteller, Firmware-Generation, Werkszustand Netz, Werks-Login,
@@ -142,7 +142,7 @@ class VbmcTabMixin:
             for i in (1, 2):
                 self.vbmc_mode.model().item(i).setEnabled(False)
         self.vbmc_mode.setToolTip(T("Loopback: läuft ohne Root nur auf diesem PC, Adressen als IP:PORT.\n"
-                                    "Rechenzentrum: eigener virtueller Staging-Switch, DHCP über Reiter 1.\n"
+                                    "Rechenzentrum: eigener virtueller Staging-Switch, DHCP über „DHCP-Server“.\n"
                                     "Router: die Server hängen im echten LAN und erscheinen im Router.\n"
                                     "Rechenzentrum und Router brauchen beim Start einmal Root (pkexec)."))
         self.vbmc_mode.currentIndexChanged.connect(self.vbmc_mode_changed)
@@ -176,7 +176,7 @@ class VbmcTabMixin:
                                         "Karte im RZ. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, "
                                         "damit auch die neuen Adressen im Zielnetz erreichbar sind."))
         rf.addRow(T("Dieser PC"), self.vbmc_rz_addrs)
-        rinfo = QLabel(T("Nach dem Start ist im Reiter 1 die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
+        rinfo = QLabel(T("Nach dem Start ist in „DHCP-Server“ die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
                          "starten (wie am Staging-Switch). Server mit fester Werks-IP sind sofort da - zwei mit "
                          "derselben IP stören sich wie in echt."))
         rinfo.setWordWrap(True)
@@ -220,7 +220,7 @@ class VbmcTabMixin:
                 T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Rechenzentrum/Router."),
                 T("Feste Werks-IP (nur bei „Feste IP“)"),
                 T("Werksbenutzer, mit dem BMC-Steward sich anmeldet"),
-                T("Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in Reiter 2."),
+                T("Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in „Neuware“."),
                 T("Leer = Standardmodell der Generation"),
                 T("Bestimmt auch die MAC-Adresse: gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse."),
                 T("Nur Dell: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). "
@@ -290,7 +290,7 @@ class VbmcTabMixin:
         self.vbmc_run.verticalHeader().setVisible(False)
         rl.addWidget(self.vbmc_run)
         arow = QHBoxLayout()
-        self.vbmc_adopt_btn = QPushButton(T("In Serverliste übernehmen (Reiter 2)"))
+        self.vbmc_adopt_btn = QPushButton(T("In Serverliste übernehmen („Neuware“)"))
         self.vbmc_adopt_btn.setEnabled(False)
         self.vbmc_adopt_btn.setToolTip(T("Trägt die markierten (ohne Markierung: alle) laufenden Server mit ihrer "
                                          "aktuellen Adresse und ihrem Werks-Passwort in die Serverliste ein und "
@@ -823,13 +823,13 @@ class VbmcTabMixin:
             ready = sum(1 for s in servers if s.get("addr"))
             if ready < len(servers) and self.vbmc_run_mode == "rz":
                 self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse. Die übrigen warten "
-                                       "auf DHCP - im Reiter 1 auf „bmclab0“ den DHCP-Server starten.").format(
+                                       "auf DHCP - in „DHCP-Server“ auf „bmclab0“ den DHCP-Server starten.").format(
                                            ready, len(servers)))
             elif ready < len(servers):
                 self.vbmc_set_status(T("Flotte läuft: {0} von {1} Servern haben eine Adresse, die übrigen warten "
                                        "auf DHCP.").format(ready, len(servers)))
             else:
-                self.vbmc_set_status(T("Flotte läuft: {0} Server erreichbar. Übernehmen in Reiter 2 oder dort "
+                self.vbmc_set_status(T("Flotte läuft: {0} Server erreichbar. Übernehmen in „Neuware“ oder dort "
                                        "selbst eintragen.").format(ready))
 
     def vbmc_preselect_staging(self):
@@ -851,7 +851,7 @@ class VbmcTabMixin:
             self.vbmc_proc.write(f"link {int(idx)} {'up' if up else 'down'}\n".encode())
 
     def vbmc_adopt(self):
-        """Laufende virtuelle Server in die Serverliste (Reiter 2) eintragen."""
+        """Laufende virtuelle Server in die Serverliste („Neuware“) eintragen."""
         sel = sorted({i.row() for i in self.vbmc_run.selectedIndexes()})
         servers = [self.vbmc_servers[r] for r in sel if r < len(self.vbmc_servers)] or list(self.vbmc_servers)
         servers = [s for s in servers if s.get("addr")]

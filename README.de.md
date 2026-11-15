@@ -1,4 +1,4 @@
-<h1><img src="docs/logo.svg" width="44" align="center" alt="">&nbsp; BMC-Steward</h1>
+<h1><img src="docs/logo.svg" height="36" align="absmiddle" alt="">&nbsp;BMC-Steward</h1>
 
 *English version: [README.md](README.md)*
 
@@ -13,45 +13,47 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 ![BMC-Steward](docs/screenshot.png)
 
 <details>
-<summary>Screenshots aller Reiter</summary>
+<summary>Screenshots aller Seiten</summary>
 
 | | |
 |---|---|
-| **1 · DHCP-Server** | **2 · Server konfigurieren** (oben) |
+| **DHCP-Server** | **Neuware** (oben) |
 | ![DHCP-Server](docs/screenshot-1-dhcp.png) | |
-| **2b · Bestandsserver** (Verbindungstest) | **3 · UEFI-Einstellungen** |
+| **Bestandsserver** (Verbindungstest) | **UEFI-Einstellungen** |
 | ![Bestandsserver](docs/screenshot-2b-existing.png) | ![UEFI-Einstellungen](docs/screenshot-3-uefi.png) |
-| **4 · Dienste** | **5 · UEFI-Konsole** |
+| **Dienste** | **UEFI-Konsole** |
 | ![Dienste](docs/screenshot-4-services.png) | ![UEFI-Konsole](docs/screenshot-5-console.png) |
-| **6 · Hilfe** | |
+| **Hilfe** | |
 | ![Hilfe](docs/screenshot-6-help.png) | |
 
 </details>
 
 ## Was BMC-Steward kann
 
-Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nur, was man braucht.
+Seit Version 3.0 steht links statt der Reiterleiste ein **Menü**; die gewählte Seite öffnet sich rechts daneben. Man arbeitet die Punkte der Reihe nach ab oder nutzt nur, was man braucht. **DHCP-Server** steht als dunkelgelber Knopf an erster Stelle, weil man dort beginnt.
 
-| Reiter | Funktion |
+**Monitor links oben:** Solange keine Konsole verbunden ist, zeigt er dezentes Schwarz-Weiß-Rauschen. Mit einer Verbindung erscheint die Server-Konsole dort als Miniatur; ein Klick darauf öffnet sie direkt in voller Größe. Der Schalter unter dem Monitor wählt die Konsolen-Variante: **HTML5** (eingebettet), **Text** (SOL/SSH) oder **Browser**. Eine verdeckte Web-Ansicht kann nicht neu gezeichnet werden, dann bleibt im Monitor das letzte Bild als Standbild stehen.
+
+| Menüpunkt | Funktion |
 |---|---|
-| **1 · DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern per Klick in die Serverliste. |
-| **2 · Server konfigurieren** | Das Kernstück: legt den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf eine feste IP (Adresse, Subnetzmaske, Gateway) um. Server lassen sich nacheinander abarbeiten; fertige Zeilen werden grün und beim nächsten Lauf übersprungen. |
-| **↳ Handy-Scanner** | Öffnet aus Reiter 2 eine kameragestützte Eingabe: Das Handy (im selben Netz oder per USB-Tethering/Hotspot verbunden) scannt Barcode oder Text (OCR) vom Geräteaufkleber, der Wert landet direkt im Passwortfeld. Es wird kein Foto auf dem Handy gespeichert, die Verbindung läuft verschlüsselt über einen geheimen Link. |
-| **2b · Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in die Reiter 2–4 über. |
-| **3 · UEFI-Einstellungen** | Liest die tatsächlich vorhandenen UEFI/BIOS-Attribute von einem Referenzgerät und setzt gewünschte Werte auf allen Servern der Liste. Passwort-, TPM- und Löschattribute sind gesperrt. |
-| **4 · Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
-| **5 · Firmware** | Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar eines Referenzgeräts und spielt dann eine lokale Datei (Multipart-/HTTP-Push) oder eine Datei von einer URL (SimpleUpdate) auf alle Server der Liste – mit Live-Fortschritt und Verifikation. Trockenlauf ist Vorgabe; scharfe Läufe verlangen das Eintippen der Serverzahl. |
-| **6 · UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
-| **Testlabor** | Stellt eine Flotte virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Rechenzentrum** (virtueller Staging-Switch, DHCP aus Reiter 1) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
-| **7 · Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
+| **DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern per Klick in die Serverliste. |
+| **Neuware** | Das Kernstück für frische Server: legt den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf eine feste IP (Adresse, Subnetzmaske, Gateway) um. Server lassen sich nacheinander abarbeiten; fertige Zeilen werden grün und beim nächsten Lauf übersprungen. |
+| **↳ Handy-Scanner** | Öffnet aus „Neuware“ eine kameragestützte Eingabe: Das Handy (im selben Netz oder per USB-Tethering/Hotspot verbunden) scannt Barcode oder Text (OCR) vom Geräteaufkleber, der Wert landet direkt im Passwortfeld. Es wird kein Foto auf dem Handy gespeichert, die Verbindung läuft verschlüsselt über einen geheimen Link. |
+| **Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ über. |
+| **UEFI-Einstellungen** | Liest die tatsächlich vorhandenen UEFI/BIOS-Attribute von einem Referenzgerät und setzt gewünschte Werte auf allen Servern der Liste. Passwort-, TPM- und Löschattribute sind gesperrt. |
+| **Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
+| **Firmware** | Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar eines Referenzgeräts und spielt dann eine lokale Datei (Multipart-/HTTP-Push) oder eine Datei von einer URL (SimpleUpdate) auf alle Server der Liste – mit Live-Fortschritt und Verifikation. Trockenlauf ist Vorgabe; scharfe Läufe verlangen das Eintippen der Serverzahl. |
+| **UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
+| **Testlabor** | Stellt eine Flotte virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Rechenzentrum** (virtueller Staging-Switch, DHCP aus „DHCP-Server“) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
+| **Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
 
 Dazu kommt:
 
 - **Trockenlauf** zeigt jeden Aufruf, ohne etwas zu ändern (voreingestellt).
 - **Profile** merken sich wiederkehrende Einstellungen (nie Passwörter, nie die Serverliste).
 - **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
-- **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch.
-- **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus dem Testlabor-Reiter oder eigenständig über die Kommandozeile.
+- **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch (Auswahl links unten unter dem Menü).
+- **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus der Seite „Testlabor“ oder eigenständig über die Kommandozeile.
 - **Modular aufgebaut** (Paket `bmc_steward/`); entwickelt unter Linux, läuft aus dem Quellcode auch unter Windows (die fertige .exe ist archiviert und wird nicht mehr gepflegt).
 
 ## Schutz vor Fehlbedienung
@@ -152,14 +154,14 @@ python3 bmc-steward.py
 
 1. Den eigenen Rechner und die BMC-Ports der neuen Server an einen **getrennten Staging-Switch** hängen.
    Der Netzwerkkarte eine feste Adresse ohne Gateway geben, z. B. `192.168.0.1/24`.
-2. Reiter 1: DHCP-Server starten. Die BMCs holen sich eine Adresse und erscheinen in der Liste. Von dort
+2. „DHCP-Server“: DHCP-Server starten. Die BMCs holen sich eine Adresse und erscheinen in der Liste. Von dort
    in die Serverliste übernehmen.
-3. Reiter 2: Werks-Login, neuen Administrator und je Server neue IP, Subnetzmaske, Gateway und Hostname
+3. „Neuware“: Werks-Login, neuen Administrator und je Server neue IP, Subnetzmaske, Gateway und Hostname
    eintragen.
 4. Trockenlauf starten und das Protokoll lesen.
 5. Haken bei „Trockenlauf“ entfernen, scharf starten und bestätigen.
 
-Die eingebaute Hilfe (Reiter 6) erklärt jeden Schritt und die Unterschiede zwischen den Herstellern.
+Die eingebaute Hilfe (Menüpunkt „Hilfe“) erklärt jeden Schritt und die Unterschiede zwischen den Herstellern.
 
 ## CSV-Format
 
@@ -181,7 +183,7 @@ Die Passwort-Spalte darf fehlen. Semikolons gehen auch, ein Excel-Export lässt 
 | Supermicro | X12/X13 | nur gegen simulierte BMCs geprüft |
 | Lenovo | XCC2/XCC3 | nur gegen simulierte BMCs geprüft |
 
-Auch die UEFI-Einstellungen, die Verwaltungsdienste (Reiter 4) und der Windows-DHCP-Server sind bisher
+Auch die UEFI-Einstellungen, die Verwaltungsdienste („Dienste“) und der Windows-DHCP-Server sind bisher
 nur gegen Simulationen geprüft. Abdeckung der Dienste: NTP bei allen vier Herstellern; Syslog nur bei
 Dell und HPE (bei Supermicro/Lenovo übersprungen); LDAP mit Gruppen-Zuordnung bei allen vier; der
 HTTPS-Zertifikat-Import ist experimentell und je Hersteller verschieden (bei HPE muss der Schlüssel aus

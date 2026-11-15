@@ -22,11 +22,13 @@ from .branding import app_icon, logo_png_data_uri
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread, VendorProbeThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
+from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
 
 
+DHCP_YELLOW = "#c9a100"      # Menüpunkt „DHCP-Server“ als dunkelgelber Knopf
 MAIN = None         # das Hauptfenster; beim Sprachwechsel wird es neu aufgebaut
 
 
@@ -53,7 +55,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
         self.setWindowIcon(app_icon())
-        self.resize(900, 780)
+        self.resize(1200, 800)
         self.worker = None
         self.bios_worker = None
 
@@ -266,14 +268,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         pl.addLayout(self.build_profiles())
         pl.addLayout(top)
         pl.addWidget(split, 1)
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.build_dhcp(), T("1 · DHCP-Server"))
-        self.tabs.addTab(page, T("2 · Server konfigurieren"))
-        self.tabs.addTab(self.build_existing(), T("2b · Bestandsserver"))
-        self.tabs.addTab(self.build_bios(), T("3 · UEFI-Einstellungen"))
-        self.tabs.addTab(self.build_services(), T("4 · Dienste"))
-        self.tabs.addTab(self.build_firmware(), T("5 · Firmware"))
-        self.tabs.addTab(self.build_console(), T("6 · UEFI-Konsole"))
+        monitor_block = self.build_monitor()       # Monitor links oben; muss vor build_console existieren
+        self.tabs = SideNav()                      # Menü links, Seiten rechts (statt Reiterleiste)
+        self.tabs.addTab(self.build_dhcp(), T("DHCP-Server"), accent=DHCP_YELLOW)
+        self.tabs.addTab(page, T("Neuware"))
+        self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
+        self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
+        self.tabs.addTab(self.build_services(), T("Dienste"))
+        self.tabs.addTab(self.build_firmware(), T("Firmware"))
+        self.tabs.addTab(self.build_console(), T("UEFI-Konsole"))
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
@@ -281,17 +284,29 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         _logo_html = (f'<p align="center" style="margin-top:14px">'
                       f'<img src="{_logo}" width="64" height="64"></p>') if _logo else ""
         help_view.setHtml(HELP[i18n.LANG] + _logo_html + ABOUT)
-        self.tabs.addTab(help_view, T("7 · Hilfe"))
+        self.tabs.addTab(help_view, T("Hilfe"))
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)
         self.lang.setCurrentIndex(max(0, self.lang.findData(i18n.LANG)))
         self.lang.setToolTip("Sprache · Language · Langue · Sproch")
         self.lang.activated.connect(self.switch_language)
-        self.tabs.setCornerWidget(self.lang)
+
+        # Linke Spalte: Monitor mit Varianten-Schalter, darunter das Menü, ganz unten die Sprache
+        side = QWidget()
+        side.setFixedWidth(272)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(8)
+        sl.addWidget(monitor_block)
+        sl.addWidget(self.tabs.menu, 1)
+        sl.addWidget(self.lang)
+        body = QHBoxLayout()
+        body.addWidget(side)
+        body.addWidget(self.tabs.stack, 1)
 
         lay = QVBoxLayout(self)
-        lay.addWidget(self.tabs, 1)
+        lay.addLayout(body, 1)
         lay.addWidget(self.status)
 
         self.dirty = False
@@ -975,12 +990,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_pass = self._pw()
         ref_refresh = QPushButton("↻")
         ref_refresh.setFixedWidth(36)
-        ref_refresh.setToolTip(T("Adressen aus der Serverliste (Reiter 2) neu einlesen"))
+        ref_refresh.setToolTip(T("Adressen aus der Serverliste („Neuware“) neu einlesen"))
         ref_refresh.clicked.connect(self.bios_refresh_ips)
         self.bios_ref = QComboBox()
         self.bios_ref.setEditable(True)
         self.bios_ref.setToolTip(T("Adresse des Geräts, von dem die Attribute gelesen werden.\n"
-                                 "Vorschläge kommen aus der Serverliste in Reiter 2, es geht aber jede\n"
+                                 "Vorschläge kommen aus der Serverliste in „Neuware“, es geht aber jede\n"
                                  "erreichbare Adresse."))
         refrow = QHBoxLayout()
         refrow.addWidget(self.bios_ref, 1)
@@ -1030,7 +1045,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_dry.setChecked(True)
         self.bios_dry.setToolTip(T("Mit Haken wird nichts gesendet, das Protokoll zeigt nur den Ablauf.\n"
                                  "Ohne Haken werden die ausgefüllten „Neuer Wert“-Felder auf jedem Server\n"
-                                 "der Liste (Reiter 2) gesetzt, der das jeweilige Attribut tatsächlich hat."))
+                                 "der Liste („Neuware“) gesetzt, der das jeweilige Attribut tatsächlich hat."))
         self.bios_reboot = QCheckBox(T("Danach hart neu starten"))
         self.bios_reboot.setChecked(False)
         self.bios_reboot.setToolTip(T("UEFI-Einstellungen werden erst nach einem Neustart aktiv. Ohne Haken\n"
@@ -1041,7 +1056,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_start = QPushButton(T("Auf allen Servern der Liste setzen"))
         self.bios_start.setMinimumHeight(34)
         self.bios_start.setToolTip(T("Wendet jedes ausgefüllte „Neuer Wert“-Feld auf jede Zeile der\n"
-                                   "Serverliste (Reiter 2) an, der Reihe nach, mit Login wie oben."))
+                                   "Serverliste („Neuware“) an, der Reihe nach, mit Login wie oben."))
         self.bios_start.clicked.connect(self.bios_run)
         self.bios_stop = QPushButton(T("Abbrechen"))
         self.bios_stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
@@ -1150,14 +1165,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 out[name] = val
         return out
 
-    # ---------- UEFI-Vorlagen (eigener Bereich, getrennt von den Profilen in Reiter 2) ----------
+    # ---------- UEFI-Vorlagen (eigener Bereich, getrennt von den Profilen in „Neuware“) ----------
     def bios_build_profiles(self):
         self.bios_profiles = {}
         self.bios_profile = QComboBox()
         self.bios_profile.setMinimumWidth(240)
         self.bios_profile.setToolTip(
             T("Eine Vorlage merkt sich Hersteller und die ausgefüllten „Neuer Wert“-Felder (Attribut ->\n"
-            "Wert). Eigener Bereich, getrennt von den Profilen in Reiter 2 und ohne Passwörter."))
+            "Wert). Eigener Bereich, getrennt von den Profilen in „Neuware“ und ohne Passwörter."))
         self.bios_profile.activated.connect(self.bios_profile_selected)
         bar = QHBoxLayout()
         lab = QLabel(T("UEFI-Vorlage"))
@@ -1287,7 +1302,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             return
         rows = [(ip, pw or self.bios_pass.text()) for ip, pw in self.reachable_rows()]
         if not rows:
-            QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Die Serverliste (Reiter 2) ist leer."))
+            QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.bios_dry.isChecked()
         reboot = self.bios_reboot.isChecked()
@@ -1829,7 +1844,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         rem = QPushButton(T("– Entfernen"))
         rem.clicked.connect(self.ex_remove_rows)
         pull = QPushButton(T("Aus Serverliste holen"))
-        pull.setToolTip(T("Übernimmt Adressen und Passwörter aus Reiter 2 (Aktuelle IP, Passwort)."))
+        pull.setToolTip(T("Übernimmt Adressen und Passwörter aus „Neuware“ (Aktuelle IP, Passwort)."))
         pull.clicked.connect(self.ex_pull)
         btns = QHBoxLayout()
         for b in (add, rem, pull):
@@ -1850,9 +1865,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.ex_stop = QPushButton(T("Abbrechen"))
         self.ex_stop.setEnabled(False)
         self.ex_stop.clicked.connect(self.ex_abort)
-        self.ex_take = QPushButton(T("In Reiter 2–4 übernehmen"))
-        self.ex_take.setToolTip(T("Übernimmt alle erfolgreich getesteten Server in die Serverliste (Reiter 2) und trägt\n"
-                                  "den Benutzer in die Reiter 2, 3 und 4 ein. Danach dort die Einstellungen wählen und starten."))
+        self.ex_take = QPushButton(T("Übernehmen in Neuware, UEFI, Dienste"))
+        self.ex_take.setToolTip(T("Übernimmt alle erfolgreich getesteten Server in die Serverliste („Neuware“) und trägt\n"
+                                  "den Benutzer in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ ein. Danach dort die Einstellungen wählen und starten."))
         self.ex_take.clicked.connect(self.ex_transfer)
         self.ex_status = QLabel(T("Bereit"))
         act = QHBoxLayout()
@@ -1865,7 +1880,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.ex_log.setReadOnly(True)
         self.ex_log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         info = QLabel(T("Für Server, die schon konfiguriert sind: erst die Verbindung prüfen, dann die erfolgreichen "
-                        "Server in die Reiter 2–4 übernehmen. Das Tool speichert nichts."))
+                        "Server in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ übernehmen. Das Tool speichert nichts."))
         info.setWordWrap(True)
         page = QWidget()
         pl = QVBoxLayout(page)
@@ -2047,15 +2062,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             w.setText(user)
         self.update_count()
         self.touch()
-        msg = T('{0} Server in die Serverliste (Reiter 2) übernommen, Benutzer „{1}“ eingetragen.').format(len(take), user)
+        msg = T('{0} Server in die Serverliste („Neuware“) übernommen, Benutzer „{1}“ eingetragen.').format(len(take), user)
         if left:
             msg += "\n\n" + T('{0} getestete Server blieben draußen: anderer Benutzer als „{1}“ oder Port ungleich 443. '
-                              'Die Reiter 2 bis 4 kennen nur einen Benutzer für alle Server; diese Server in einem zweiten Durchgang übernehmen.').format(left, user)
+                              '„Neuware“, „UEFI-Einstellungen“ und „Dienste“ kennen nur einen Benutzer für alle Server; diese Server in einem zweiten Durchgang übernehmen.').format(left, user)
         QMessageBox.information(self, T("Bestandsserver"), msg)
         self.tabs.setCurrentIndex(1)
 
     def ex_drop_main(self):
-        """Leere Zeilen der Serverliste (Reiter 2) entfernen, damit die übernommenen Server oben stehen."""
+        """Leere Zeilen der Serverliste („Neuware“) entfernen, damit die übernommenen Server oben stehen."""
         for r in range(self.table.rowCount() - 1, -1, -1):
             if not any(self.cell(r, c) for c in range(len(i18n.COLS))):
                 self.table.removeRow(r)
@@ -2073,7 +2088,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.svc_user.setPlaceholderText(T("automatisch je Hersteller"))
         self.svc_pass = self._pw()
         box_login = QGroupBox(T("Login (Werksbenutzer, gilt für alle Server der Liste)"))
-        box_login.setToolTip(T("Die Dienste werden auf allen Servern der Serverliste (Reiter 2) eingerichtet.\n"
+        box_login.setToolTip(T("Die Dienste werden auf allen Servern der Serverliste („Neuware“) eingerichtet.\n"
                                "Fertige (grüne) Server werden unter ihrer neuen Adresse angesprochen.\n"
                                "Angemeldet wird mit dem Werksbenutzer; der Werks-Administrator bleibt bestehen."))
         f = QFormLayout(box_login)
@@ -2198,7 +2213,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         page = QWidget()
         pl = QVBoxLayout(page)
         hint = QLabel("<small>" + T("Nur angehakte Abschnitte werden angewendet. Alles wird auf den Servern der "
-                                    "Liste in Reiter 2 gesetzt, grüne unter ihrer neuen Adresse.") + "</small>")
+                                    "Liste in „Neuware“ gesetzt, grüne unter ihrer neuen Adresse.") + "</small>")
         hint.setWordWrap(True)
         pl.addWidget(hint)
         split = QSplitter(Qt.Orientation.Vertical)
@@ -2296,7 +2311,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             return
         rows = [(ip, pw or self.svc_pass.text()) for ip, pw in self.reachable_rows()]
         if not rows:
-            QMessageBox.warning(self, T("Dienste"), T("Die Serverliste (Reiter 2) ist leer."))
+            QMessageBox.warning(self, T("Dienste"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.svc_dry.isChecked()
         names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat")}
