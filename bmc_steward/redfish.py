@@ -674,12 +674,19 @@ class Engine(RedfishClient):
         # Kontrolle: neue IP mit neuem Benutzer erreichbar? (iLO braucht nach dem Neustart 1-3 Minuten)
         if not self.dry and done and not self.stopped():
             self.log("")
-            self.log(T('Kontrolle der neuen Adressen (bis zu {0}s)...').format(self.verify_wait))
-            pending, end = list(done), time.monotonic() + self.verify_wait
+            self.log(T('Kontrolle der neuen Adressen (bis zu {0}s)... Die Liste bleibt bis dahin '
+                      'gesperrt; „Abbrechen“ beendet die Kontrolle vorzeitig.').format(self.verify_wait))
+            pending, start, end = list(done), time.monotonic(), time.monotonic() + self.verify_wait
             self.pause(min(self.verify_wait, 20))
             while pending and not self.stopped():
-                still = []
+                still, out_of_time = [], False
                 for ip, path in pending:
+                    # Zeitbudget je Server prüfen, nicht erst nach der ganzen Runde: ein einzelner
+                    # verzögert antwortender Server soll die anderen nicht über die Wartezeit hinaus
+                    # verzögern (sonst wirkt der Lauf "eingefroren", obwohl er nur sehr lange braucht).
+                    if out_of_time:
+                        still.append((ip, path))
+                        continue
                     if self.check_login(ip, path):
                         info = self.identity(ip) if path != "ribcl" else ""
                         self.log(T('  OK      {0}').format(ip) + (f"   {info}" if info else ""), "ok")
@@ -687,9 +694,13 @@ class Engine(RedfishClient):
                             inventory.append(f"{ip}   {info}")
                     else:
                         still.append((ip, path))
+                    if time.monotonic() >= end:
+                        out_of_time = True
                 pending = still
-                if not pending or time.monotonic() >= end:
+                if not pending or out_of_time or self.stopped():
                     break
+                self.log(T('  ... noch {0} von {1} Server(n) nicht erreichbar, warte weiter ({2}s vergangen)')
+                         .format(len(pending), len(done), int(time.monotonic() - start)))
                 self.pause(10)
             for ip, _ in pending:
                 self.log(T('  FEHLT   {0}').format(ip), "err")

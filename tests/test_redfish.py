@@ -6,10 +6,11 @@ Escaping könnte ein Passwort wie  pw"/><DELETE_USER .../>  fremdes XML einschle
 """
 import unittest
 import xml.etree.ElementTree as ET
+from unittest.mock import patch
 from tests._support import qapp
 
 qapp()
-from bmc_steward.redfish import xq, scrub, RedfishClient
+from bmc_steward.redfish import xq, scrub, RedfishClient, Engine
 
 
 class TestXmlQuote(unittest.TestCase):
@@ -80,6 +81,75 @@ class TestRibclDryRunMasking(unittest.TestCase):
         # Das Anmeldepasswort steht gar nicht im protokollierten Fragment
         _, log = self._log_of('<GET_FW_VERSION/>', pw="LOGINPW")
         self.assertNotIn("LOGINPW", log)
+
+
+class TestVerifyWait(unittest.TestCase):
+    """Die Kontrolle der neuen Adressen am Ende von Engine.run() (Server-konfigurieren-Tab) darf einen
+    einzelnen langsam/nicht antwortenden Server nicht die anderen über das Zeitbudget hinaus mit sich
+    ziehen lassen (sonst wirkt der Lauf eingefroren), und muss den Fortschritt protokollieren statt
+    über die ganze Wartezeit kein einziges Protokoll-Zeichen auszugeben."""
+
+    def _engine(self, verify_wait=30):
+        self.logs = []
+        eng = Engine(rows=[], cur_user="root", cur_pass="pw", new_user="admin", new_pass="secret",
+                     dry=False, log=lambda t, k="": self.logs.append((t, k)), verify_wait=verify_wait)
+        eng.pause = lambda seconds: None     # keine echten Sleeps im Test
+        return eng
+
+    def _run_with_fake_dell_rows(self, eng, addresses):
+        """Lässt run() so viele (gemockte, immer erfolgreiche) Dell-Server durchlaufen, wie `addresses`
+        neue IPs nennt, ohne echtes Netzwerk - damit ausschließlich die Kontroll-/Wartephase danach
+        unter echten Bedingungen (echter run()-Code, nicht nachgebaut) getestet wird."""
+        eng.rows = [(f"10.0.0.{i}", "pw", addr, "255.255.255.0", "10.0.0.1", f"host{i}")
+                    for i, addr in enumerate(addresses, start=1)]
+        eng.force_vendor = "dell"
+        eng.in_use = lambda ip: False
+        eng.tls_mode = lambda ip, timeout=10: "modern"
+
+        def fake_setup_dell(cur_ip, pw, new_ip, mask, gw, host):
+            eng.verify_path = "/redfish/v1/Managers/1"
+            return True
+        eng.setup_dell = fake_setup_dell
+
+    def test_gives_up_on_a_server_once_the_budget_is_spent_without_checking_the_rest(self):
+        """Drei Server bleiben in der Kontrollphase unerreichbar; das Zeitbudget läuft bereits beim
+        zweiten aus. Der dritte darf dann gar nicht mehr geprüft werden (sonst zieht ein einzelner
+        langsamer/nicht antwortender Server die anderen über die Wartezeit hinaus mit sich - genau das,
+        was sich wie ein Einfrieren des Laufs anfühlt)."""
+        eng = self._engine(verify_wait=100)
+        self._run_with_fake_dell_rows(eng, ["1.2.3.4", "1.2.3.5", "1.2.3.6"])
+        calls = []
+
+        def fake_check_login(ip, path):
+            calls.append(ip)
+            return False
+        eng.check_login = fake_check_login
+        # Kontrollphase: start, end, Budget-Check nach Server 1 (noch ok), Budget-Check nach
+        # Server 2 (aufgebraucht) - Server 3 wird dann gar nicht mehr geprüft.
+        with patch("bmc_steward.redfish.time.monotonic", side_effect=[0, 0, 10, 150]):
+            good = eng.run()
+        self.assertFalse(good)
+        self.assertEqual(calls, ["1.2.3.4", "1.2.3.5"])
+        texts = [t for t, _ in self.logs]
+        for addr in ("1.2.3.4", "1.2.3.5", "1.2.3.6"):
+            self.assertTrue(any("FEHLT" in t and addr in t for t in texts), texts)
+
+    def test_logs_progress_between_rounds_and_fehlt_lines_at_the_end(self):
+        """Voller run()-Durchlauf mit einem (gemockten) erfolgreich umgestellten Dell-Server, der in
+        der Kontrollphase danach dauerhaft nicht erreichbar bleibt: Zwischen den Runden muss ein
+        Fortschritts-Protokoll erscheinen (nicht einfach 1000s Stille) und am Ende „FEHLT“ stehen."""
+        eng = self._engine(verify_wait=100)
+        self._run_with_fake_dell_rows(eng, ["1.2.3.5"])
+        eng.check_login = lambda ip, path: False     # bleibt die ganze Kontrollzeit unerreichbar
+
+        # Aufrufreihenfolge in der Kontrollphase: start, end(=start+verify_wait), Budget-Check Runde 1
+        # (noch Zeit), Fortschritts-Log, Budget-Check Runde 2 (Budget aufgebraucht -> Abbruch).
+        with patch("bmc_steward.redfish.time.monotonic", side_effect=[0, 0, 10, 20, 150]):
+            good = eng.run()
+        self.assertFalse(good)
+        texts = [t for t, _ in self.logs]
+        self.assertTrue(any("vergangen" in t for t in texts), texts)
+        self.assertTrue(any("FEHLT" in t and "1.2.3.5" in t for t in texts), texts)
 
 
 if __name__ == "__main__":
