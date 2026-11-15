@@ -17,7 +17,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QWidget
 from bmc_steward.main import Window
-from bmc_steward.monitor import NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch
+from bmc_steward.monitor import NOISE_H, NOISE_W, MonitorWidget, SegmentSwitch, logo_stages
 from bmc_steward.sidenav import ACCENT_ROLE, SideNav
 
 
@@ -135,6 +135,38 @@ class TestMonitorWidget(unittest.TestCase):
         QTest.mouseClick(self.m, Qt.MouseButton.LeftButton)
         QTest.keyClick(self.m, Qt.Key.Key_Return)
         self.assertEqual(len(hits), 2)
+
+    def test_logo_builds_up_and_check_mark_comes_last(self):
+        self.assertTrue(all(v == 0 for v in logo_stages(0.0).values()))
+        self.assertTrue(all(v == 1 for v in logo_stages(1.0).values()))
+        for i in range(0, 90):                              # bis 89 % ist das Häkchen noch nicht da ...
+            self.assertEqual(logo_stages(i / 100)["check"], 0)
+        for i in range(90, 101):                            # ... und wenn es kommt, steht der Rest schon
+            st = logo_stages(i / 100)
+            self.assertEqual((st["shield"], st["chip"], st["pins"]), (1, 1, 1))
+        prev = 0
+        for i in range(0, 101):                             # Schild baut sich gleichmäßig auf, nie rückwärts
+            cur = logo_stages(i / 100)["shield"]
+            self.assertGreaterEqual(cur, prev)
+            prev = cur
+
+    def test_logo_is_painted_at_every_stage(self):
+        for t in (0.0, 0.2, 0.5, 0.8, 0.95, 1.0):
+            self.m._logo_progress = lambda t=t: t
+            self.assertFalse(self.m.grab().isNull())
+
+    def test_logo_clock_runs_only_while_noise_is_shown(self):
+        self.m._tick()
+        self.assertTrue(self.m._logo_clock.isValid())
+        console = QWidget()
+        console.resize(300, 200)
+        self.source = (console, True, "x")
+        self.m._tick()
+        self.assertFalse(self.m._logo_clock.isValid())      # Verbindung: Logo weg, Miniatur da
+        self.source = None
+        self.m._tick()
+        self.assertTrue(self.m._logo_clock.isValid())       # wieder Rauschen: Aufbau beginnt von vorn
+        self.assertLess(self.m._logo_progress(), 0.5)
 
     def test_timer_only_runs_while_visible(self):
         self.m.show()
