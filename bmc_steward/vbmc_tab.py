@@ -43,7 +43,7 @@ class VbmcTabMixin:
         vrow = QHBoxLayout()
         for key, label in VBMC_VENDORS:
             cb = QCheckBox(label)
-            cb.setChecked(key in ("dell", "hpe", "lenovo", "smc"))
+            cb.setChecked(False)
             self.vbmc_checks[key] = cb
             vrow.addWidget(cb)
         vrow.addStretch()
