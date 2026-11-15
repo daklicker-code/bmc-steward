@@ -106,9 +106,18 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                      T("Passwort des neuen Administrators, auf allen Geräten gleich.\n"
                      "Die Geräte prüfen ihre eigenen Regeln, iLO verlangt z. B. mindestens 8 Zeichen.\n"
                      "Vor dem scharfen Lauf über das Auge kontrollieren."))
-        self.tip_row(f, T("Passwort wiederholen"), self._with_eye(self.new_pass2),
-                     T("Das Passwort zur Sicherheit ein zweites Mal eingeben.\n"
-                       "Stimmen die beiden Eingaben nicht überein, startet kein Lauf."))
+        self.new_pass2_chk = QCheckBox(T("Passwort wiederholen"))
+        self.new_pass2_chk.setToolTip(
+            T("Zur Sicherheit das Passwort ein zweites Mal eingeben.\n"
+              "Solange nicht angehakt, ist das Feld deaktiviert und wird nicht geprüft.\n"
+              "Angehakt: Stimmen die beiden Eingaben nicht überein, startet kein Lauf."))
+        self.new_pass2_box = self._with_eye(self.new_pass2)
+        self.new_pass2_box.setEnabled(False)
+        self.new_pass2_box.setToolTip(self.new_pass2_chk.toolTip())
+        self.new_pass2_chk.toggled.connect(self.new_pass2_box.setEnabled)
+        self.new_pass2_chk.toggled.connect(self.touch)
+        self.new_pass2_chk.toggled.connect(self.update_missing)
+        f.addRow(self.new_pass2_chk, self.new_pass2_box)
         self.tip_row(f, T("User-Slot (nur Dell)"), self.slot,
                      T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
                      "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
@@ -834,7 +843,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                     "höchstens 16 Zeichen."))
         if len(self.new_pass.text()) < 8:
             return T("Neues Passwort: mindestens 8 Zeichen. Kürzere lehnen die meisten BMCs ab.")
-        if self.new_pass.text() != self.new_pass2.text():
+        if self.new_pass2_chk.isChecked() and self.new_pass.text() != self.new_pass2.text():
             return T("Neues Passwort: Die beiden Eingaben stimmen nicht überein.")
         if not self.rows():
             return T("Die Serverliste ist leer.")
@@ -2486,6 +2495,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "profile": self.current_profile(), "vendor": self.vendor.currentData() or "",
             "slot": self.slot.value(), "iface": (self.iface.currentData() or [None])[0],
             "texts": {k: getattr(self, k).text() for k in self.STATE_FIELDS},
+            "new_pass2_chk": self.new_pass2_chk.isChecked(),
             "rows": [([self.cell(r, c) for c in range(len(i18n.COLS))], self.is_done(r))
                      for r in range(self.table.rowCount())],
             "bios_profile": self.bios_current_profile(), "bios_vendor": self.bios_vendor.currentData() or "",
@@ -2504,6 +2514,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 self.iface.setCurrentIndex(i)
         for key, text in s["texts"].items():
             getattr(self, key).setText(text)
+        self.new_pass2_chk.setChecked(s.get("new_pass2_chk", False))
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for vals, done in s["rows"]:
@@ -2558,7 +2569,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         marks = {
             self.new_user: "miss" if not user else "" if USER_RE.match(user) else "err",
             self.new_pass: "miss" if not pw else "" if len(pw) >= 8 else "err",
-            self.new_pass2: "miss" if not pw2 else "" if pw2 == pw else "err",
+            self.new_pass2: (("miss" if not pw2 else "" if pw2 == pw else "err")
+                              if self.new_pass2_chk.isChecked() else ""),
             self.cur_pass: "miss" if not self.cur_pass.text() and any(not v[1] for v in open_rows) else "",
         }
         for w, mark in marks.items():
