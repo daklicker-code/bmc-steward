@@ -1543,7 +1543,7 @@ class Fleet:
                     # binden. Wie bei einem echten BMC darf eine abgelehnte/fehlgeschlagene Adressänderung
                     # die bestehende Erreichbarkeit nicht mit sich reißen: die alte Adresse bleibt aktiv.
                     hint = (" - ohne Netzlabor gehört nur 127.x diesem Rechner; für {0} das Testlabor im "
-                            "Modus „Rechenzentrum“ oder „Zuhause/Router“ starten.".format(host)
+                            "Modus „Konfigraum“ oder „Zuhause/Router“ starten.".format(host)
                             if not host.startswith("127.") else "")
                     bmc.host, bmc.port, bmc.ipv4 = old_host, old_port, old_ipv4
                     try:
