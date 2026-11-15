@@ -30,9 +30,11 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 
 ## What BMC-Steward does
 
-Everything is organised into tabs; work through them in order or use only what you need.
+Since version 3.0 the tab bar is replaced by a **menu** on the left; the selected page opens next to it. Work through the entries in order or use only what you need. (The texts still say “tab 2” etc., meaning the menu entry with that number.)
 
-| Tab | What it does |
+**Monitor at the top left:** while no console is connected it shows subtle black-and-white noise. Once connected, the server console appears there as a thumbnail; a click on it opens it full size right away. The switch below the monitor picks the console variant: **HTML5** (embedded), **Text** (SOL/SSH) or **Browser**. A hidden web view cannot be redrawn, so the monitor then keeps the last picture as a still frame.
+
+| Menu entry | What it does |
 |---|---|
 | **1 · DHCP server** | Hands out addresses to fresh BMCs on a separate staging network so the tool can reach them at all. dnsmasq on Linux, built-in on Windows. Found devices move into the server list with one click. |
 | **2 · Configure servers** | The core: creates the new administrator, sets the hostname and switches the BMC to a static IP (address, subnet mask, gateway). Servers can be done one after another; finished rows turn green and are skipped on the next run. |
@@ -50,7 +52,7 @@ On top of that:
 - **Dry run** shows every call without changing anything (the default).
 - **Profiles** remember recurring settings (never passwords, never the server list).
 - **CSV import/export** of the server list, straight from an Excel export too.
-- **Multilingual:** German, English, French, Swiss German.
+- **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
 - **Virtual test fleet** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the Test lab tab or standalone from the command line.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 

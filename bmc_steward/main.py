@@ -22,6 +22,7 @@ from .branding import app_icon, logo_png_data_uri
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread, VendorProbeThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
+from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
@@ -53,7 +54,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
         self.setWindowIcon(app_icon())
-        self.resize(900, 780)
+        self.resize(1200, 800)
         self.worker = None
         self.bios_worker = None
 
@@ -266,7 +267,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         pl.addLayout(self.build_profiles())
         pl.addLayout(top)
         pl.addWidget(split, 1)
-        self.tabs = QTabWidget()
+        monitor_block = self.build_monitor()       # Monitor links oben; muss vor build_console existieren
+        self.tabs = SideNav()                      # Menü links, Seiten rechts (statt Reiterleiste)
         self.tabs.addTab(self.build_dhcp(), T("1 · DHCP-Server"))
         self.tabs.addTab(page, T("2 · Server konfigurieren"))
         self.tabs.addTab(self.build_existing(), T("2b · Bestandsserver"))
@@ -288,10 +290,22 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.lang.setCurrentIndex(max(0, self.lang.findData(i18n.LANG)))
         self.lang.setToolTip("Sprache · Language · Langue · Sproch")
         self.lang.activated.connect(self.switch_language)
-        self.tabs.setCornerWidget(self.lang)
+
+        # Linke Spalte: Monitor mit Varianten-Schalter, darunter das Menü, ganz unten die Sprache
+        side = QWidget()
+        side.setFixedWidth(272)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(8)
+        sl.addWidget(monitor_block)
+        sl.addWidget(self.tabs.menu, 1)
+        sl.addWidget(self.lang)
+        body = QHBoxLayout()
+        body.addWidget(side)
+        body.addWidget(self.tabs.stack, 1)
 
         lay = QVBoxLayout(self)
-        lay.addWidget(self.tabs, 1)
+        lay.addLayout(body, 1)
         lay.addWidget(self.status)
 
         self.dirty = False

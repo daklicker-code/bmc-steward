@@ -30,9 +30,11 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 
 ## Was BMC-Steward kann
 
-Alles ist in Reiter gegliedert; man arbeitet sie der Reihe nach ab oder nutzt nur, was man braucht.
+Seit Version 3.0 steht links statt der Reiterleiste ein **Menü**; die gewählte Seite öffnet sich rechts daneben. Man arbeitet die Punkte der Reihe nach ab oder nutzt nur, was man braucht. (Die Texte sprechen weiterhin von „Reiter 2“ usw. und meinen damit den Menüpunkt mit dieser Nummer.)
 
-| Reiter | Funktion |
+**Monitor links oben:** Solange keine Konsole verbunden ist, zeigt er dezentes Schwarz-Weiß-Rauschen. Mit einer Verbindung erscheint die Server-Konsole dort als Miniatur; ein Klick darauf öffnet sie direkt in voller Größe. Der Schalter unter dem Monitor wählt die Konsolen-Variante: **HTML5** (eingebettet), **Text** (SOL/SSH) oder **Browser**. Eine verdeckte Web-Ansicht kann nicht neu gezeichnet werden, dann bleibt im Monitor das letzte Bild als Standbild stehen.
+
+| Menüpunkt | Funktion |
 |---|---|
 | **1 · DHCP-Server** | Vergibt in einem getrennten Staging-Netz Adressen an frische BMCs, damit das Tool sie überhaupt erreicht. Unter Linux über dnsmasq, unter Windows eingebaut. Gefundene Geräte wandern per Klick in die Serverliste. |
 | **2 · Server konfigurieren** | Das Kernstück: legt den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf eine feste IP (Adresse, Subnetzmaske, Gateway) um. Server lassen sich nacheinander abarbeiten; fertige Zeilen werden grün und beim nächsten Lauf übersprungen. |
@@ -50,7 +52,7 @@ Dazu kommt:
 - **Trockenlauf** zeigt jeden Aufruf, ohne etwas zu ändern (voreingestellt).
 - **Profile** merken sich wiederkehrende Einstellungen (nie Passwörter, nie die Serverliste).
 - **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
-- **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch.
+- **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch (Auswahl links unten unter dem Menü).
 - **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus dem Testlabor-Reiter oder eigenständig über die Kommandozeile.
 - **Modular aufgebaut** (Paket `bmc_steward/`); entwickelt unter Linux, läuft aus dem Quellcode auch unter Windows (die fertige .exe ist archiviert und wird nicht mehr gepflegt).
 

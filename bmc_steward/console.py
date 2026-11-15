@@ -14,6 +14,7 @@ from . import i18n
 from .i18n import T
 from .core import WINDOWS
 from .redfish import RedfishClient
+from .monitor import MonitorWidget, SegmentSwitch
 
 
 
@@ -473,7 +474,58 @@ if WEBENGINE:
 
 
 class ConsoleMixin:
-    """Reiter „UEFI-Konsole“ des Hauptfensters."""
+    """Seite „UEFI-Konsole“ des Hauptfensters samt Monitor und Varianten-Schalter links oben."""
+
+    def build_monitor(self):
+        """Monitor mit Schalter für die Konsolen-Variante; steht im Hauptfenster links oben über dem Menü.
+
+        Der Monitor zeigt Rauschen, solange nichts verbunden ist, sonst die Konsole als Miniatur; ein
+        Klick öffnet sie in voller Größe. Der Schalter spiegelt die Auswahl „Anzeige“ der Konsolenseite
+        (gleiche Reihenfolge: HTML5, Text, Browser) und wird in build_console damit verbunden."""
+        self.monitor = MonitorWidget(
+            self.console_source,
+            T("Kein Signal. Ein Klick öffnet die UEFI-Konsole, dort lässt sich eine Verbindung herstellen."),
+            T("Live-Vorschau der Server-Konsole. Ein Klick öffnet sie in voller Größe."))
+        self.monitor.clicked.connect(self.console_enter)
+        lack = " " + T("Benötigtes Paket fehlt, siehe Hinweis auf der Seite „UEFI-Konsole“.")
+        self.con_switch = SegmentSwitch([
+            ("HTML5", T("Bild: eingebettete HTML5-Konsole des BMC, Maus und Tastatur wie am Original.")
+             + (lack if not WEBENGINE else ""), not WEBENGINE),
+            (T("Text"), T("Text: serielle Konsole über IPMI-SOL oder SSH. Nur wenn im UEFI „Console Redirection“ aktiv ist.")
+             + (lack if not pyte else ""), not pyte),
+            ("Browser", T("Bild: BMC-Seite im Standardbrowser öffnen, ohne Auto-Anmeldung."), False)])
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        lay.addWidget(self.monitor)
+        lay.addWidget(self.con_switch)
+        return box
+
+    def console_source(self):
+        """Für den Monitor: (Widget, auch verdeckt abgreifbar, Beschriftung) der laufenden Konsole oder None."""
+        ip = self.con_ip.currentText().strip()
+        if self.con_serial.proc:
+            return self.term, True, ip             # normales Widget: lässt sich auch unsichtbar abbilden
+        if self.con_web_tabs and self.con_web_tabs.count():
+            view = self.con_web_tabs.currentWidget()
+            if view is not None:
+                return view, False, ip             # Web-Ansicht zeichnet nur, solange sie sichtbar ist
+        return None
+
+    def console_enter(self):
+        """Klick auf den Monitor: zur Konsolenseite. Steht eine Verbindung, direkt in die Vollansicht der
+        Konsole (Einstellungen ausgeblendet), sonst mit den Einstellungen, um eine Verbindung herzustellen."""
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.con_page))
+        src = self.console_source()
+        self.console_panel_show(src is None)
+        if src is not None:
+            src[0].setFocus()
+
+    def console_panel_show(self, show):
+        """Blendet die Verbindungseinstellungen ein oder aus, damit die Konsole den ganzen Platz bekommt."""
+        self.con_panel.setVisible(show)
+        self.con_fold.setText(T("▲ Einstellungen ausblenden") if show else T("▼ Einstellungen einblenden"))
 
     def build_console(self):
         self.con_vendor = QComboBox()
@@ -584,12 +636,16 @@ class ConsoleMixin:
         self.con_setup.clicked.connect(self.console_boot_setup)
         self.con_status = QLabel()
         self.con_status.setWordWrap(True)
+        self.con_fold = QPushButton()
+        self.con_fold.setToolTip(T("Blendet die Verbindungsangaben aus, damit die Konsole den ganzen Platz bekommt."))
+        self.con_fold.clicked.connect(lambda: self.console_panel_show(self.con_panel.isHidden()))
         btns = QHBoxLayout()
         btns.addWidget(self.con_connect)
         btns.addWidget(self.con_disconnect)
         btns.addWidget(self.con_start)
         btns.addStretch()
         btns.addWidget(self.con_setup)
+        btns.addWidget(self.con_fold)
 
         # Tastenleiste für die Textkonsole (F-Tasten fangen Desktop und Fenstermanager manchmal ab)
         self.con_keys = QWidget()
@@ -641,9 +697,14 @@ class ConsoleMixin:
                         "alles Weitere geschieht in der UEFI-Oberfläche selbst."))
         warn.setWordWrap(True)
         warn.setStyleSheet("color: #c9302c;")
+        # Verbindungsangaben und Paketliste lassen sich einklappen; Knöpfe, Status und Warnung bleiben sichtbar
+        self.con_panel = QWidget()
+        pan = QVBoxLayout(self.con_panel)
+        pan.setContentsMargins(0, 0, 0, 0)
+        pan.addWidget(box)
+        pan.addWidget(pk)
         lay = QVBoxLayout()
-        lay.addWidget(box)
-        lay.addWidget(pk)
+        lay.addWidget(self.con_panel)
         lay.addLayout(btns)
         lay.addWidget(self.con_status)
         lay.addWidget(warn)
@@ -652,6 +713,9 @@ class ConsoleMixin:
         lay.addWidget(self.con_stack, 1)
         page = QWidget()
         page.setLayout(lay)
+        self.con_page = page
+        self.con_switch.changed.connect(self.con_mode.setCurrentIndex)
+        self.console_panel_show(True)
 
         self.con_probe = self.con_boot = None
         self.con_serial = SerialSession(self.term, self.console_serial_ended)
@@ -693,6 +757,7 @@ class ConsoleMixin:
         self.con_keys.setVisible(mode == "serial")
         self.con_copy.setVisible(mode == "browser")
         self.con_start.setVisible(mode == "web")
+        self.con_switch.set_index(self.con_mode.currentIndex())     # Schalter links oben folgt der Auswahl
 
     def console_size_changed(self, *_):
         if not self.con_serial.proc:
@@ -711,7 +776,7 @@ class ConsoleMixin:
         self.con_connect.setEnabled(not busy)
         self.con_disconnect.setEnabled(busy)
         for w in (self.con_vendor, self.con_ip, self.con_user, self.con_pass, self.con_mode, self.con_method,
-                  self.con_term, self.con_size, self.con_setup):
+                  self.con_term, self.con_size, self.con_setup, self.con_switch):
             w.setEnabled(not busy)
 
     def console_creds(self):
@@ -774,6 +839,7 @@ class ConsoleMixin:
         if tls_blocks_chromium(tls):
             self.console_fail(T("Dieser BMC kann nur TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). "
                                 "Die eingebettete Konsole geht damit nicht, bitte „Text“ wählen."))
+            self.con_mode.setCurrentIndex(self.con_mode.findData("serial"))     # Schalter steht schon auf „Text“
             return
         self.console_close_all_tabs()
         view = self.console_new_view(ip)
@@ -893,6 +959,7 @@ class ConsoleMixin:
         self.term.live = False
         self.term.update()
         self.console_busy(False)
+        self.console_panel_show(True)
         self.console_set_status(T("Textkonsole beendet (Code {0}).").format(code), bool(code))
 
     # ---------- Trennen / Aufräumen ----------
@@ -904,6 +971,7 @@ class ConsoleMixin:
         self.console_close_all_tabs()
         self.con_start.setEnabled(False)
         self.console_busy(False)
+        self.console_panel_show(True)           # sonst stünde man vor einer leeren Vollansicht
         self.console_set_status(T("Getrennt."))
 
     # ---------- Ins UEFI-Setup booten ----------
