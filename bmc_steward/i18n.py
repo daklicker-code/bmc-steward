@@ -866,6 +866,16 @@ TR = {
 "Nom d'hôte",
 "Hostname"
 ],
+"Seriennummer": [
+"Serial number",
+"Numéro de série",
+"Säriänummer"
+],
+"Hersteller/Typ": [
+"Vendor/model",
+"Fabricant/modèle",
+"Harschteller/Typ"
+],
 "Keine gültige IPv4-Adresse": [
 "Not a valid IPv4 address",
 "Adresse IPv4 non valide",
