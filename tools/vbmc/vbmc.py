@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __license__ = "MIT"
 
 import argparse
@@ -47,6 +47,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit, parse_qs
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
 
@@ -85,6 +86,12 @@ MODELS = {"dell": "PowerEdge R6625", "hpe": "ProLiant DL365 Gen11",
           "hpe_old": "ProLiant DL360p Gen8", "smc": "AS-2015HS-TNR",
           "lenovo": "ThinkSystem SR655 V3"}
 FW = {"dell": "7.10.30.00", "hpe": "3.09", "hpe_old": "2.78", "smc": "01.05.02", "lenovo": "5.30"}
+
+# Pfad der HTML5-Konsole je Hersteller - identisch zu CONSOLE_PATH in bmc_steward/console.py, damit
+# der virtuelle Server dort landet, wo BMC-Steward nach der Anmeldung automatisch hinspringt.
+CONSOLE_UI_PATH = {"dell": "/console", "hpe": "/irc.html", "hpe_old": "/irc.html",
+                   "smc": "/cgi/url_redirect.cgi", "lenovo": "/"}
+ACCENT = {"dell": "#2f7dd1", "hpe": "#2fae59", "hpe_old": "#2fae59", "smc": "#c98a2b", "lenovo": "#d1352f"}
 
 # Firmware-Generationen je Hersteller: Kürzel -> (Anzeige, Firmware, Modell)
 GENS = {
@@ -313,6 +320,109 @@ def console_reply(bmc, data):
         else:
             out.append(ch)         # Echo
     return "".join(out).encode("latin-1", "replace")
+
+
+def login_page(bmc, error=""):
+    """Anmeldeseite der Web-Konsole - mit Benutzer-/Passwortfeld, damit BMC-Steward sie wie bei einem
+    echten BMC per JavaScript ausfüllen und absenden kann."""
+    accent = ACCENT.get(bmc.vendor, "#3b82f6")
+    err = f"<p style='color:#f87171;margin:0 0 .8rem;font-size:.85rem'>{error}</p>" if error else ""
+    return (
+        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{NAME[bmc.vendor]} – Anmeldung</title>"
+        "<body style='margin:0;font-family:system-ui;background:#0c0f14;color:#e5e7eb;"
+        "display:flex;align-items:center;justify-content:center;height:100vh'>"
+        f"<form method=get action='/' style='background:#171b22;padding:2rem 2.5rem;border-radius:10px;"
+        f"border-top:4px solid {accent};min-width:280px;box-shadow:0 10px 30px rgba(0,0,0,.4)'>"
+        f"<h2 style='margin:0 0 .2rem;font-size:1.1rem'>{NAME[bmc.vendor]}</h2>"
+        f"<p style='margin:0 0 1.1rem;color:#9ca3af;font-size:.8rem'>{bmc.model} · {bmc.addr}</p>"
+        f"{err}"
+        "<label style='display:block;font-size:.8rem;color:#9ca3af;margin-bottom:.2rem'>Benutzername</label>"
+        "<input name=user type=text autofocus style='width:100%;box-sizing:border-box;padding:.5rem;"
+        "margin-bottom:.8rem;border-radius:5px;border:1px solid #333;background:#0c0f14;color:#e5e7eb'>"
+        "<label style='display:block;font-size:.8rem;color:#9ca3af;margin-bottom:.2rem'>Passwort</label>"
+        "<input name=pass type=password style='width:100%;box-sizing:border-box;padding:.5rem;"
+        "margin-bottom:1.1rem;border-radius:5px;border:1px solid #333;background:#0c0f14;color:#e5e7eb'>"
+        f"<button type=submit style='width:100%;padding:.55rem;border:0;border-radius:5px;"
+        f"background:{accent};color:#fff;font-size:.9rem;cursor:pointer'>Anmelden</button>"
+        "</form></body>"
+    )
+
+
+def console_preview_page(bmc):
+    """Kleine, gerahmte Konsolenvorschau nach der Anmeldung - wie bei einem echten BMC. Klick öffnet
+    die UEFI-Oberfläche in einem eigenen Fenster (BMC-Steward fängt das als weiteren Reiter ab)."""
+    accent = ACCENT.get(bmc.vendor, "#3b82f6")
+    open_js = "window.open('/vbmc-kvm','_blank','width=960,height=680')"
+    return (
+        "<!doctype html><meta charset=utf-8>"
+        f"<title>{NAME[bmc.vendor]} – Remote-Konsole</title>"
+        "<body style='margin:0;font-family:system-ui;background:#0c0f14;color:#e5e7eb;"
+        "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:1rem'>"
+        f"<div onclick=\"{open_js}\" title='Konsole öffnen' "
+        "style='width:420px;height:236px;border:3px solid #2a2f3a;border-radius:6px;cursor:pointer;"
+        "background:linear-gradient(160deg,#0a0e13,#161b22);display:flex;align-items:center;"
+        "justify-content:center;position:relative;overflow:hidden' "
+        f"onmouseover=\"this.style.borderColor='{accent}'\" onmouseout=\"this.style.borderColor='#2a2f3a'\">"
+        "<div style='text-align:center;color:#6b7280'>"
+        f"<div style='font-size:.8rem;letter-spacing:.03em'>{bmc.hostname or bmc.model}</div>"
+        "<div style='font-size:.7rem;margin-top:.4rem'>Vorschau – zum Öffnen klicken</div></div>"
+        f"<div style='position:absolute;bottom:6px;right:8px;font-size:.65rem;color:#374151'>"
+        f"{bmc.gen_label} {bmc.fw}</div></div>"
+        f"<div style='font-size:.85rem;color:#9ca3af'>{NAME[bmc.vendor]} · {bmc.model} · {bmc.addr}</div>"
+        f"<button onclick=\"{open_js}\" style='padding:.5rem 1.2rem;border:0;border-radius:5px;"
+        f"background:{accent};color:#fff;cursor:pointer'>Konsole öffnen</button>"
+        "</body>"
+    )
+
+
+def console_kvm_page(bmc):
+    """Simulierte UEFI-Setup-Oberfläche (Klick auf die Vorschau) - zeigt die über BMC-Steward (Reiter 3)
+    tatsächlich gesetzten BIOS-Attribute, rein zur Ansicht."""
+    b, accent = bmc, ACCENT.get(bmc.vendor, "#3b82f6")
+
+    def row(label, value):
+        return (f"<div style='display:flex;justify-content:space-between;padding:.35rem 0;"
+                f"border-bottom:1px solid #1f2430'><span style='color:#9ca3af'>{label}</span>"
+                f"<span>{value}</span></div>")
+
+    main = (row("Hersteller", NAME[b.vendor]) + row("Modell", b.model) + row("Seriennummer", b.serial)
+            + row("Firmware", f"{b.gen_label} {b.fw}") + row("Hostname", b.hostname or "(nicht gesetzt)")
+            + row("Adresse", f"{b.addr}{' (DHCP)' if b.dhcp else ''}"))
+    adv = (row("SR-IOV Global Enable", b.bios.get("SriovGlobalEnable", "-"))
+           + row("Logical Processor", b.bios.get("LogicalProc", "-"))
+           + row("Virtualization Technology", b.bios.get("ProcVirtualization", "-"))
+           + row("Memory Test", b.bios.get("MemTest", "-"))
+           + row("PXE Device 1", b.bios.get("PxeDev1EnDis", "-"))
+           + row("Integrated RAID", b.bios.get("IntegratedRaid", "-")))
+    boot = (row("Boot Mode", b.bios.get("BootMode", "-")) + row("Secure Boot", b.bios.get("SecureBoot", "-"))
+            + row("System Profile", b.bios.get("SysProfile", "-")))
+    panels = {"main": ("Main", main), "adv": ("Advanced", adv), "boot": ("Boot", boot)}
+    tabs = "".join(f"<div id=t_{k} class='tab{' on' if k == 'main' else ''}' "
+                   f"onclick=\"tab('{k}')\">{label}</div>" for k, (label, _) in panels.items())
+    bodies = "".join(f"<div id={k} class=panel style='display:{'block' if k == 'main' else 'none'}'>"
+                      f"{content}</div>" for k, (_, content) in panels.items())
+    return (
+        "<!doctype html><meta charset=utf-8>"
+        f"<title>{NAME[b.vendor]} – UEFI-Setup</title>"
+        "<style>"
+        "body{margin:0;font-family:system-ui,monospace;background:#05070a;color:#d8dde6;height:100vh;"
+        "display:flex;flex-direction:column}"
+        f".head{{background:{accent};color:#fff;padding:.6rem 1rem;font-size:.95rem}}"
+        ".tabs{display:flex;background:#0c0f14;border-bottom:1px solid #1f2430}"
+        f".tab{{padding:.6rem 1.1rem;cursor:pointer;font-size:.85rem;color:#8b93a3}}"
+        f".tab.on{{color:#fff;border-bottom:2px solid {accent}}}"
+        ".panel{padding:1rem 1.2rem;max-width:520px;font-size:.85rem}"
+        ".foot{margin-top:auto;padding:.5rem 1rem;font-size:.7rem;color:#555;text-align:center}"
+        "</style>"
+        f"<div class=head>{NAME[b.vendor]} – UEFI-Setup-Utility (virtuell)</div>"
+        f"<div class=tabs>{tabs}</div>{bodies}"
+        "<div class=foot>Reines Test-/Demo-Gerät für BMC-Steward – nur Ansicht, keine echte Tastatureingabe.</div>"
+        "<script>function tab(id){document.querySelectorAll('.panel').forEach(p=>p.style.display='none');"
+        "document.getElementById(id).style.display='block';"
+        "document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));"
+        "document.getElementById('t_'+id).classList.add('on');}</script>"
+    )
 
 
 # ------------------------------------------------------------------ Netzlabor-Helfer
@@ -666,6 +776,17 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return self.bmc.check_auth(user, pw)
 
+    def ui_authed(self):
+        """Eigene, von Basic-Auth unabhängige Anmeldung der HTML-Oberfläche (wie beim echten BMC)."""
+        cookie = self.headers.get("Cookie", "")
+        return f"vbuisess={self.bmc.idx}" in cookie
+
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def need_auth(self):
         body = jbody(rf_error("Benutzername oder Passwort falsch."))
         self.send_response(401)
@@ -694,6 +815,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.xmldata()
         if p == "/":
             return self.landing()
+        if p in ("/console", "/irc.html", "/cgi/url_redirect.cgi"):
+            return self.console_preview()
+        if p == "/vbmc-kvm":
+            return self.console_kvm()
         if not self.authed():
             return self.need_auth()
         mgr = f"/redfish/v1/Managers/{MGR[b.vendor]}"
@@ -1120,17 +1245,35 @@ class Handler(BaseHTTPRequestHandler):
         return ('<?xml version="1.0"?>\r\n<RIBCL VERSION="2.22">\r\n'
                 f'<RESPONSE STATUS="0x{status:04X}" MESSAGE="{message}"/>\r\n</RIBCL>\r\n')
 
+    # -- Weboberfläche (eingebettete Konsole) -------------------------------
+    # Verhält sich wie ein echter BMC: Anmeldeseite -> kleine, gerahmte Konsolenvorschau ->
+    # Klick öffnet die (simulierte) UEFI-Oberfläche in einem eigenen Fenster/Reiter.
     def landing(self):
         b = self.bmc
-        self.send_text(200,
-            f"<!doctype html><meta charset=utf-8><title>vbmc {b.addr}</title>"
-            f"<body style='font-family:system-ui;background:#111;color:#ddd;padding:2rem'>"
-            f"<h1>Virtueller BMC</h1><p>Hersteller: <b>{NAME[b.vendor]}</b></p>"
-            f"<p>Modell: {b.model}<br>Seriennummer: {b.serial}<br>Firmware: {b.gen_label} {b.fw}</p>"
-            f"<p>Adresse: {b.addr}<br>Hostname: {b.hostname or '(nicht gesetzt)'}<br>"
-            f"DHCP: {'an' if b.dhcp else 'aus'}</p>"
-            f"<p style='color:#888'>Reines Test-/Demo-Gerät für BMC-Steward.</p></body>",
-            "text/html; charset=utf-8")
+        qs = parse_qs(urlsplit(self.path).query)
+        user, pw = (qs.get("user") or [""])[0], (qs.get("pass") or [""])[0]
+        if user or pw:
+            if b.check_auth(user, pw):
+                self.send_response(302)
+                self.send_header("Set-Cookie", f"vbuisess={b.idx}; Path=/")
+                self.send_header("Location", CONSOLE_UI_PATH.get(b.vendor, "/"))
+                self.send_header("Content-Length", "0")
+                return self.end_headers()
+            return self.send_text(200, login_page(b, "Benutzername oder Passwort falsch."),
+                                   "text/html; charset=utf-8")
+        if self.ui_authed():
+            return self.send_text(200, console_preview_page(b), "text/html; charset=utf-8")
+        return self.send_text(200, login_page(b), "text/html; charset=utf-8")
+
+    def console_preview(self):
+        if not self.ui_authed():
+            return self.redirect("/")
+        return self.send_text(200, console_preview_page(self.bmc), "text/html; charset=utf-8")
+
+    def console_kvm(self):
+        if not self.ui_authed():
+            return self.redirect("/")
+        return self.send_text(200, console_kvm_page(self.bmc), "text/html; charset=utf-8")
 
 
 # ------------------------------------------------------------------ Flotte
