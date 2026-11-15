@@ -1035,6 +1035,22 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual(w.vbmc_adopt_btn.styleSheet(), "", "noch keine Adresse: farblos")
         w.vbmc_show_state([])
 
+    def test_cable_column_explains_itself(self):
+        w = self.w
+        w.vbmc_run_mode = "rz"
+        w.vbmc_rz_addrs.setText("192.168.0.1/24")
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "192.168.0.101", "link": True},
+                           {"id": 2, "vendor": "hpe", "addr": "192.168.0.102", "link": False}])
+        from bmc_steward.vbmc_tab import S_LINK
+        head = w.vbmc_run.horizontalHeaderItem(S_LINK).toolTip()
+        self.assertIn("Kabel ziehen", head)
+        self.assertIn("Kabel stecken", head)
+        pull, plug = (w.vbmc_run.cellWidget(r, S_LINK) for r in (0, 1))
+        self.assertIn("nicht mehr erreichbar", pull.toolTip())
+        self.assertIn("wieder an", plug.toolTip())
+        self.assertNotEqual(pull.toolTip(), plug.toolTip())
+        w.vbmc_show_state([])
+
     def test_save_log(self):
         """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht
         erreichbar“ weiterzugeben."""

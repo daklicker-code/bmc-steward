@@ -284,6 +284,7 @@ class VbmcTabMixin:
         self.vbmc_run = QTableWidget(0, 8)
         self.vbmc_run.setHorizontalHeaderLabels([T("Nr"), T("Gerät"), T("Modell · Seriennummer"), T("MAC"),
                                                  T("Adresse"), T("Zustand"), T("Werks-Login"), T("Kabel")])
+        self.vbmc_run.horizontalHeaderItem(S_LINK).setToolTip(T('Simuliert das Netzwerkkabel des Servers (nur in den Modi „Konfigraum“ und „Zuhause/Router“; im Loopback-Modus gibt es keine Netzwerkkarten).\n„Kabel ziehen“ trennt die Netzwerkkarte des Servers vom virtuellen Switch bzw. vom Router: Der Server läuft weiter, ist im Netz aber nicht mehr erreichbar und bekommt keine Adresse per DHCP.\n„Kabel stecken“ verbindet ihn wieder: Er ist wieder erreichbar und kann sich per DHCP eine Adresse holen.\nZum Üben: Server nacheinander anschließen oder einen Kabelbruch bzw. Portausfall mitten in der Umstellung nachstellen.'))
         self.vbmc_run.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.vbmc_run.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         rh = self.vbmc_run.horizontalHeader()
@@ -820,6 +821,7 @@ class VbmcTabMixin:
                 t.setItem(r, c, it)
             if lab:
                 b = QPushButton(T("Kabel ziehen") if s.get("link", True) else T("Kabel stecken"))
+                b.setToolTip(T('Zieht das Netzwerkkabel dieses Servers: Der Server läuft weiter, ist im Netz aber nicht mehr erreichbar (wie bei einem Kabelbruch oder abgeschaltetem Switch-Port).') if s.get("link", True) else T('Steckt das Netzwerkkabel dieses Servers wieder an: Er ist wieder erreichbar und kann sich per DHCP eine Adresse holen.'))
                 b.clicked.connect(lambda _=False, i=s.get("id"), up=not s.get("link", True): self.vbmc_link(i, up))
                 t.setCellWidget(r, S_LINK, b)
         self.vbmc_adopt_ready(any(s.get("addr") for s in servers))
