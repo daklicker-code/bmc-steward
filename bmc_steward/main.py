@@ -217,6 +217,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.abort)
+        self.serial_btn = QPushButton(T("Seriennummern auslesen"))
+        self.serial_btn.setToolTip(T("Liest für alle Zeilen ohne Seriennummer die Seriennummer (Dell: Service-Tag) aus dem BMC.\n"
+                                     "Nur lesend, ein Anmeldeversuch je Gerät mit dem Passwort der Zeile (iLO 3/4: ohne Anmeldung).\n"
+                                     "Das geschieht auch automatisch beim Eintragen einer Aktuellen IP. Eingetragenes wird nie überschrieben."))
+        self.serial_btn.clicked.connect(self.read_serials)
         log_open = QPushButton(T("Protokoll öffnen …"))
         log_open.setToolTip(T("Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\n"
                               "Ersetzt die aktuelle Anzeige, ändert aber nichts an den Servern."))
@@ -228,6 +233,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         actions = QHBoxLayout()
         actions.addWidget(self.dry)
         actions.addStretch()
+        actions.addWidget(self.serial_btn)
         actions.addWidget(log_open)
         actions.addWidget(log_save)
         actions.addWidget(self.stop)
@@ -631,8 +637,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         old = self.vendor_threads.get(ip)
         if old and old.isRunning():
             return      # schon unterwegs für diese Adresse
-        th = VendorProbeThread(self, ip)
+        pw = next((self.cell(r, 1) for r in range(self.table.rowCount()) if self.cell(r, 0) == ip), "")
+        th = VendorProbeThread(self, ip, self.cur_user.text().strip(), pw)
         th.done.connect(self.on_vendor_probe_done)
+        th.serial.connect(self.on_serial_read)
         self.vendor_threads[ip] = th
         th.start()
 
@@ -647,6 +655,28 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                     vitem.setText(text)
                     vitem.setToolTip(tip)
         self.table.blockSignals(False)
+
+    def on_serial_read(self, ip, serial):
+        """Ausgelesene Seriennummer in die Zeilen dieser Adresse eintragen; Eingetipptes bleibt unangetastet."""
+        changed = False
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            if self.cell(r, 0) == ip and not self.cell(r, 6):
+                self.table.item(r, 6).setText(serial)
+                changed = True
+        self.table.blockSignals(False)
+        if changed:
+            self.touch()
+
+    def read_serials(self):
+        """Fragt für alle Zeilen ohne Seriennummer die Seriennummer beim BMC ab (nur lesen, ein Anmeldeversuch)."""
+        todo = [self.cell(r, 0) for r in range(self.table.rowCount())
+                if ipv4_port(self.cell(r, 0)) and not self.cell(r, 6)]
+        for ip in dict.fromkeys(todo):
+            self.probe_vendor(ip)
+        self.status.setText(T("Seriennummern werden ausgelesen: {0} Adresse(n). Die Spalte füllt sich, sobald die "
+                              "Geräte antworten.").format(len(set(todo))) if todo else
+                            T("Keine Zeile ohne Seriennummer und mit gültiger Aktueller IP."))
 
     def rows(self, open_only=False):
         """Alle nicht leeren Zeilen als Listen mit 6 Feldern; mit open_only ohne die fertigen."""

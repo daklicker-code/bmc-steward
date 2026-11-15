@@ -612,6 +612,47 @@ class TestVirtualMediaLicenseBoot(_WebBase):
         self.assertEqual(b.sim.boot_override["enabled"], "Disabled", "Once ist verbraucht")
 
 
+def _redfish_client():
+    try:
+        from bmc_steward.redfish import RedfishClient
+    except ImportError:                              # PyQt6 fehlt
+        return None
+    return RedfishClient
+
+
+@unittest.skipUnless(_redfish_client(), "PyQt6 fehlt")
+class TestSerialRead(_WebBase):
+    """Neuware: die Seriennummer wird aus dem BMC gelesen (Redfish bzw. iLO-xmldata), nur lesend."""
+
+    def _read(self, vendor, gen=None, user=None, pw=None, dry=False):
+        b, port = self._start(vendor, gen=gen)
+        rc = _redfish_client()(dry=dry, log=lambda *a, **k: None)
+        u, p = FACTORY_LOGIN.get(vendor, ("Administrator", "x"))
+        v = "hpe_old" if gen in ("ilo3", "ilo4") else vendor
+        return b, rc.read_serial(f"127.0.0.1:{port}", v, user or u, p if pw is None else pw)
+
+    def test_redfish_vendors_return_their_serial(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                b, got = self._read(v)
+                self.assertEqual(got, b.serial)
+
+    def test_old_ilo_reads_without_login(self):
+        for gen in ("ilo3", "ilo4"):
+            with self.subTest(gen):
+                b, got = self._read("hpe_old", gen=gen, pw="")
+                self.assertEqual(got, b.serial)
+
+    def test_wrong_or_missing_password_gives_nothing(self):
+        for v in FACTORY_LOGIN:
+            with self.subTest(v):
+                self.assertEqual(self._read(v, pw="falsch")[1], "")
+                self.assertEqual(self._read(v, pw="")[1], "")
+
+    def test_dry_run_reads_nothing(self):
+        self.assertEqual(self._read("dell", dry=True)[1], "")
+
+
 class TestSsdp(_WebBase):
     """SSDP-Erkennung: der virtuelle Server antwortet auf M-SEARCH mit seiner Redfish-Adresse."""
 

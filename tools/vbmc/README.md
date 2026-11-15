@@ -163,6 +163,10 @@ Ab 1.5 zusätzlich:
 * Der Browser-Test `tests/test_vbmc_ui.py` bedient alle Oberflächen in einem echten Chrome (Playwright);
   er wird übersprungen, wenn beides fehlt.
 
+### Neu in 1.6.1
+
+- **Seriennummer nach „Neuware“:** „In Serverliste übernehmen“ trägt die Seriennummer des Testlabor-Servers mit ein (auch in schon vorhandene Zeilen ohne Seriennummer). iLO 3/4 liefert sie wie echte Firmware als `<SBSN>` in `/xmldata`.
+
 ### Neu in 1.6
 
 - **SSDP-Erkennung:** Jeder virtuelle Server beantwortet `M-SEARCH` (`ssdp:all`, `upnp:rootdevice`, `urn:dmtf-org:service:redfish-rest:1`) mit seiner Redfish-Adresse (iLO 3: `/xmldata?item=all`). Im Netzlabor auf der eigenen Karte inklusive Multicast, sonst unicast auf der Server-Adresse. Port per `VBMC_SSDP_PORT` (Standard 1900, `0` schaltet SSDP ab).

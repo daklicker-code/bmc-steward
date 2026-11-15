@@ -262,6 +262,50 @@ class RedfishClient:
         self.body = {"error": [{"Message": m} for _, m in bad]}
         return 401 if any(st == 0x5F for st, _ in bad) else 400
 
+    def read_serial(self, ip, vendor, user, pw):
+        """Seriennummer des Servers (Dell: Service-Tag), nur lesend; leer, wenn nicht lesbar. Es gibt genau einen
+        Anmeldeversuch, damit ein falsches Passwort keinen BMC sperrt. iLO 3/4 verrät sie ohne Anmeldung über
+        /xmldata, alle anderen über Redfish (Systems, notfalls Chassis). Im Probelauf (dry) wird nichts gelesen."""
+        if self.dry:
+            return ""
+        try:
+            if vendor == "hpe_old":
+                mode = self.tls_mode(ip, 5)
+                if mode is None:
+                    return ""
+                with OPENERS[mode].open(f"https://{ip}/xmldata?item=All", timeout=8) as r:
+                    text = r.read(20000).decode("utf-8", "replace")
+                m = re.search(r"<SBSN>([^<]*)</SBSN>", text)
+                return " ".join(m.group(1).split()) if m else ""
+            if not pw:
+                return ""
+
+            def first(collection):
+                if not self.ok(self.api(ip, user, pw, "GET", collection, timeout=10)) or not isinstance(self.body, dict):
+                    return None
+                members = self.body.get("Members") or []
+                path = members[0].get("@odata.id") if members and isinstance(members[0], dict) else None
+                if not path or not self.ok(self.api(ip, user, pw, "GET", path, timeout=10)) \
+                        or not isinstance(self.body, dict):
+                    return None
+                return self.body
+
+            def clean(v):
+                return " ".join(str(v or "").split())
+            for collection in ("/redfish/v1/Systems", "/redfish/v1/Chassis"):
+                b = first(collection)
+                if b is None:
+                    if self.code in (401, 403):
+                        return ""                      # Anmeldung abgelehnt: nicht weiter versuchen
+                    continue
+                serial, sku = clean(b.get("SerialNumber")), clean(b.get("SKU"))
+                found = (sku or serial) if vendor == "dell" else (serial or sku)
+                if found:
+                    return found
+            return ""
+        except Exception:
+            return ""
+
     def vendor(self, ip):
         """dell | hpe | hpe_old | smc | lenovo | unbekannt | offline (Abfrage ohne Anmeldung).
         hpe_old = iLO 3/4. Was über ein altes Gerät bekannt ist, steht danach in self.model."""
@@ -1571,10 +1615,12 @@ class VendorProbeThread(QObject):
     Bewusst ein Daemon-Thread statt QThread: Eine Abfrage an eine tote Adresse kann bis zur Zeitüberschreitung
     dauern, und ein noch laufender QThread bricht das Programm beim Beenden ab."""
     done = pyqtSignal(str, str, str)     # Aktuelle IP, Anzeigetext, Tooltip
+    serial = pyqtSignal(str, str)        # Aktuelle IP, ausgelesene Seriennummer (nur wenn lesbar)
 
-    def __init__(self, parent, ip):
+    def __init__(self, parent, ip, user="", pw=""):
         super().__init__(parent)
         self.ip = ip
+        self.user, self.pw = user, pw
         self._t = threading.Thread(target=self.run, daemon=True)
 
     def start(self):
@@ -1606,6 +1652,13 @@ class VendorProbeThread(QObject):
         elif v in RedfishClient.NAME:
             label = RedfishClient.NAME[v] + (f" ({rc.model})" if rc.model else "")
             self._emit(self.ip, label, label)
+            serial = RedfishClient(dry=False, log=lambda *a, **k: None).read_serial(
+                self.ip, v, self.user or RedfishClient.DEFAULT_USER[v], self.pw)
+            if serial:
+                try:
+                    self.serial.emit(self.ip, serial)
+                except RuntimeError:            # Fenster schon geschlossen
+                    pass
         else:
             label = T("unbekannt") + (f" ({rc.model})" if rc.model else "")
             self._emit(self.ip, label, T("Weder Dell iDRAC, HPE iLO, Supermicro noch Lenovo XCC erkannt.")

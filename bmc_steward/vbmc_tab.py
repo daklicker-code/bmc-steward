@@ -893,6 +893,9 @@ class VbmcTabMixin:
         added = 0
         for i, s in enumerate(servers):
             if s["addr"] in existing:
+                for r in range(self.table.rowCount()):             # Zeile gibt es schon: fehlende Seriennummer ergänzen
+                    if self.cell(r, 0) == s["addr"] and not self.cell(r, 6) and s.get("serial"):
+                        self.table.item(r, 6).setText(s["serial"])
                 continue
             self.add_row()
             r = self.table.rowCount() - 1
@@ -903,6 +906,7 @@ class VbmcTabMixin:
             self.table.item(r, 4).setText(gw)
             vendor = "ilo" if s.get("vendor") == "hpe_old" else s.get("vendor", "srv")
             self.table.item(r, 5).setText(f"vsrv-{vendor}-{s.get('id', i + 1)}")
+            self.table.item(r, 6).setText(s.get("serial", ""))             # Seriennummer des Testlabor-Servers
             added += 1
         # Benutzer bleibt leer: der Hauptablauf nimmt je Hersteller den Werksbenutzer, solange oben keiner steht
         self.update_count()

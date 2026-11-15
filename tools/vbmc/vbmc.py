@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 __license__ = "MIT"
 
 import argparse
@@ -1422,7 +1422,7 @@ class Handler(BaseHTTPRequestHandler):
         b = self.bmc
         if b.vendor != "hpe_old":
             return self.send(404, rf_error("kein xmldata"))
-        xml = (f'<?xml version="1.0"?>\r\n<RIMP><HSI><SPN>{b.model}</SPN></HSI>'
+        xml = (f'<?xml version="1.0"?>\r\n<RIMP><HSI><SBSN>{b.serial}</SBSN><SPN>{b.model}</SPN></HSI>'
                f'<MP><PN>Integrated Lights-Out {b.gen[-1]} (iLO {b.gen[-1]})</PN><FWRI>{b.fw}</FWRI>'
                f'<SN>{b.serial}</SN></MP></RIMP>\r\n')
         return self.send_text(200, xml, "text/xml")
