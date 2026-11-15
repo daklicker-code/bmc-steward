@@ -2733,6 +2733,11 @@ def _excepthook(kind, err, tb):
 def run():
     set_language(load_lang())
     sys.excepthook = _excepthook
+    # Chromium (QtWebEngine) meldet bei jedem BMC mit selbstsigniertem Zertifikat einen fehlgeschlagenen
+    # Handshake (net_error -202), obwohl BmcPage das Zertifikat danach akzeptiert. Das flutet die Konsole;
+    # nur fatale Chromium-Meldungen anzeigen. Wer alles sehen will, setzt QTWEBENGINE_CHROMIUM_FLAGS selbst.
+    if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--log-level=3"
     app = QApplication(sys.argv)
     app.setApplicationName("bmc-steward")
     app.setApplicationDisplayName("BMC-Steward")
