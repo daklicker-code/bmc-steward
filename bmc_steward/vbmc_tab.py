@@ -15,6 +15,7 @@ import random
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
@@ -311,6 +312,23 @@ class VbmcTabMixin:
         self.vbmc_log.setFont(QFont("monospace"))
         self.vbmc_log.setPlaceholderText(T("Ausgabe der Flotte (DHCP, Umzüge, Hinweise) …"))
 
+        lbox = QGroupBox(T("Protokoll"))
+        ll = QVBoxLayout(lbox)
+        lrow = QHBoxLayout()
+        self.vbmc_log_open_btn = QPushButton(T("Protokoll öffnen …"))
+        self.vbmc_log_open_btn.setToolTip(T("Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\n"
+                                            "Ersetzt die aktuelle Anzeige, ändert aber nichts an der Flotte."))
+        self.vbmc_log_open_btn.clicked.connect(self.vbmc_open_log)
+        self.vbmc_log_save_btn = QPushButton(T("Protokoll speichern …"))
+        self.vbmc_log_save_btn.setToolTip(T("Speichert die Ausgabe der Flotte als Textdatei, z. B. um einen "
+                                            "Fehler wie „Gerät nicht erreichbar“ weiterzugeben."))
+        self.vbmc_log_save_btn.clicked.connect(self.vbmc_save_log)
+        lrow.addWidget(self.vbmc_log_open_btn)
+        lrow.addWidget(self.vbmc_log_save_btn)
+        lrow.addStretch()
+        ll.addLayout(lrow)
+        ll.addWidget(self.vbmc_log)
+
         top = QWidget()
         tl = QVBoxLayout(top)
         tl.setContentsMargins(0, 0, 0, 0)
@@ -322,7 +340,7 @@ class VbmcTabMixin:
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(top)
         split.addWidget(rbox)
-        split.addWidget(self.vbmc_log)
+        split.addWidget(lbox)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 2)
         split.setStretchFactor(2, 1)
@@ -593,6 +611,38 @@ class VbmcTabMixin:
     def vbmc_set_status(self, text, err=False):
         self.vbmc_status.setText(text)
         self.vbmc_status.setStyleSheet("color: #c9302c;" if err else "color: #2e9e4f;")
+
+    def vbmc_open_log(self):
+        """Zeigt eine zuvor gespeicherte Protokoll-Textdatei der Flotte an (nur Ansicht)."""
+        path, _ = QFileDialog.getOpenFileName(self, T("Protokoll öffnen"), str(HERE),
+                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht lesbar:\n{0}').format(e))
+            return
+        self.vbmc_log.setPlainText(text)
+        self.vbmc_set_status(T("Protokoll geladen aus {0}").format(path))
+
+    def vbmc_save_log(self):
+        """Schreibt die Ausgabe der Flotte in eine Textdatei, z. B. um einen Fehlschlag weiterzugeben."""
+        text = self.vbmc_log.toPlainText()
+        if not text.strip():
+            self.vbmc_set_status(T("Das Protokoll ist noch leer."), True)
+            return
+        name = "vbmc-" + time.strftime("%Y%m%d-%H%M%S") + ".log"
+        path, _ = QFileDialog.getSaveFileName(self, T("Protokoll speichern"), str(HERE / name),
+                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
+        if not path:
+            return
+        try:
+            Path(path).write_text(text + "\n", encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, T("Protokoll speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
+            return
+        self.vbmc_set_status(T("Protokoll gespeichert in {0}").format(path))
 
     def vbmc_running(self):
         return self.vbmc_proc is not None and self.vbmc_proc.state() != QProcess.ProcessState.NotRunning

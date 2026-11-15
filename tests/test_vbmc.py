@@ -5,14 +5,20 @@ Geprüft wird, was sich ohne Netzwerk-Namespaces prüfen lässt: DHCP-Nachrichte
 Dell-Slots und das Szenario-Format. Der Ende-zu-Ende-Lauf (Namespaces, Bridge, macvlan) braucht
 root und wird von Hand mit dem Testlabor-Reiter geprüft.
 """
+import http.client
 import importlib.util
+import io
 import json
 import os
+import re
 import socket
+import ssl
 import struct
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from tests._support import qapp
 
@@ -156,6 +162,124 @@ class TestVirtualBmc(unittest.TestCase):
                 vbmc.bmc_from_entry({"vendor": "cisco"}, 0, "127.9.0", 8443)
 
 
+class TestLogFormat(unittest.TestCase):
+    """Jede Protokollzeile bekommt eine Uhrzeit vorangestellt - außer @@STATE (von der GUI geparst)."""
+
+    def test_timestamp_prefix(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vbmc.print("Server CN123 gestartet")
+        self.assertRegex(buf.getvalue(), r"^\[\d{2}:\d{2}:\d{2}\] Server CN123 gestartet\n$")
+
+    def test_state_line_untouched(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vbmc.print("@@STATE []")
+        self.assertEqual(buf.getvalue(), "@@STATE []\n")
+
+    def test_blank_line_untouched(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vbmc.print("")
+        self.assertEqual(buf.getvalue(), "\n")
+
+    def test_leading_newline_kept_before_timestamp(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vbmc.print("\nHinweis danach")
+        self.assertRegex(buf.getvalue(), r"^\n\[\d{2}:\d{2}:\d{2}\] Hinweis danach\n$")
+
+
+class TestConsoleUi(unittest.TestCase):
+    """Eingebettete Web-Konsole: Anmeldung (Cookie, unabhängig von Basic-Auth), Vorschau, UEFI-Seite -
+    über einen echten HTTPS-Client im selben Prozess (reines TCP-Loopback ist in manchen Sandboxes
+    zwischen getrennten Prozessen nicht erreichbar, im selben Prozess aber immer)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cert, key = vbmc.ensure_cert()
+        cls.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        cls.ctx.load_cert_chain(cert, key)
+        cls.cctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        cls.cctx.check_hostname = False
+        cls.cctx.verify_mode = ssl.CERT_NONE
+
+    def _start(self, vendor, idx=1):
+        fleet = vbmc.Fleet(self.ctx, [0])            # Port 0: das OS wählt einen freien
+        b = vbmc.BMC(vendor, "127.0.0.1", 0, idx=idx)
+        fleet.start(b)
+        self.addCleanup(fleet.stop, b)
+        port = b._redfish[0].socket.getsockname()[1]
+        return b, port
+
+    def _req(self, port, path, cookie=None, user=None, pw=None):
+        conn = http.client.HTTPSConnection("127.0.0.1", port, context=self.cctx, timeout=5)
+        try:
+            if user:
+                sep = "&" if "?" in path else "?"
+                path += f"{sep}user={user}&pass={pw}"
+            conn.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+            r = conn.getresponse()
+            return r.status, dict(r.getheaders()), r.read().decode("utf-8", "replace")
+        finally:
+            conn.close()
+
+    def test_login_form_shown_when_unauthed(self):
+        b, port = self._start("dell")
+        st, _, body = self._req(port, "/")
+        self.assertEqual(st, 200)
+        self.assertIn("Anmelden", body)
+        self.assertIn("type=password", body)
+
+    def test_wrong_password_shows_error(self):
+        b, port = self._start("dell")
+        st, _, body = self._req(port, "/", user="root", pw="falsch")
+        self.assertEqual(st, 200)
+        self.assertIn("falsch", body)
+
+    def test_login_sets_cookie_and_redirects_to_console_path(self):
+        b, port = self._start("dell")
+        st, h, _ = self._req(port, "/", user="root", pw="calvin")
+        self.assertEqual(st, 302)
+        self.assertEqual(h.get("Location"), "/console")
+        self.assertIn(f"vbuisess={b.idx}", h.get("Set-Cookie", ""))
+
+    def test_console_path_requires_cookie(self):
+        b, port = self._start("dell")
+        st, h, _ = self._req(port, "/console")
+        self.assertEqual(st, 302)
+        self.assertEqual(h.get("Location"), "/")
+
+    def test_preview_and_kvm_with_cookie(self):
+        b, port = self._start("dell")
+        _, h, _ = self._req(port, "/", user="root", pw="calvin")
+        cookie = h["Set-Cookie"].split(";")[0]
+        st, _, body = self._req(port, "/console", cookie)
+        self.assertEqual(st, 200)
+        self.assertIn("vbmc-kvm", body, "Vorschau öffnet die UEFI-Seite per window.open()")
+        st, _, body = self._req(port, "/vbmc-kvm", cookie)
+        self.assertEqual(st, 200)
+        self.assertIn("UEFI-Setup-Utility", body)
+        self.assertIn(b.serial, body)
+
+    def test_kvm_reflects_bios_attribute_changes(self):
+        b, port = self._start("dell")
+        b.bios["SecureBoot"] = "Enabled"
+        _, h, _ = self._req(port, "/", user="root", pw="calvin")
+        cookie = h["Set-Cookie"].split(";")[0]
+        _, _, body = self._req(port, "/vbmc-kvm", cookie)
+        self.assertIn("Enabled", body)
+
+    def test_lenovo_console_path_is_root(self):
+        b, port = self._start("lenovo", idx=2)
+        st, h, _ = self._req(port, "/", user="USERID", pw="PASSW0RD")
+        self.assertEqual(st, 302)
+        self.assertEqual(h.get("Location"), "/")
+        st, _, body = self._req(port, "/", cookie=f"vbuisess={b.idx}")
+        self.assertEqual(st, 200)
+        self.assertIn("vbmc-kvm", body)
+
+
 class TestTestlabTab(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -216,6 +340,28 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual(w.table.rowCount(), 1, "nur Server mit Adresse")
         self.assertEqual([w.cell(0, c) for c in (0, 1, 2)], ["192.168.0.101", "Dell4711", "192.168.0.51"])
         w.vbmc_show_state([])
+
+    def test_save_and_open_log(self):
+        """Die Knöpfe „Protokoll öffnen/speichern“ (Testlabor) - z. B. um einen Fehlschlag wie
+        „Gerät nicht erreichbar“ weiterzugeben."""
+        w = self.w
+        w.vbmc_log.setPlainText("[12:00:00] Server CN123 gestartet")
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "vbmc-test.log")
+            with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName", return_value=(p, "")):
+                w.vbmc_save_log()
+            self.assertIn("Server CN123 gestartet", open(p, encoding="utf-8").read())
+            w.vbmc_log.clear()
+            with patch("bmc_steward.vbmc_tab.QFileDialog.getOpenFileName", return_value=(p, "")):
+                w.vbmc_open_log()
+            self.assertIn("Server CN123 gestartet", w.vbmc_log.toPlainText())
+
+    def test_save_log_refuses_when_empty(self):
+        w = self.w
+        w.vbmc_log.clear()
+        with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName") as dlg:
+            w.vbmc_save_log()
+            dlg.assert_not_called()
 
 
 if __name__ == "__main__":

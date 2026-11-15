@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 __license__ = "MIT"
 
 import argparse
@@ -57,9 +57,22 @@ _print = print
 
 
 def print(*a, **k):                     # noqa: A001 - bewusst modulweit
+    """Jede Zeile bekommt eine Uhrzeit vorangestellt, damit sich im gespeicherten Protokoll (BMC-Steward,
+    Reiter Testlabor) nachvollziehen lässt, wann was passiert ist - z. B. ob ein Server schon lief, als
+    die Konsole „Gerät nicht erreichbar“ meldete. Die @@STATE-Protokollzeilen (von der GUI geparst) und
+    reine Leerzeilen bleiben unverändert."""
     k.setdefault("flush", True)
+    first = a[0] if a else ""
     with _PRINT_LOCK:
-        _print(*a, **k)
+        if isinstance(first, str) and (first.startswith("@@") or first.strip() == ""):
+            _print(*a, **k)
+        else:
+            ts = time.strftime("%H:%M:%S")
+            rest = a[1:]
+            if isinstance(first, str) and first.startswith("\n"):
+                _print(f"\n[{ts}] {first[1:]}", *rest, **k)
+            else:
+                _print(f"[{ts}] {first}", *rest, **k)
 
 # Optionale Abhängigkeiten nur für die Konsole (--console):
 try:
