@@ -386,6 +386,7 @@ class Engine(RedfishClient):
                              "RoleId": "Administrator", "Enabled": True}):
             return False
         self.log(T('  Benutzer {0} ok').format(self.new_user), "ok")
+        pw = self.new_pass if self.new_user == self.cur_user else pw     # eigenes Passwort geändert
         if not self.attempt(T("Hostname"), ip, pw, "PATCH", mgr + "/Attributes",
                             {"Attributes": {"NIC.1.DNSRacName": host}}):
             return False
