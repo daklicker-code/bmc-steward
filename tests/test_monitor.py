@@ -193,6 +193,31 @@ class TestMonitorWidget(unittest.TestCase):
             if glow_strength(ms) > 0:
                 self.assertGreater(logo_progress(ms), 0.9)
 
+    def test_animated_logo_runs_only_while_visible_and_paints(self):
+        from bmc_steward.monitor import AnimatedLogo
+        logo = AnimatedLogo(64)
+        self.assertFalse(logo._timer.isActive())
+        logo.show()
+        self.assertTrue(logo._timer.isActive())
+        self.assertFalse(logo.grab().isNull())
+        logo.hide()
+        self.assertFalse(logo._timer.isActive())
+
+    def test_brand_mark_is_the_sphere_and_renders(self):
+        from bmc_steward.branding import MARK_SVG, app_icon
+        self.assertIn('<circle cx="60" cy="63" r="45"', MARK_SVG)
+        self.assertNotIn("Q96 96 60 112", MARK_SVG)          # das alte Schild ist weg
+        self.assertFalse(app_icon().isNull())
+
+    def test_readme_logo_is_animated_in_the_same_rhythm(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        svg = open(os.path.join(root, "docs", "logo.svg"), encoding="utf-8").read()
+        self.assertIn(f"animation-duration:{CYCLE_MS}ms", svg)
+        self.assertIn("infinite", svg)
+        self.assertIn('r="45"', svg)
+        self.assertIn("prefers-reduced-motion", svg)
+
     def test_noise_is_subtle(self):
         self.assertLessEqual(max(_NOISE_LUT), 40)
         self.assertLessEqual(max(_NOISE_LUT) - min(_NOISE_LUT), 30)
@@ -256,6 +281,12 @@ class TestWindowLayout(unittest.TestCase):
         names = [self.w.tabs.menu.item(i).text() for i in range(9)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
                                  "Firmware", "UEFI-Konsole", "Testlabor", "Hilfe"])      # ohne Nummern
+
+    def test_help_page_shows_animated_logo(self):
+        from bmc_steward.monitor import AnimatedLogo
+        page = self.w.tabs.stack.widget(8)
+        self.assertIs(self.w.help_logo.parent(), page)
+        self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 
     def test_only_dhcp_entry_is_dark_yellow_button(self):
         menu = self.w.tabs.menu

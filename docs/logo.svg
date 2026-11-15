@@ -1,19 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="17 14 86 104">
-<path d="M24 20 L96 20 L96 68 Q96 96 60 112 Q24 96 24 68 Z" fill="#0b2e28" stroke="#34d399" stroke-width="5" stroke-linejoin="round"/>
-<line x1="32" y1="44" x2="44" y2="44" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round"/>
-<line x1="76" y1="44" x2="88" y2="44" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round"/>
-<line x1="32" y1="82" x2="44" y2="82" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round"/>
-<line x1="76" y1="82" x2="88" y2="82" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round"/>
-<circle cx="32" cy="44" r="4" fill="#34d399"/>
-<circle cx="88" cy="44" r="4" fill="#34d399"/>
-<circle cx="32" cy="82" r="4" fill="#34d399"/>
-<circle cx="88" cy="82" r="4" fill="#34d399"/>
-<rect x="46" y="50" width="28" height="28" rx="5" fill="none" stroke="#34d399" stroke-width="4"/>
-<line x1="51" y1="45" x2="51" y2="50" stroke="#34d399" stroke-width="3"/>
-<line x1="60" y1="45" x2="60" y2="50" stroke="#34d399" stroke-width="3"/>
-<line x1="69" y1="45" x2="69" y2="50" stroke="#34d399" stroke-width="3"/>
-<line x1="51" y1="78" x2="51" y2="83" stroke="#34d399" stroke-width="3"/>
-<line x1="60" y1="78" x2="60" y2="83" stroke="#34d399" stroke-width="3"/>
-<line x1="69" y1="78" x2="69" y2="83" stroke="#34d399" stroke-width="3"/>
-<path d="M53 64 L58 69 L68 58" fill="none" stroke="#2dd4bf" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -3 132 132">
+<!-- Erzeugt aus bmc_steward/monitor.py: baut sich auf, leuchtet beim Häkchen grün, baut sich ab; alle 8 s -->
+<style>@keyframes sphere{0.00%{stroke-dashoffset:1} 0.00%{stroke-dashoffset:1} 17.50%{stroke-dashoffset:0} 86.31%{stroke-dashoffset:0} 93.75%{stroke-dashoffset:1} 100.00%{stroke-dashoffset:1}}@keyframes fill{0.00%{opacity:0} 12.50%{opacity:0} 22.50%{opacity:1} 84.19%{opacity:1} 88.44%{opacity:0} 100.00%{opacity:0}}@keyframes traces{0.00%{stroke-dashoffset:1} 20.00%{stroke-dashoffset:1} 27.50%{stroke-dashoffset:0} 82.06%{stroke-dashoffset:0} 85.25%{stroke-dashoffset:1} 100.00%{stroke-dashoffset:1}}@keyframes dots{0.00%{opacity:0} 26.00%{opacity:0} 31.00%{opacity:1} 80.58%{opacity:1} 82.70%{opacity:0} 100.00%{opacity:0}}@keyframes chip{0.00%{stroke-dashoffset:1} 29.00%{stroke-dashoffset:1} 38.00%{stroke-dashoffset:0} 77.60%{stroke-dashoffset:0} 81.42%{stroke-dashoffset:1} 100.00%{stroke-dashoffset:1}}@keyframes pins{0.00%{stroke-dashoffset:1} 37.00%{stroke-dashoffset:1} 44.00%{stroke-dashoffset:0} 75.05%{stroke-dashoffset:0} 78.03%{stroke-dashoffset:1} 100.00%{stroke-dashoffset:1}}@keyframes check{0.00%{stroke-dashoffset:1} 45.00%{stroke-dashoffset:1} 50.00%{stroke-dashoffset:0} 72.50%{stroke-dashoffset:0} 74.62%{stroke-dashoffset:1} 100.00%{stroke-dashoffset:1}}@keyframes glow{0%{opacity:0} 45.00%{opacity:0} 50.00%{opacity:1} 55.62%{opacity:.56} 61.25%{opacity:.25} 72.50%{opacity:0} 100%{opacity:0}}.a{animation-duration:8000ms;animation-iteration-count:infinite;animation-timing-function:ease-in-out}.d{stroke-dasharray:1 2;fill:none}.sphere{animation-name:sphere}.fill{animation-name:fill}.traces{animation-name:traces}.dots{animation-name:dots}.chip{animation-name:chip}.pins{animation-name:pins}.check{animation-name:check}.glow{animation-name:glow}@media (prefers-reduced-motion:reduce){.a{animation:none}.glow{opacity:0}}</style>
+<defs>
+<radialGradient id="shade" cx="44" cy="45" r="65" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#1e6052"/><stop offset="0.55" stop-color="#0d342d"/><stop offset="1" stop-color="#051613"/>
+</radialGradient>
+<radialGradient id="shine" cx="40" cy="39" r="14" gradientUnits="userSpaceOnUse">
+<stop offset="0" stop-color="#ffffff" stop-opacity="0.24"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+</radialGradient>
+<filter id="blur" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<g class="a glow" opacity="0"><circle cx="60" cy="63" r="47" fill="#34d399" fill-opacity="0.35" stroke="#34d399" stroke-width="12" filter="url(#blur)"/></g>
+<g class="a fill"><circle cx="60" cy="63" r="45" fill="url(#shade)"/><circle cx="40" cy="39" r="14" fill="url(#shine)"/></g>
+<circle class="a d sphere" cx="60" cy="63" r="45" pathLength="1" stroke="#34d399" stroke-width="5" transform="rotate(-90 60 63)"/>
+<g class="a d traces" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round"><line x1="32" y1="44" x2="44" y2="44" pathLength="1"/><line x1="76" y1="44" x2="88" y2="44" pathLength="1"/><line x1="32" y1="82" x2="44" y2="82" pathLength="1"/><line x1="76" y1="82" x2="88" y2="82" pathLength="1"/></g>
+<g class="a dots" fill="#34d399"><circle cx="32" cy="44" r="4"/><circle cx="88" cy="44" r="4"/><circle cx="32" cy="82" r="4"/><circle cx="88" cy="82" r="4"/></g>
+<rect class="a d chip" x="46" y="50" width="28" height="28" rx="5" pathLength="1" stroke="#34d399" stroke-width="4"/>
+<g class="a d pins" stroke="#34d399" stroke-width="3" stroke-linecap="round"><line x1="51" y1="45" x2="51" y2="50" pathLength="1"/><line x1="60" y1="45" x2="60" y2="50" pathLength="1"/><line x1="69" y1="45" x2="69" y2="50" pathLength="1"/><line x1="51" y1="78" x2="51" y2="83" pathLength="1"/><line x1="60" y1="78" x2="60" y2="83" pathLength="1"/><line x1="69" y1="78" x2="69" y2="83" pathLength="1"/></g>
+<path class="a d check" d="M53 64 L58 69 L68 58" pathLength="1" stroke="#2dd4bf" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

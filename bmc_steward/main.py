@@ -18,7 +18,8 @@ import time
 from . import i18n
 from .i18n import BIOS_PROFILES, HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
 from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
-from .branding import app_icon, logo_png_data_uri
+from .branding import app_icon
+from .monitor import AnimatedLogo
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine, EngineThread, FirmwareEngineThread, FirmwareReadThread, ProbeEngine, ProbeThread, ServicesEngine, ServicesEngineThread, VendorProbeThread
 from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
@@ -280,11 +281,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
-        _logo = logo_png_data_uri()
-        _logo_html = (f'<p align="center" style="margin-top:14px">'
-                      f'<img src="{_logo}" width="64" height="64"></p>') if _logo else ""
-        help_view.setHtml(HELP[i18n.LANG] + _logo_html + ABOUT)
-        self.tabs.addTab(help_view, T("Hilfe"))
+        help_view.setHtml(HELP[i18n.LANG] + ABOUT)
+        help_page = QWidget()                      # Hilfe-Text, darunter das animierte Logo
+        hl = QVBoxLayout(help_page)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(0)
+        hl.addWidget(help_view, 1)
+        self.help_logo = AnimatedLogo(64)
+        hl.addWidget(self.help_logo, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.tabs.addTab(help_page, T("Hilfe"))
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)

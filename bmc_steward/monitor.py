@@ -175,6 +175,44 @@ def draw_logo(p, rect, t, glow=0.0):
     p.restore()
 
 
+class AnimatedLogo(QWidget):
+    """Das Markenzeichen, wie im Monitor animiert (Aufbau, grüner Schein, Abbau, alle CYCLE_MS von vorn),
+    auf durchsichtigem Grund. Der Takt läuft nur, solange das Widget sichtbar ist."""
+    FRAME_MS = 40
+
+    def __init__(self, size=72, parent=None):
+        super().__init__(parent)
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.update)
+        pad = size // 4                         # Platz für den Schein rundherum
+        self._size = size
+        self.setFixedSize(size + 2 * pad, size + 2 * pad)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def elapsed(self):
+        return self._clock.elapsed() if self._clock.isValid() else 0
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._clock.start()                     # bei jedem Zeigen von vorn
+        self._timer.start(self.FRAME_MS)
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        self._clock.invalidate()
+        super().hideEvent(e)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        ms = self.elapsed()
+        r = self.rect()
+        box = QRectF(r.center().x() - self._size / 2 + 0.5, r.center().y() - self._size / 2 + 0.5,
+                     self._size, self._size)
+        draw_logo(p, box, logo_progress(ms), glow_strength(ms))
+        p.end()
+
+
 class MonitorWidget(QWidget):
     """Kleiner Bildschirm mit Gehäuse. info() liefert (Widget, auch_verdeckt_abgreifbar, Beschriftung)
     der laufenden Konsole oder None, wenn nichts verbunden ist."""
