@@ -93,14 +93,19 @@ const L=de?{shot:"● Aufnehmen",send:"Übernehmen",ph:"Passwort",busy:"Lese …
 const $=id=>document.getElementById(id), base=location.pathname.replace(/[^/]*$/,"");
 $("shot").textContent=L.shot;$("send").textContent=L.send;$("val").placeholder=L.ph;
 say(L.tip);$("c_s").textContent=L.s;$("c_m").textContent=L.m;$("c_f").textContent=L.f;
-const SIZE={s:[.82,.5],m:[.9,.62],f:[.98,.78]};let cx=.5,cy=.5,track=null,prevUrl=null;
-const BAND=0.30;      // Höhe des Kamerastreifens als Anteil der Breite; kurzer Streifen, oben/unten beschnitten, keine schwarzen Ränder
+const SIZE={s:[.82,.15],m:[.9,.186],f:[.98,.234]};   // Breite als Anteil der Fläche, Höhe als Anteil der Flächen-BREITE (Rahmen bleibt gleich groß)
+let cx=.5,cy=.5,track=null,prevUrl=null;
+const BAND=0.56;      // Höhe des Kamerabilds als Anteil der Breite: über und unter dem gelben Rahmen bleibt deutlich mehr Bild sichtbar
+function frac(){      // Rahmen als Anteil der Fläche; die Höhe richtet sich nach der tatsächlichen Flächenhöhe
+ const [w,hw]=SIZE[pick("c")],W=$("wrap").clientWidth,H=$("wrap").clientHeight;
+ return [w,H?Math.min(.98,hw*W/H):hw/BAND];
+}
 function say(t,c){$("msg").textContent=t;$("msg").className=c||""}
 function pick(n){return document.querySelector("input[name="+n+"]:checked").value}
 function fit(){return false}      // immer „cover": das Band zeigt einen breiten Streifen, nicht das ganze Hochkantbild
 function layout(){
  const v=$("v");if(!v.videoWidth)return;
- const AW=$("area").clientWidth, h=Math.round(AW*BAND);
+ const AW=$("area").clientWidth, h=Math.round(Math.min(AW*BAND,innerHeight*.4));   // auf kleinen/querformatigen Bildschirmen begrenzt
  $("v").style.objectFit="cover";
  $("area").style.height=h+"px";                 // Fläche umschließt den Streifen -> keine schwarzen Balken
  $("wrap").style.width=AW+"px";$("wrap").style.height=h+"px";box();
@@ -110,7 +115,7 @@ function geo(){
  return{s:s,ox:(v.videoWidth*s-W)/2,oy:(v.videoHeight*s-H)/2,W:W,H:H};
 }
 function box(){
- const [w,h]=SIZE[pick("c")];cx=Math.min(1-w/2,Math.max(w/2,cx));cy=Math.min(1-h/2,Math.max(h/2,cy));
+ const [w,h]=frac();cx=Math.min(1-w/2,Math.max(w/2,cx));cy=Math.min(1-h/2,Math.max(h/2,cy));
  const b=$("box").style;b.left=(cx-w/2)*100+"%";b.top=(cy-h/2)*100+"%";b.width=w*100+"%";b.height=h*100+"%";
 }
 document.querySelectorAll("input[name=c]").forEach(e=>e.onchange=box);
@@ -133,7 +138,7 @@ async function cam(){
 }
 $("shot").onclick=async()=>{
  const v=$("v");if(!v.videoWidth){say(L.nocam,"err");return}
- const [w,h]=SIZE[pick("c")],g=geo(),
+ const [w,h]=frac(),g=geo(),
   sw=Math.round(w*g.W/g.s),sh=Math.round(h*g.H/g.s),
   sx=Math.max(0,Math.min(v.videoWidth-sw,Math.round((g.ox+(cx-w/2)*g.W)/g.s))),
   sy=Math.max(0,Math.min(v.videoHeight-sh,Math.round((g.oy+(cy-h/2)*g.H)/g.s))),

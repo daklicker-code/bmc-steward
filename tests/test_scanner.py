@@ -97,5 +97,58 @@ class TestScanServerAuth(unittest.TestCase):
         self.assertGreaterEqual(len(self.token), 8)
 
 
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
+_CHROME = next((__import__("shutil").which(n) for n in ("google-chrome", "chromium", "chromium-browser")
+                if __import__("shutil").which(n)), None)
+
+
+@unittest.skipUnless(sync_playwright and _CHROME, "Playwright oder Chrome fehlt")
+class TestScanPageLayout(unittest.TestCase):
+    """Kamerabild der Scanner-Seite: über und unter dem gelben Rahmen muss deutlich mehr Bild zu sehen sein."""
+
+    def test_margin_above_and_below_frame(self):
+        import socketserver
+        import threading
+        from http.server import BaseHTTPRequestHandler
+        from bmc_steward.scanner import SCAN_HTML
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(SCAN_HTML.encode())
+
+            def log_message(self, *a):
+                pass
+        srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+        self.addCleanup(srv.server_close)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        with sync_playwright() as p:
+            b = p.chromium.launch(executable_path=_CHROME, args=["--use-fake-ui-for-media-stream",
+                                                                 "--use-fake-device-for-media-stream"])
+            ctx = b.new_context(viewport={"width": 390, "height": 780}, permissions=["camera"])
+            pg = ctx.new_page()
+            pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/scan/")
+            pg.wait_for_function("document.getElementById('v').videoWidth>0", timeout=15000)
+            pg.wait_for_timeout(500)
+            for size in ("s", "m", "f"):
+                pg.click(f"label:has(input[name=c][value={size}])")
+                r = pg.evaluate("""()=>{const a=document.getElementById('area').getBoundingClientRect(),
+                  f=document.getElementById('box').getBoundingClientRect();
+                  return {w:a.width,above:f.top-a.top,below:a.bottom-f.bottom,fh:f.height}}""")
+                self.assertGreater(r["above"], 0.10 * r["w"], f"Ausschnitt {size}: zu wenig Bild über dem Rahmen")
+                self.assertGreater(r["below"], 0.10 * r["w"], f"Ausschnitt {size}: zu wenig Bild unter dem Rahmen")
+            pg.click("label:has(input[name=c][value=s])")
+            self.assertAlmostEqual(pg.evaluate("document.getElementById('box').getBoundingClientRect().height")
+                                   / pg.evaluate("document.getElementById('area').getBoundingClientRect().width"),
+                                   0.15, delta=0.01, msg="Rahmen „Klein“ behält seine Größe")
+            b.close()
+
+
 if __name__ == "__main__":
     unittest.main()
