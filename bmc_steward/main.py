@@ -38,6 +38,157 @@ MAIN = None         # das Hauptfenster; beim Sprachwechsel wird es neu aufgebaut
 
 
 
+class RestoreDialog(QDialog):
+    """Listet automatische Sicherungen auf und ermöglicht das selektive Vorbefüllen der Neuware-Maske
+    mit gesicherten Netzwerkeinstellungen (IP, Subnetz, Gateway, Hostname)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle(T("Aus Sicherung wiederherstellen"))
+        self.setMinimumSize(900, 560)
+        self._selected_data = None   # dict mit den extrahierten Netzwerkwerten des aktuell gewählten Backups
+
+        # -- linke Seite: Dateiliste ------------------------------------------------
+        self.file_table = QTableWidget(0, 5)
+        self.file_table.setHorizontalHeaderLabels(
+            [T("Datum / Uhrzeit"), T("IP-Adresse"), T("Hersteller"), T("Anlass"), T("Seriennr.")])
+        self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.file_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.file_table.horizontalHeader().setStretchLastSection(True)
+        self.file_table.selectionModel().selectionChanged.connect(self._on_select)
+
+        # -- rechte Seite: Details --------------------------------------------------
+        detail_box = QGroupBox(T("Gesicherte Netzwerkeinstellungen"))
+        df = QFormLayout(detail_box)
+        self._d_ip      = QLabel("—"); self._d_mask = QLabel("—")
+        self._d_gw      = QLabel("—"); self._d_host = QLabel("—")
+        self._d_bak_ip  = QLabel("—"); self._d_time = QLabel("—")
+        df.addRow(T("IP-Adresse:"),       self._d_ip)
+        df.addRow(T("Subnetzmaske:"),     self._d_mask)
+        df.addRow(T("Gateway:"),          self._d_gw)
+        df.addRow(T("Hostname:"),         self._d_host)
+        df.addRow(T("Letzte Adresse:"),   self._d_bak_ip)
+        df.addRow(T("Sicherungszeit:"),   self._d_time)
+
+        hint = QLabel(T(
+            "„Als neue Zeile eintragen“ fügt in der Neuware-Maske eine neue Zeile\n"
+            "mit der gesicherten Ziel-IP, Subnetz, Gateway und Hostname ein.\n"
+            "Passwort und Hersteller müssen dort noch eingetragen werden."))
+        hint.setWordWrap(True)
+
+        self._apply_btn = QPushButton(T("Als neue Zeile eintragen"))
+        self._apply_btn.setEnabled(False)
+        self._apply_btn.clicked.connect(self.accept)
+
+        close_btn = QPushButton(T("Schließen"))
+        close_btn.clicked.connect(self.reject)
+
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self._apply_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+
+        right = QVBoxLayout()
+        right.addWidget(detail_box)
+        right.addWidget(hint)
+        right.addStretch()
+        right.addLayout(btn_row)
+
+        # -- Haupt-Layout -----------------------------------------------------------
+        split = QHBoxLayout()
+        split.addWidget(self.file_table, 3)
+        right_w = QWidget()
+        right_w.setLayout(right)
+        split.addWidget(right_w, 2)
+
+        lay = QVBoxLayout(self)
+        lay.addLayout(split)
+
+        self._load_backups()
+
+    # ---- Hilfsfunktionen ----------------------------------------------------------
+
+    @staticmethod
+    def _extract_network(resources):
+        """Sucht in den gespeicherten Redfish-Ressourcen nach Netzwerkdaten eines EthernetInterface."""
+        ip = mask = gw = host = ""
+        for path, data in resources.items():
+            if not isinstance(data, dict):
+                continue
+            # Einzelnes Interface (z. B. .../EthernetInterfaces/NIC.1)
+            if "/EthernetInterfaces/" in path and path.count("/EthernetInterfaces/") == 1:
+                if not host:
+                    host = data.get("HostName", "")
+                for key in ("IPv4StaticAddresses", "IPv4Addresses"):
+                    addrs = data.get(key) or []
+                    if addrs and isinstance(addrs[0], dict):
+                        a = addrs[0]
+                        if not ip:
+                            ip   = a.get("Address", "")
+                        if not mask:
+                            mask = a.get("SubnetMask", "")
+                        if not gw:
+                            gw   = a.get("Gateway", "")
+                        break
+        return {"ip": ip, "mask": mask, "gw": gw, "host": host}
+
+    def _load_backups(self):
+        """Liest alle Backup-JSON-Dateien und füllt die Tabelle."""
+        from . import i18n as _i18n
+        base = _i18n.DATA / "sicherungen"
+        entries = []
+        if base.is_dir():
+            for json_path in sorted(base.rglob("*.json"), reverse=True):
+                try:
+                    with open(json_path, encoding="utf-8") as fh:
+                        doc = json.load(fh)
+                except Exception:
+                    continue
+                meta = doc.get("meta", {})
+                net  = self._extract_network(doc.get("resources", {}))
+                entries.append((meta, net, json_path, doc.get("resources", {})))
+
+        self.file_table.setRowCount(len(entries))
+        self._entries = entries
+        for row, (meta, net, path, _) in enumerate(entries):
+            ts    = meta.get("time", "")[:16].replace("T", " ")
+            addr  = meta.get("address", "")
+            vendor = meta.get("vendor", "")
+            reason = meta.get("reason", "")
+            serial = path.parent.name
+            for col, val in enumerate((ts, addr, vendor, reason, serial)):
+                item = QTableWidgetItem(val)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.file_table.setItem(row, col, item)
+
+    def _on_select(self):
+        rows = self.file_table.selectedItems()
+        if not rows:
+            self._apply_btn.setEnabled(False)
+            self._selected_data = None
+            return
+        row = self.file_table.currentRow()
+        if row < 0 or row >= len(self._entries):
+            return
+        meta, net, path, _ = self._entries[row]
+        self._d_ip.setText(net["ip"]   or "—")
+        self._d_mask.setText(net["mask"] or "—")
+        self._d_gw.setText(net["gw"]   or "—")
+        self._d_host.setText(net["host"] or "—")
+        self._d_bak_ip.setText(meta.get("address", "—"))
+        self._d_time.setText(meta.get("time", "—")[:19].replace("T", " "))
+        self._selected_data = {
+            "new_ip":   net["ip"],
+            "mask":     net["mask"],
+            "gw":       net["gw"],
+            "host":     net["host"],
+            "cur_ip":   meta.get("address", ""),
+            "vendor":   meta.get("vendor", ""),
+        }
+        self._apply_btn.setEnabled(bool(net["ip"]))
+
+
 class PwDelegate(QStyledItemDelegate):
     """Zeigt Passwörter in der Tabelle als Punkte; beim Bearbeiten bleibt die Eingabe verdeckt."""
 
@@ -145,6 +296,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "Kann ein BMC Konten nicht abschalten, bekommt das Werkskonto ein Zufallspasswort, das nirgends\n"
             "gespeichert wird; mit dem neuen Administrator lässt es sich jederzeit zurücksetzen."))
         f.addRow(self.lock_factory)
+        self.clear_pass_after = QCheckBox(T("Passwörter nach scharfem Lauf löschen"))
+        self.clear_pass_after.setChecked(True)
+        self.clear_pass_after.setToolTip(T(
+            "Leert nach jedem scharfen Lauf alle Passwortfelder (Werkskonto, neuer Administrator, je Zeile).\n"
+            "Die Passwörter bleiben nur so lange im Arbeitsspeicher, wie nötig. Trockenlauf löscht nichts.\n"
+            "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
+        f.addRow(self.clear_pass_after)
         self.tip_row(f, T("User-Slot (nur Dell)"), self.slot,
                      T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
                      "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
@@ -344,8 +502,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         data_btn.setToolTip(T("Öffnet den Datenordner mit den automatischen Sicherungen vor jeder Änderung und dem "
                               "Revisionsprotokoll aller scharfen Läufe:\n{0}").format(i18n.DATA))
         data_btn.clicked.connect(self.open_data_dir)
+        restore_btn = QPushButton(T("Aus Sicherung wiederherstellen"))
+        restore_btn.setToolTip(T(
+            "Zeigt alle automatischen Sicherungen und ermöglicht das Vorbefüllen\n"
+            "der Neuware-Maske mit gesicherten Netzwerkeinstellungen."))
+        restore_btn.clicked.connect(self.open_restore_dialog)
         tools.addWidget(pins_btn)
         tools.addWidget(data_btn)
+        tools.addWidget(restore_btn)
         sl.addLayout(tools)
         sl.addWidget(self.lang)
         body = QHBoxLayout()
@@ -442,7 +606,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 "mask": self.def_mask.text().strip(), "gateway": self.def_gw.text().strip(),
                 "dhcp_if": (self.iface.currentData() or [""])[0],
                 "dhcp_from": self.dhcp_from.text().strip(), "dhcp_to": self.dhcp_to.text().strip(),
-                "dhcp_auto": self.auto_take.isChecked(), "lock_factory": self.lock_factory.isChecked()}
+                "dhcp_auto": self.auto_take.isChecked(), "lock_factory": self.lock_factory.isChecked(),
+                "clear_pass_after": self.clear_pass_after.isChecked()}
 
     def apply_profile(self, p):
         dirty = self.dirty                      # ein Profilwechsel ändert die Serverliste nicht
@@ -461,6 +626,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             self.dhcp_to.setText(str(p["dhcp_to"]))
         self.auto_take.setChecked(bool(p.get("dhcp_auto", True)))      # ältere Profile ohne Angabe: an
         self.lock_factory.setChecked(bool(p.get("lock_factory", True)))
+        self.clear_pass_after.setChecked(bool(p.get("clear_pass_after", True)))
         self.validate_defaults()
         self.validate_range()
         self.dirty = dirty
@@ -1853,7 +2019,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.show_leases(rows)
 
     def show_leases(self, rows):
-        """Geräteliste anzeigen: Zeilen aus (IP, MAC, Name)."""
+        """Geräteliste anzeigen: Zeilen aus (IP, MAC, Name).
+
+        Laufende vBMC-Simulator-Instanzen werden herausgefiltert: Wenn der vBMC im Router-Modus
+        auf derselben physischen NIC laueft wie ein echter Server, erscheinen beide in derselben
+        DHCP-Lease-Liste. Die Simulator-MACs werden ausgeblendet, damit nur echte Hardware sichtbar ist."""
+        vbmc_macs = self.vbmc_running_macs()
+        if vbmc_macs:
+            rows = [(ip, mac, name) for ip, mac, name in rows
+                    if mac.lower() not in vbmc_macs]
         rows = sorted(rows, key=lambda r: ipaddress.ip_address(r[0]))
         self.leases.setRowCount(len(rows))
         for r, vals in enumerate(rows):
@@ -1986,6 +2160,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.stop.setEnabled(False)
         self.table.setEnabled(True)
         self.status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+        if code == 0 and not self.dry.isChecked() and self.clear_pass_after.isChecked():
+            self.cur_pass.clear()
+            self.new_pass.clear()
+            self.new_pass2.clear()
+            for r in range(self.table.rowCount()):
+                item = self.table.item(r, 1)
+                if item:
+                    item.setText("")
 
     # ---------- Bestandsserver (schon konfigurierte BMCs: Verbindung prüfen) ----------
     def build_existing(self):
@@ -2407,6 +2589,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.hard_tmo.setValue(15)
         self.hard_tmo.setSuffix(" min")
         self.hard_tmo.setSpecialValueText(T("unverändert"))
+        self.hard_tls_min = QComboBox()
+        for label, key in ((T("unverändert"), ""), (T("TLS 1.2"), "tls12"), (T("TLS 1.3"), "tls13")):
+            self.hard_tls_min.addItem(label, key)
+        self.hard_tls_min.setToolTip(T(
+            "Setzt die TLS-Mindestversion des BMC.\n"
+            "TLS 1.2: empfohlen für Kompatibilität mit Monitoring-Tools und älteren Clients.\n"
+            "TLS 1.3: höchste Sicherheit, nicht von allen Hersteller-Firmwares unterstützt.\n"
+            "Wird derzeit für Dell iDRAC über die iDRAC-Attribute-API gesetzt;\n"
+            "bei anderen Herstellern wird die Einstellung versucht und bei Fehler übersprungen."))
         f = QFormLayout(self.hard_box)
         f.addRow(self.hard_ipmi)
         f.addRow(self.hard_ssdp)
@@ -2416,6 +2607,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.tip_row(f, T("Sperrdauer"), self.hard_lock_min, T("So lange bleibt ein gesperrtes Konto gesperrt."))
         self.tip_row(f, T("Session-Zeitlimit"), self.hard_tmo,
                      T("Untätige Anmeldungen (Weboberfläche, Redfish) enden nach dieser Zeit (0 = unverändert)."))
+        self.tip_row(f, T("TLS-Mindestversion"), self.hard_tls_min,
+                     self.hard_tls_min.toolTip())
 
         settings = QWidget()
         sv = QVBoxLayout(settings)
@@ -2539,8 +2732,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if self.hard_box.isChecked():
             out["hard"] = {"ipmi": self.hard_ipmi.isChecked(), "ssdp": self.hard_ssdp.isChecked(),
                            "snmp": self.hard_snmp.isChecked(), "lockout": self.hard_lock.value(),
-                           "lockout_min": self.hard_lock_min.value(), "timeout_min": self.hard_tmo.value()}
-            if not any(out["hard"][k] for k in ("ipmi", "ssdp", "snmp", "lockout", "timeout_min")):
+                           "lockout_min": self.hard_lock_min.value(), "timeout_min": self.hard_tmo.value(),
+                           "tls_min": self.hard_tls_min.currentData() or ""}
+            if not any(out["hard"][k] for k in ("ipmi", "ssdp", "snmp", "lockout", "timeout_min", "tls_min")):
                 return bad(None, T("Härtung: mindestens eine Einstellung wählen."))
         return out
 
@@ -2627,7 +2821,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "hard_on": self.hard_box.isChecked(), "hard_ipmi": self.hard_ipmi.isChecked(),
             "hard_ssdp": self.hard_ssdp.isChecked(), "hard_snmp": self.hard_snmp.isChecked(),
             "hard_lock": self.hard_lock.value(), "hard_lock_min": self.hard_lock_min.value(),
-            "hard_tmo": self.hard_tmo.value(),
+            "hard_tmo": self.hard_tmo.value(), "hard_tls_min": self.hard_tls_min.currentData() or "",
         }
 
     def import_services(self, s):
@@ -2665,11 +2859,49 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.hard_lock.setValue(s.get("hard_lock", 5))
         self.hard_lock_min.setValue(s.get("hard_lock_min", 15))
         self.hard_tmo.setValue(s.get("hard_tmo", 15))
+        tls_key = s.get("hard_tls_min", "")
+        idx = self.hard_tls_min.findData(tls_key)
+        self.hard_tls_min.setCurrentIndex(max(0, idx))
 
     # ---------- Zertifikate und Datenordner ----------
     def open_data_dir(self):
         path = i18n.private_dir(i18n.DATA)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def open_restore_dialog(self):
+        """Öffnet den Sicherungs-Browser. Wählt der Benutzer „Als neue Zeile eintragen",
+        wird in der Neuware-Tabelle eine vorbefüllte Zeile angelegt."""
+        dlg = RestoreDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        data = dlg._selected_data
+        if not data:
+            return
+        from .i18n import COLS
+        n_cols = len(COLS)
+        # Neue Zeile anlegen; Spalten: 0=aktuelle IP, 2=neue IP, 3=Subnetz, 4=Gateway, 5=Hostname
+        self.add_row([""] * n_cols)
+        r = self.table.rowCount() - 1
+        field_map = {0: data.get("cur_ip", ""), 2: data.get("new_ip", ""),
+                     3: data.get("mask", ""), 4: data.get("gw", ""), 5: data.get("host", "")}
+        for col, val in field_map.items():
+            if val:
+                item = self.table.item(r, col)
+                if item:
+                    item.setText(val)
+        # Hersteller in Spalte 7 (falls vorhanden und COLS gross genug)
+        if n_cols > 7 and data.get("vendor"):
+            item = self.table.item(r, 7)
+            if item:
+                item.setText(data["vendor"])
+        self.table.scrollToItem(self.table.item(r, 0))
+        vendor_key = data.get("vendor", "")
+        if vendor_key:
+            idx = self.vendor.findData(vendor_key)
+            if idx >= 0:
+                self.vendor.setCurrentIndex(idx)
+        self.tabs.setCurrentWidget(self.tabs.widget(1))   # Neuware-Reiter
+        self.touch()
 
     def edit_pins(self):
         st = trust.store()
@@ -2908,6 +3140,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "texts": {k: getattr(self, k).text() for k in self.STATE_FIELDS},
             "new_pass2_chk": self.new_pass2_chk.isChecked(),
             "lock_factory": self.lock_factory.isChecked(),
+            "clear_pass_after": self.clear_pass_after.isChecked(),
             "auto_take": self.auto_take.isChecked(), "lease_taken": sorted(self.lease_taken),
             "rows": [([self.cell(r, c) for c in range(len(i18n.COLS))], self.is_done(r))
                      for r in range(self.table.rowCount())],
@@ -2929,6 +3162,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             getattr(self, key).setText(text)
         self.new_pass2_chk.setChecked(s.get("new_pass2_chk", False))
         self.lock_factory.setChecked(s.get("lock_factory", True))
+        self.clear_pass_after.setChecked(s.get("clear_pass_after", True))
         self.auto_take.setChecked(s.get("auto_take", True))
         self.lease_taken = set(s.get("lease_taken", []))
         self.table.blockSignals(True)

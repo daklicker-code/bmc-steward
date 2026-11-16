@@ -640,6 +640,13 @@ class VbmcTabMixin:
     def vbmc_running(self):
         return self.vbmc_proc is not None and self.vbmc_proc.state() != QProcess.ProcessState.NotRunning
 
+    def vbmc_running_macs(self):
+        """Menge der MAC-Adressen aller aktuell laufenden vBMC-Instanzen (Kleinbuchstaben).
+
+        Wird im DHCP-Reiter genutzt, um Simulator-Eintraege aus der Lease-Liste herauszufiltern,
+        wenn der vBMC im Router-Modus auf derselben physischen NIC laueft wie ein echter Server."""
+        return {s["mac"].lower() for s in self.vbmc_servers if s.get("mac")}
+
     def _vbmc_lock(self, running):
         for w in (self.vbmc_mode, self.vbmc_opts, self.vbmc_fleet, self.vbmc_one_each, self.vbmc_del_btn,
                   self.vbmc_rand_btn, self.vbmc_load_btn, *self.vbmc_add_btns):

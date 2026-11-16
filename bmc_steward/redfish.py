@@ -1592,6 +1592,15 @@ class ServicesEngine(RedfishClient):
         if tmo > 0:
             results.append(self.soft(T("Härtung: Session-Zeitlimit {0} min").format(tmo), ip, pw, "PATCH",
                                      "/redfish/v1/SessionService", {"SessionTimeout": max(30, min(86400, tmo * 60))}))
+        tls_key = cfg.get("tls_min") or ""
+        _TLS_LABEL = {"tls12": "TLS 1.2 and Higher", "tls13": "TLS 1.3 and Higher"}
+        if tls_key in _TLS_LABEL:
+            tls_val = _TLS_LABEL[tls_key]
+            # Dell iDRAC: Attribute-API; für andere Hersteller soft() – überspringt bei 404/405/501
+            mgr_attrs = mgr + "/Attributes"
+            results.append(self.soft(T("Härtung: TLS-Mindestversion {0}").format(tls_val),
+                                     ip, pw, "PATCH", mgr_attrs,
+                                     {"Attributes": {"Security.1.TLSProtocol": tls_val}}))
         if False in results:
             return False
         return True if True in results else None
