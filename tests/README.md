@@ -23,6 +23,9 @@ Exit-Code `0` = alles grün, sonst `1` (für CI/Pre-Push geeignet).
 | `test_redfish.py` | `xq()` (XML-Injektion), `scrub()` (Geheimnis-Schwärzung), RIBCL-Trockenlauf-Maskierung | Benutzer/Passwort/Hostname gehen in RIBCL-XML – Ausbruch verhindern |
 | `test_dhcp.py` | DHCP-Options-/Paket-Parser, Adressvergabe | Server verarbeitet Pakete aus dem Netz; nie außerhalb des Bereichs vergeben |
 | `test_scanner.py` | Handy-HTTPS-Endpunkt: Token-Zwang, Größenlimits, JSON | Größter Netz-Angriffspunkt (nimmt Bilder/Passwörter an) |
+| `test_selfguard.py` | Eigenschutz: Schutzliste, eigene Kennung, Sperre vor UEFI/Firmware/Neustart | Das Tool darf nie den Host abschalten, auf dem es läuft |
+| `test_i18n.py` | Jeder Oberflächentext in allen vier Sprachen, Platzhalter gleich | Keine halb deutschen Meldungen, keine Formatfehler zur Laufzeit |
+| `test_vbmc.py` (Security) | Zertifikats-Fingerabdruck je Gerät, Sessions, ein Anmeldeversuch, Sicherung, Revisionsprotokoll, Härtung | Kein Passwort an ein fremdes Zertifikat, keine Kontosperre, Nachweis jeder Änderung |
 | `fuzz.py` | Zufalls-/Kaputtdaten an DHCP- und Scanner-Parser | Kein Absturz durch bösartige Eingaben |
 | `audit.py` | Statische Mustersuche im Quelltext | Shell-Injektion, eval/exec, pickle, unsicheres TLS außerhalb der Ausnahmen |
 

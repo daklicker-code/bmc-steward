@@ -41,7 +41,7 @@ Seit Version 3.0 steht links statt der Reiterleiste ein **Menü**; die gewählte
 | **↳ Handy-Scanner** | Öffnet aus „Neuware“ eine kameragestützte Eingabe: Das Handy (im selben Netz oder per USB-Tethering/Hotspot verbunden) scannt Barcode oder Text (OCR) vom Geräteaufkleber, der Wert landet direkt im Passwortfeld. Es wird kein Foto auf dem Handy gespeichert, die Verbindung läuft verschlüsselt über einen geheimen Link. |
 | **Bestandsserver** | Für bereits konfigurierte BMCs: Verbindung nur lesend testen (Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware, Administratorrechte). Ein Anmeldeversuch pro Gerät, damit kein Konto gesperrt wird. Erfolgreiche Server gehen in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ über. |
 | **UEFI-Einstellungen** | Liest die tatsächlich vorhandenen UEFI/BIOS-Attribute von einem Referenzgerät und setzt gewünschte Werte auf allen Servern der Liste. Passwort-, TPM- und Löschattribute sind gesperrt. |
-| **Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung und – experimentell – HTTPS-Zertifikat-Import. |
+| **Dienste** | Richtet herstellerübergreifend Verwaltungsdienste ein: NTP, Syslog, LDAP/AD mit Gruppen-zu-Rollen-Zuordnung, **Härtung** (IPMI über LAN, SSDP, SNMP aus; Kontosperre; Session-Zeitlimit) und – experimentell – HTTPS-Zertifikat-Import. |
 | **Firmware** | Firmware-Updates über den Redfish-UpdateService: liest das Firmware-Inventar eines Referenzgeräts und spielt dann eine lokale Datei (Multipart-/HTTP-Push) oder eine Datei von einer URL (SimpleUpdate) auf alle Server der Liste – mit Live-Fortschritt und Verifikation. Trockenlauf ist Vorgabe; scharfe Läufe verlangen das Eintippen der Serverzahl. |
 | **UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. |
 | **Testlabor** | Stellt einen Cluster virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Konfigraum** (virtueller Staging-Switch, DHCP aus „DHCP-Server“) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
@@ -67,6 +67,17 @@ Dazu kommt:
   bezogene Adresse, öffentliche Adresse, ein anderer DHCP-Server antwortet)
 - UEFI-Attribute für Passwörter, TPM und Löschfunktionen sind gesperrt
 - Passwörter bleiben im Arbeitsspeicher, solange man sie nicht ausdrücklich speichert
+- **Zertifikats-Vertrauen:** Das Zertifikat jedes BMC wird beim ersten Kontakt gemerkt; zeigt dasselbe Gerät
+  später ein anderes, wird es gesperrt, bevor ein Passwort gesendet wird (Knopf „Zertifikate …“)
+- **Anmeldung per Redfish-Session:** Das Passwort geht je Gerät einmal über die Leitung, am Ende wird abgemeldet;
+  eine abgelehnte Anmeldung wird nie wiederholt (keine Kontosperre durch das Tool)
+- **Sicherung vor jeder Änderung** (JSON je Gerät) und **Revisionsprotokoll** aller ändernden Aufrufe scharfer
+  Läufe (Knopf „Sicherungen/Protokolle“)
+- **Firmware:** SHA-256-Prüfung gegen den Sollwert des Herstellers, die geprüfte Datei wird für alle Server
+  verwendet; „Bei Fehler anhalten“ ist voreingestellt
+- **Eigenschutz:** UEFI-Änderungen, Firmware-Updates und „Ins UEFI-Setup booten“ prüfen vorher die Identität
+  des Servers. Der eigene Rechner und alle Server der Schutzliste (Knopf „Eigenschutz“ links unten) werden nie
+  neu gestartet oder geflasht; ist die Identität im scharfen Lauf nicht lesbar, wird der Server übersprungen
 
 ## Voraussetzungen
 
@@ -194,10 +205,30 @@ das, meldet es und ändert nichts). iLO 3 kann nur TLS 1.0/1.1; das Tool schalte
 selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
 **Vor einem großen Rollout immer zuerst ein einzelnes Gerät konfigurieren.**
 
+## Betrieb in einer VM (VMware, Proxmox, Hyper-V)
+
+- **Eigenschutz einrichten:** Die VM kennt ihren Host nicht. Unter „Eigenschutz“ alle Hosts eintragen, auf
+  denen die VM laufen kann (Service-Tag/Seriennummer, System-UUID oder BMC-Adresse). Solange die Liste leer
+  ist, zeigt der Knopf eine rote Warnung und jede Sicherheitsabfrage weist darauf hin.
+- Die VM möglichst auf einem eigenen Management-Host/-Cluster betreiben, nicht auf den Servern, die sie
+  bearbeitet. Während Firmware-Läufen kein vMotion, kein Snapshot mit Arbeitsspeicher, kein Suspend.
+- Netzwerk: eigene Netzwerkkarte (vmxnet3) in der Staging-/OOB-Portgruppe, kein NAT. Der DHCP-Server und die
+  SSDP-Suche brauchen dasselbe L2-Segment wie die BMCs. Für fabrikneue BMCs mit fester Werks-IP eine
+  zusätzliche Adresse in deren Netz vergeben.
+- Für Virtual Media holt sich der BMC die Datei selbst – er muss die VM erreichen können.
+- Zeit per NTP **oder** VMware-Tools-Zeitabgleich, nicht beides.
+- Gespeicherte Listen mit Passwörtern landen in jedem VM-Backup: nicht speichern oder die VM verschlüsseln.
+
 ## Sicherheitshinweise
 
 - Das Tool nur in einem getrennten Staging-Netz verwenden.
-- BMCs haben ab Werk selbstsignierte Zertifikate, TLS-Zertifikate werden deshalb nicht geprüft.
+- BMCs haben ab Werk selbstsignierte Zertifikate. Statt gegen eine CA prüft das Tool deshalb nach dem Prinzip
+  „beim ersten Kontakt merken“: Der SHA-256-Fingerabdruck wird je Gerät gespeichert, ein späterer Wechsel sperrt
+  das Gerät, bevor ein Passwort gesendet wird. Der allererste Kontakt ist ungeschützt – deshalb nur im getrennten
+  Staging-Netz arbeiten und bei Bestandsservern den Fingerabdruck einmal mit der BMC-Oberfläche vergleichen.
+- Arbeitsdaten (Fingerabdrücke `bmc-pins.json`, Sicherungen `sicherungen/`, Revisionsprotokoll `protokolle/`)
+  liegen neben dem Tool, Rechte 0600/0700. Mit der Umgebungsvariable `BMC_STEWARD_DATA` lässt sich ein anderer
+  Ordner wählen, z. B. ein verschlüsseltes Laufwerk.
 - Eine gespeicherte Liste enthält Passwörter nur auf ausdrücklichen Wunsch, dann im Klartext. So eine Datei
   nach dem Rollout löschen.
 

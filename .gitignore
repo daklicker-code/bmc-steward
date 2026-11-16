@@ -1,10 +1,12 @@
 # Eigene Einstellungen, Serverlisten und Protokolle gehören nicht ins Repository
 bmc-profile.json
 bmc-bios-profile.json
+bmc-selfguard.json
+bmc-pins.json
+protokolle/
+sicherungen/
 servers.csv
 *.csv
 *.log
 __pycache__/
 *.pyc
-bmc-profile.json
-bmc-bios-profile.json

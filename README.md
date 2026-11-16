@@ -41,7 +41,7 @@ Since version 3.0 the tab bar is replaced by a **menu** on the left; the selecte
 | **↳ Phone scanner** | Opens a camera-based input from “New hardware”: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
 | **Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to “New hardware”, “UEFI settings” and “Services”. |
 | **UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
-| **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping and – experimental – HTTPS certificate import. |
+| **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping, **hardening** (IPMI over LAN, SSDP, SNMP off; account lockout; session timeout) and – experimental – HTTPS certificate import. |
 | **Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
 | **UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. |
 | **Test lab** | Builds a cluster of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **config room** (virtual staging switch, DHCP from “DHCP server”) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
@@ -66,6 +66,18 @@ On top of that:
   (default route, DHCP-assigned address, public address, another DHCP server answering)
 - UEFI password, TPM and erase attributes are locked
 - Passwords stay in memory unless you explicitly save them
+- **Certificate trust:** each BMC's certificate is remembered on first contact; if the same device later shows a
+  different one, it is blocked before any password is sent (button “Certificates …”)
+- **Login via Redfish session:** the password crosses the wire once per device and the tool logs out at the end;
+  a rejected login is never retried (the tool never locks an account)
+- **Backup before every change** (JSON per device) and an **audit log** of all changing calls of live runs
+  (button “Backups/logs”)
+- **Firmware:** SHA-256 check against the vendor's value, the checked file is used for all servers; “Stop on
+  error” is preselected
+- **Self-protection:** UEFI changes, firmware updates and “Boot into UEFI setup” check the server's identity
+  first. The machine running BMC-Steward and every server on the protection list (button “Self-protection”
+  at the bottom left) are never restarted or flashed; if the identity cannot be read in a live run, the
+  server is skipped
 
 ## Requirements
 
@@ -192,10 +204,30 @@ says so and changes nothing). iLO 3 only speaks TLS 1.0/1.1; the tool falls back
 for such devices automatically and notes it in the log.
 **Always try a single device first before a large rollout.**
 
+## Running in a VM (VMware, Proxmox, Hyper-V)
+
+- **Set up self-protection:** the VM does not know its host. Under “Self-protection”, enter every host the
+  VM can run on (service tag/serial number, system UUID or BMC address). While the list is empty, the button
+  shows a red warning and every confirmation prompt points it out.
+- Preferably run the VM on a dedicated management host/cluster, not on the servers it manages. No vMotion,
+  no memory snapshot and no suspend during firmware runs.
+- Network: a dedicated vNIC (vmxnet3) in the staging/OOB port group, no NAT. The DHCP server and SSDP
+  discovery need the same L2 segment as the BMCs. For brand-new BMCs with a static factory IP, add an extra
+  address in that network.
+- For virtual media the BMC fetches the file itself – it must be able to reach the VM.
+- Time via NTP **or** VMware Tools time sync, not both.
+- Saved lists with passwords end up in every VM backup: don't save them or encrypt the VM.
+
 ## Security notes
 
 - Use the tool only in an isolated staging network.
-- BMCs ship with self-signed certificates, so TLS certificates are not verified.
+- BMCs ship with self-signed certificates. Instead of checking against a CA, the tool therefore uses “trust on
+  first use”: the SHA-256 fingerprint is stored per device, and a later change blocks the device before any
+  password is sent. The very first contact is unprotected – so work only in an isolated staging network and,
+  for existing servers, compare the fingerprint once with the BMC's web interface.
+- Working data (fingerprints `bmc-pins.json`, backups `sicherungen/`, audit log `protokolle/`) is stored next
+  to the tool with permissions 0600/0700. The environment variable `BMC_STEWARD_DATA` selects another folder,
+  e.g. an encrypted drive.
 - A saved list contains passwords only if you choose so, and then in plain text. Delete such a file after
   the rollout.
 

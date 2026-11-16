@@ -1104,3 +1104,164 @@ class TestTestlabTab(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSelfGuardLive(_WebBase):
+    """Eigenschutz Ende-zu-Ende: echte BiosEngine gegen einen virtuellen Dell, scharfer Lauf mit Neustart."""
+
+    def _run(self, entries):
+        qapp()
+        from bmc_steward.redfish import BiosEngine
+        from bmc_steward.selfguard import SelfGuard
+        b, port = self._start("dell")
+        g = SelfGuard(os.path.join(tempfile.mkdtemp(), "g.json"), probe=False)
+        g.entries = entries(b)
+        lines = []
+        eng = BiosEngine(rows=[(f"127.0.0.1:{port}", "calvin")], cur_user="root", attrs={"BootMode": "Uefi"},
+                         dry=False, log=lambda line, kind="": lines.append(line), vendor="dell", reboot=True)
+        with patch("bmc_steward.selfguard.get", return_value=g):
+            ok = eng.run()
+        return ok, "\n".join(lines), b
+
+    def test_own_host_is_never_touched(self):
+        ok, log, b = self._run(lambda b: [b.serial])
+        self.assertFalse(ok)
+        self.assertIn("Treffer: " + b.serial, log)          # erkannt, nicht nur „nicht lesbar“
+        self.assertNotIn("Neustart ausgelöst", log)
+
+    def test_other_host_proceeds(self):
+        ok, log, _ = self._run(lambda b: ["ZZZ9999"])
+        self.assertTrue(ok, log)
+        self.assertNotIn("GESPERRT", log)
+
+
+class TestSecurityLive(_WebBase):
+    """Zertifikats-Vertrauen, Sessions, Sicherung und Revisionsprotokoll Ende-zu-Ende gegen einen virtuellen Dell."""
+
+    def setUp(self):
+        qapp()
+        from bmc_steward import i18n, trust
+        self.data = tempfile.mkdtemp()
+        self._old = i18n.DATA
+        i18n.DATA = __import__("pathlib").Path(self.data)
+        self.addCleanup(setattr, i18n, "DATA", self._old)
+        self.trust = trust
+
+    def _bios(self, port, pw="calvin"):
+        from bmc_steward.redfish import BiosEngine
+        lines = []
+        eng = BiosEngine(rows=[(f"127.0.0.1:{port}", pw)], cur_user="root", attrs={"BootMode": "Bios"},
+                         dry=False, log=lambda line, kind="": lines.append(line), vendor="dell", reboot=False)
+        from bmc_steward.selfguard import SelfGuard
+        g = SelfGuard(os.path.join(self.data, "g.json"), probe=False)
+        with patch("bmc_steward.selfguard.get", return_value=g):
+            ok = eng.run()
+        return ok, "\n".join(lines), eng
+
+    def keys(self, b):
+        return [e["key"] for e in b.sim.events]
+
+    def test_live_run_pins_sessions_backup_audit(self):
+        b, port = self._start("dell")
+        seeded = len(b.sim.events)                       # der Simulator legt ein paar Beispiel-Ereignisse an
+        ok, log, eng = self._bios(port)
+        self.assertTrue(ok, log)
+        self.assertIn("Neues Gerät: Zertifikat gemerkt", log)
+        with open(os.path.join(self.data, "bmc-pins.json")) as fh:
+            pins = json.load(fh)["pins"]
+        self.assertEqual(len(pins), 1)
+        self.assertTrue(next(iter(pins)).startswith("uuid:"))
+        # genau eine Anmeldung per Session, am Ende wieder abgemeldet
+        ev = [e["key"] for e in b.sim.events[seeded:]]
+        self.assertEqual(ev.count("login"), 1, ev)
+        self.assertEqual(ev.count("logout"), 1, ev)
+        self.assertEqual(b.sim.sessions, {})
+        # Sicherung vor der Änderung
+        backups = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(self.data, "sicherungen")) for f in fs]
+        self.assertEqual(len(backups), 1, log)
+        with open(backups[0]) as fh:
+            doc = json.load(fh)
+        self.assertIn("/redfish/v1/Systems/System.Embedded.1/Bios", doc["resources"])
+        self.assertEqual(oct(os.stat(backups[0]).st_mode & 0o777), "0o600")
+        # Revisionsprotokoll: der PATCH steht drin, kein Passwort, keine Lesezugriffe
+        audit = []
+        for f in os.listdir(os.path.join(self.data, "protokolle")):
+            with open(os.path.join(self.data, "protokolle", f)) as fh:
+                audit += [json.loads(line) for line in fh]
+        self.assertTrue(any(a["method"] == "PATCH" and a["path"].endswith("/Bios/Settings") for a in audit), audit)
+        self.assertFalse(any(a["method"] == "GET" for a in audit))
+        self.assertNotIn("calvin", json.dumps(audit))
+        self.assertTrue(all(a["device"].startswith("uuid:") for a in audit))
+
+    def test_changed_certificate_blocks_before_login(self):
+        b, port = self._start("dell")
+        from bmc_steward.redfish import RedfishClient
+        rc = RedfishClient(dry=False, log=lambda *a, **k: None)
+        rc.tls_mode(f"127.0.0.1:{port}")
+        key = rc.keys[f"127.0.0.1:{port}"]
+        st = self.trust.store()
+        st.pins[key]["fp"] = "00" * 32                  # so tun, als hätte das Gerät früher ein anderes gehabt
+        st.save()
+        before = self.keys(b).count("login")
+        ok, log, _ = self._bios(port)
+        self.assertFalse(ok)
+        self.assertIn("GESPERRT", log)
+        self.assertIn("Man-in-the-Middle", log)
+        self.assertEqual(self.keys(b).count("login"), before, "kein Passwort an ein fremdes Zertifikat")
+        self.assertNotIn("bios", self.keys(b))
+
+    def test_forgetting_pin_allows_again(self):
+        b, port = self._start("dell")
+        self._bios(port)
+        st = self.trust.store()
+        key = next(iter(st.pins))
+        st.pins[key]["fp"] = "00" * 32
+        st.save()
+        st.forget(key)
+        ok, log, _ = self._bios(port)
+        self.assertTrue(ok, log)
+
+    def test_wrong_password_only_one_login_attempt(self):
+        b, port = self._start("dell")
+        ok, log, _ = self._bios(port, pw="falsch")
+        self.assertFalse(ok)
+        self.assertEqual(self.keys(b).count("login_fail"), 1, self.keys(b))
+
+    def test_own_change_accepts_new_certificate(self):
+        from bmc_steward.redfish import RedfishClient, addr_key
+        b, port = self._start("dell")
+        ip = f"127.0.0.1:{port}"
+        rc = RedfishClient(dry=False, log=lambda *a, **k: None)
+        rc.tls_mode(ip)
+        key = rc.keys[addr_key(ip)]
+        rc.note_change(ip, "/redfish/v1/Managers/iDRAC.Embedded.1/Attributes {\"NIC.1.DNSRacName\": \"x\"}")
+        self.assertIn(key, rc.expect)
+        rc.fp[addr_key(ip)] = "11" * 32                  # Zertifikat erneuert sich nach der eigenen Änderung
+        self.assertEqual(rc.api(ip, "root", "calvin", "GET", "/redfish/v1/Systems/System.Embedded.1"), 200)
+        rc.close_sessions()
+        rc2 = RedfishClient(dry=False, log=lambda *a, **k: None)
+        rc2.fp[addr_key(ip)] = "22" * 32
+        rc2.keys[addr_key(ip)] = key
+        rc2.tls[ip] = "modern"
+        self.assertEqual(rc2.api(ip, "root", "calvin", "GET", "/redfish/v1/Systems/System.Embedded.1"), 0,
+                         "ohne eigene Änderung: Zertifikatswechsel im Lauf wird abgelehnt")
+        self.assertIn(addr_key(ip), rc2.pin_err)
+
+
+class TestHardeningLive(_WebBase):
+    def test_hardening_on_all_vendors(self):
+        qapp()
+        from bmc_steward.redfish import ServicesEngine
+        for vendor in ("dell", "hpe", "lenovo", "smc"):
+            b, port = self._start(vendor)
+            lines = []
+            user, pw = FACTORY_LOGIN[vendor]
+            eng = ServicesEngine(rows=[(f"127.0.0.1:{port}", pw)], cur_user=user, dry=False, vendor=vendor,
+                                 log=lambda line, kind="": lines.append(line),
+                                 services={"hard": {"ipmi": True, "ssdp": True, "snmp": False, "lockout": 5,
+                                                    "lockout_min": 15, "timeout_min": 20}})
+            self.assertTrue(eng.run(), "\n".join(lines))
+            self.assertEqual(b.extra["proto"], {"IPMI": False, "SSDP": False}, vendor)
+            self.assertEqual(b.extra["lockout"]["AccountLockoutThreshold"], 5)
+            self.assertEqual(b.extra["lockout"]["AccountLockoutDuration"], 900)
+            self.assertEqual(b.extra["session_timeout"], 1200)

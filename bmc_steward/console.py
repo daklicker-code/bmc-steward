@@ -13,7 +13,8 @@ import subprocess
 from . import i18n
 from .i18n import T
 from .core import WINDOWS
-from .redfish import RedfishClient
+from .redfish import RedfishClient, fingerprint
+from . import trust
 from .monitor import MonitorWidget, SegmentSwitch
 
 
@@ -130,6 +131,7 @@ class BootSetupThread(QThread):
         self.ip, self.user, self.pw, self.vendor = ip, user, pw, vendor
 
     def run(self):
+        rc = None
         try:
             rc = RedfishClient(dry=False)
             v = self.vendor or rc.vendor(self.ip)
@@ -138,6 +140,11 @@ class BootSetupThread(QThread):
                                         "Bitte im UEFI-Bild F2/F9/Entf selbst drücken."))
                 return
             user = self.user or rc.DEFAULT_USER[v]
+            blocked = []
+            rc.log = lambda line, kind="": blocked.append(line.strip()) if kind == "err" else None
+            if not rc.self_guard(self.ip, user, self.pw, v):
+                self.done.emit(False, "\n".join(blocked) or T("Eigenschutz: Neustart gesperrt."))
+                return
             path = rc.sys_path(v)
             code = rc.api(self.ip, user, self.pw, "PATCH", path,
                           {"Boot": {"BootSourceOverrideTarget": "BiosSetup", "BootSourceOverrideEnabled": "Once"}})
@@ -155,6 +162,9 @@ class BootSetupThread(QThread):
                                    "Das Bild erscheint nach etwa ein bis zwei Minuten."))
         except Exception as e:
             self.done.emit(False, T('Unerwarteter Fehler: {0!r}').format(e))
+        finally:
+            if rc is not None:
+                rc.close_sessions()
 
 
 
@@ -511,10 +521,23 @@ if WEBENGINE:
             self.certificateError.connect(self.cert)
 
         def cert(self, error):
-            if error.url().host() == self.host:
-                error.acceptCertificate()
-            else:
+            """Nur das Zertifikat des gewählten BMC annehmen – und nur, wenn es zum gemerkten Fingerabdruck
+            passt (trust.py). Ein fremdes Zertifikat unter derselben Adresse wird abgelehnt."""
+            if error.url().host() != self.host:
                 error.rejectCertificate()
+                return
+            try:
+                chain = error.certificateChain()
+                der = bytes(chain[0].toDer()) if chain else b""
+            except Exception:
+                der = b""
+            port = error.url().port(443)
+            addr = self.host if port == 443 else f"{self.host}:{port}"
+            known = set(trust.store().for_addr(addr).values())
+            if der and known and fingerprint(der) not in known:
+                error.rejectCertificate()
+                return
+            error.acceptCertificate()
 
         def createWindow(self, _type):
             return self.popup()

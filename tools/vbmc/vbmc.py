@@ -1022,12 +1022,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"@odata.id": p, "DateTime": time.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                                    "StaticNTPServers": b.extra.get("ntp", [])})
         if p == mgr + "/NetworkProtocol":
-            return self.send(200, {"@odata.id": p,
-                                   "NTP": {"ProtocolEnabled": True, "NTPServers": b.extra.get("ntp", [])}})
+            doc = {"@odata.id": p, "NTP": {"ProtocolEnabled": True, "NTPServers": b.extra.get("ntp", [])}}
+            for proto, port in (("IPMI", 623), ("SSDP", 1900), ("SNMP", 161)):
+                doc[proto] = {"ProtocolEnabled": b.extra.get("proto", {}).get(proto, True), "Port": port}
+            return self.send(200, doc)
         if p == f"{mgr}/EthernetInterfaces/{NIC.get(b.vendor, '1')}":
             return self.send(200, self.nic_doc(p))
         if p == "/redfish/v1/AccountService":
+            lock = b.extra.get("lockout", {})
             return self.send(200, {"@odata.id": p, "ServiceEnabled": True,
+                                   "AccountLockoutThreshold": lock.get("AccountLockoutThreshold", 0),
+                                   "AccountLockoutDuration": lock.get("AccountLockoutDuration", 0),
+                                   "AccountLockoutCounterResetAfter": lock.get("AccountLockoutCounterResetAfter", 0),
                                    "Accounts": {"@odata.id": "/redfish/v1/AccountService/Accounts"}})
         if p == "/redfish/v1/AccountService/Accounts":
             return self.send(200, self.accounts_doc())
@@ -1139,10 +1145,25 @@ class Handler(BaseHTTPRequestHandler):
         if p == mgr + "/NetworkProtocol":
             if "NTP" in data:
                 b.extra["ntp"] = data["NTP"].get("NTPServers", [])
-            b.extra["syslog"] = True
+            for proto in ("IPMI", "SSDP", "SNMP"):
+                if isinstance(data.get(proto), dict) and "ProtocolEnabled" in data[proto]:
+                    b.extra.setdefault("proto", {})[proto] = bool(data[proto]["ProtocolEnabled"])
+            if "Oem" in data:
+                b.extra["syslog"] = True
             return self.send(200, {"ok": True})
         if p == "/redfish/v1/AccountService":
-            b.extra["ldap"] = True
+            if "LDAP" in data:
+                b.extra["ldap"] = True
+            for k in ("AccountLockoutThreshold", "AccountLockoutDuration", "AccountLockoutCounterResetAfter"):
+                if k in data:
+                    b.extra.setdefault("lockout", {})[k] = int(data[k])
+            return self.send(200, {"ok": True})
+        if p == "/redfish/v1/SessionService":
+            if "SessionTimeout" in data:
+                t = int(data["SessionTimeout"])
+                if not 30 <= t <= 86400:
+                    return self.send(400, rf_error("SessionTimeout außerhalb 30..86400"))
+                b.extra["session_timeout"] = t
             return self.send(200, {"ok": True})
         if p == f"{mgr}/EthernetInterfaces/{NIC.get(b.vendor, '1')}":
             return self.nic_patch(data)

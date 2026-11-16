@@ -11,6 +11,9 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Arbeitsdaten der Tests (Zertifikats-Fingerabdrücke, Sicherungen, Revisionsprotokoll) nie ins Repo schreiben
+import tempfile as _tempfile
+os.environ.setdefault("BMC_STEWARD_DATA", _tempfile.mkdtemp(prefix="bmc-steward-test-"))
 
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO) not in sys.path:

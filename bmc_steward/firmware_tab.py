@@ -5,6 +5,7 @@ oder eine Datei von einer URL per SimpleUpdate ein und verfolgt den Fortschritt.
 Vorgabe; scharfe Läufe fragen mit Eingabe der Serverzahl nach. Der Vorgang ist heikel: ein
 fehlgeschlagener BMC-Flash kann einen Server unbrauchbar machen - immer erst ein Einzelgerät.
 """
+import hashlib
 import os
 from pathlib import Path
 
@@ -93,7 +94,15 @@ class FirmwareTabMixin:
         frow.addWidget(file_btn)
         frow.addWidget(self.fw_file_label, 1)
         self.fw_file_row = QWidget()
-        self.fw_file_row.setLayout(frow)
+        fcol = QVBoxLayout(self.fw_file_row)
+        fcol.setContentsMargins(0, 0, 0, 0)
+        fcol.addLayout(frow)
+        self.fw_sha = QLineEdit()
+        self.fw_sha.setPlaceholderText(T("SHA-256 laut Hersteller (optional, empfohlen)"))
+        self.fw_sha.setToolTip(T("Prüfsumme von der Download-Seite des Herstellers. Stimmt sie nicht mit der Datei "
+                                 "überein, wird nichts eingespielt. Die Prüfsumme der gewählten Datei steht im "
+                                 "Protokoll und im Tooltip des Dateinamens."))
+        fcol.addWidget(self.fw_sha)
         sv.addWidget(self.fw_file_row)
         sv.addWidget(self.fw_src_uri)
         self.fw_uri = QLineEdit()
@@ -139,8 +148,13 @@ class FirmwareTabMixin:
         self.fw_progress.setRange(0, 100)
         self.fw_progress.setValue(0)
         self.fw_progress.setTextVisible(True)
+        self.fw_stop_err = QCheckBox(T("Bei Fehler anhalten"))
+        self.fw_stop_err.setChecked(True)
+        self.fw_stop_err.setToolTip(T("Schlägt ein Server fehl, werden die übrigen nicht mehr bearbeitet. So "
+                                      "trifft ein fehlerhaftes Paket höchstens ein Gerät."))
         act = QHBoxLayout()
         act.addWidget(self.fw_dry)
+        act.addWidget(self.fw_stop_err)
         act.addStretch()
         act.addWidget(self.fw_stop)
         act.addWidget(self.fw_start)
@@ -205,6 +219,14 @@ class FirmwareTabMixin:
         self.fw_file = path
         size = os.path.getsize(path) / (1024 * 1024)
         self.fw_file_label.setText("%s  (%.1f MB)" % (os.path.basename(path), size))
+        try:
+            h = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            self.fw_file_label.setToolTip("SHA-256: " + h.hexdigest())
+        except OSError:
+            self.fw_file_label.setToolTip("")
 
     def fw_read_inventory(self):
         ip = self.fw_ref_ip.currentText().strip()
@@ -254,6 +276,12 @@ class FirmwareTabMixin:
                 return None
             cfg = {"source": "uri", "uri": self.fw_uri.text().strip(), "proto": self.fw_proto.currentData()}
         cfg["apply"] = self.fw_apply.currentData()
+        cfg["sha256"] = self.fw_sha.text().strip() if cfg["source"] == "file" else ""
+        cfg["stop_on_error"] = self.fw_stop_err.isChecked()
+        want = "".join(c for c in cfg["sha256"].lower() if c in "0123456789abcdef")
+        if cfg["sha256"] and len(want) != 64:
+            QMessageBox.warning(self, T("Firmware"), T("Die Prüfsumme muss ein SHA-256-Wert mit 64 Hex-Zeichen sein."))
+            return None
         cfg["targets"] = self.fw_targets()
         return cfg
 
@@ -272,6 +300,7 @@ class FirmwareTabMixin:
             info = T("Es wird Firmware auf die BMCs geschrieben. Ein unterbrochener Flash kann einen Server "
                      "unbrauchbar machen. Quelle: {0}, Übernahme: {1}.").format(
                 src, T("sofort") if cfg["apply"] == "immediate" else T("beim Neustart"))
+            info += self.selfguard_note()
             if not self.confirm(T("Firmware wirklich einspielen?"),
                                 T("Auf {0} Servern wird jetzt wirklich Firmware eingespielt.").format(len(rows)),
                                 info, len(rows)):
