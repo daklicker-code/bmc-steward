@@ -264,9 +264,9 @@ def binarize(gray):
 
 
 
-def locate_line(gray):
-    """Findet im Foto das Band mit dunkler Schrift (Zeilen mit auffallend vielen dunklen Punkten) und schneidet es
-    in voller Breite aus. None, wenn kein klares Band da ist."""
+def _row_counts(gray):
+    """Je Bildzeile (auf 360 Pixel Breite verkleinert) die Zahl auffallend dunkler Punkte gegenüber dem
+    verwischten Hintergrund. Gibt (Zähler, Höhe der verkleinerten Fassung) zurück."""
     w, h = gray.width(), gray.height()
     sw = 360
     sh = max(1, h * sw // w)
@@ -282,36 +282,65 @@ def locate_line(gray):
         raw = bytes(ptr)
         return [raw[y * im.bytesPerLine():y * im.bytesPerLine() + sw] for y in range(im.height())]
     a, c = rows_of(sm), rows_of(bg)
-    counts = [sum(1 for x in range(sw) if a[y][x] < c[y][x] - 30) for y in range(sh)]
-    # Maßstab ist der Spitzenwert und der ruhige Rand, nicht der Median: Füllt die Schrift mehr als die Hälfte
-    # des Ausschnitts (großes Etikett, starker Zoom), wäre der Median selbst „Schrift“, die Schwelle läge viel
-    # zu hoch und nur die dichteste Mitte der Zeichen bliebe übrig (oben und unten abgeschnitten).
+    return [sum(1 for x in range(sw) if a[y][x] < c[y][x] - 30) for y in range(sh)], sh
+
+
+def text_bands(gray):
+    """Bänder dunkler Schrift als [(oben, unten), ...] in Bildzeilen, bester Kandidat zuerst.
+
+    Eine Zeile gilt nur, wenn sie ganz im Bild liegt (eine am Rand abgeschnittene Nachbarzeile, wie
+    „Versicherungsnummer" über oder unter der gesuchten Zahl, wird ausgelassen). Der Rand um jede Zeile
+    ist höchstens halb so groß wie der Abstand zur nächsten Zeile, damit keine Reste davon mitkommen.
+    Maßstab ist der Spitzenwert, nicht der Median: füllt die Schrift mehr als die Hälfte des Ausschnitts,
+    wäre der Median selbst „Schrift"."""
+    h = gray.height()
+    counts, sh = _row_counts(gray)
     peak = max(counts) if counts else 0
+    if peak < 10:
+        return []
     low = sorted(counts)[len(counts) // 4]
     thr = max(8, low * 2, peak * 0.10)
-    best, y = (0, 0, 0), 0
+    edge = max(3, peak * 0.04)               # Zeichenränder (runde Oberkanten, Unterlängen) mit wenigen dunklen Punkten
+    bands, y = [], 0
     while y < sh:
         if counts[y] > thr:
             e = y
             while e < sh and counts[e] > thr:
                 e += 1
-            if e - y > best[0]:
-                best = (e - y, y, e)
-            y = e
+            y0, y1 = y, e
+            while y0 > 0 and counts[y0 - 1] > edge:
+                y0 -= 1
+            while y1 < sh and counts[y1] > edge:
+                y1 += 1
+            if bands and y0 <= bands[-1][1]:
+                bands[-1] = (bands[-1][0], y1)      # läuft in die vorige Zeile über: zusammenfassen
+            else:
+                bands.append((y0, y1))
+            y = max(e, y1)
         else:
             y += 1
-    n, y0, y1 = best
-    if n < 3 or n > sh * 0.6:
+    bands = [(a, b) for a, b in bands if b - a >= max(3, sh * 0.05)]      # Flecken und Staub sind keine Zeile
+    out = []
+    for i, (y0, y1) in enumerate(bands):
+        if (y0 == 0 and counts[0] >= 0.2 * peak) or (y1 >= sh and counts[sh - 1] >= 0.2 * peak):
+            continue                           # am Bildrand abgeschnitten
+        above = (y0 - bands[i - 1][1]) if i else y0 * 2        # kein Nachbar: Platz bis zum Rand
+        below = (bands[i + 1][0] - y1) if i + 1 < len(bands) else (sh - y1) * 2
+        m = int((y1 - y0) * 0.45)
+        top = max(0, y0 - min(m, max(1, above // 2)))
+        bottom = min(sh, y1 + min(m, max(1, below // 2)))
+        out.append((abs((y0 + y1) / 2 - sh / 2), top * h // sh, bottom * h // sh))
+    out.sort()
+    return [(t, b) for _, t, b in out]
+
+
+def locate_line(gray):
+    """Die Zeile in der Bildmitte ausgeschnitten (volle Breite) oder None, wenn keine ganze Zeile zu finden ist."""
+    bands = text_bands(gray)
+    if not bands:
         return None
-    edge = max(3, peak * 0.04)                  # Zeichenränder (runde Oberkanten, Unterlängen) mit wenigen dunklen Punkten
-    while y0 > 0 and counts[y0 - 1] > edge:
-        y0 -= 1
-    while y1 < sh and counts[y1] > edge:
-        y1 += 1
-    n = y1 - y0
-    pad = max(2, int(n * 0.5))
-    top, bottom = max(0, y0 - pad) * h // sh, min(sh, y1 + pad) * h // sh
-    return gray.copy(0, top, w, max(1, bottom - top))
+    top, bottom = bands[0]
+    return gray.copy(0, top, gray.width(), max(1, bottom - top))
 
 
 
@@ -437,54 +466,69 @@ def scan_decode(jpeg, mode, dbg=None):
             return g.scaled(g.width() * scale, g.height() * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
                             Qt.TransformationMode.SmoothTransformation)
 
-        def soft(k):
-            """Weichzeichnen über Verkleinern/Vergrößern: nimmt Streifen und Moiré (Foto vom Bildschirm) weg."""
-            w, h = gray0.width(), gray0.height()
-            sm = gray0.scaled(max(1, w // k), max(1, h // k), Qt.AspectRatioMode.IgnoreAspectRatio,
-                              Qt.TransformationMode.SmoothTransformation)
-            return grow(sm.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation).convertToFormat(
-                                      QImage.Format.Format_Grayscale8))
-
-        gray = grow(gray0)
         votes = Counter()
         out, errs = [], []
-        # Der gelbe Rahmen fasst die Zeile bereits eng ein: der ganze Ausschnitt wird gelesen.
-        # (Ein früheres Zuschneiden auf ein erkanntes „Textband" schnitt die Zeichenköpfe ab und
-        #  machte aus sauberen Ziffern Matsch – daher entfernt.)
-        bw, thr = binarize(gray)
-        if dbg:
-            dbg.add(f"Vorbereitung: Graustufen {gray.width()}x{gray.height()} (Faktor {scale}), Otsu-Schwelle {thr}")
-        # Scharfe Fassungen zuerst (bewahren 9/0 und den i-Punkt); Weichzeichnen nur als Rückfall für
-        # verrauschte Bildschirmfotos, damit es die scharfe Lesung nicht überstimmt.
-        steps = (("grau", gray, False, ("7", "8", "6")), ("sw", bw, False, ("7", "8", "6")),
-                 ("weich2", soft(2), False, ("7",)), ("weich3", soft(3), False, ("7",)),
-                 ("weich4", soft(4), False, ("7",)),
-                 ("grau-invers", gray, True, ("7", "6")), ("sw-invers", bw, True, ("7", "6")))
-        for name, base, inverted, modes in steps:
-            if out or (len(votes) and max(votes.values()) >= 2):
-                break
-            im = base.copy()
-            if inverted:
-                im.invertPixels()
-            path = os.path.join(d, name + ".png")
-            im.save(path, "PNG")
+
+        def attempt(src, tag):
+            """Die Lesestufen auf einem Bild (ganzer Ausschnitt oder eine einzelne Zeile); tag steht vor den Namen."""
+            def soft(k):
+                """Weichzeichnen über Verkleinern/Vergrößern: nimmt Streifen und Moiré (Foto vom Bildschirm) weg."""
+                w, h = src.width(), src.height()
+                sm = src.scaled(max(1, w // k), max(1, h // k), Qt.AspectRatioMode.IgnoreAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
+                return grow(sm.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation).convertToFormat(
+                                          QImage.Format.Format_Grayscale8))
+            gray = grow(src)
+            bw, thr = binarize(gray)
             if dbg:
-                dbg.image(name + ".png", im)
-            for psm in modes:
-                found, err = tesseract_run(exe, path, psm)
-                if dbg:
-                    dbg.add(f"tesseract {name} psm {psm}: Kandidaten {dbg.cands(found)}" + (f", Fehler: {err}" if err else ""))
-                if err and err not in errs:
-                    errs.append(err)
-                for t in found:
-                    t = t.strip(" |_—-~“”\"'`.,;:")       # Randmüll weg (tesseract setzt gern ein führendes _ oder —)
-                    if plausible(t) and len(t) <= 200:
-                        votes[t] += 1
-                        if t not in out:
-                            out.append(t)
-                if out:
+                dbg.add(f"Vorbereitung{(' ' + tag.rstrip('-')) if tag else ''}: Graustufen {gray.width()}x{gray.height()} "
+                        f"(Faktor {scale}), Otsu-Schwelle {thr}")
+            # Scharfe Fassungen zuerst (bewahren 9/0 und den i-Punkt); Weichzeichnen nur als Rückfall für
+            # verrauschte Bildschirmfotos, damit es die scharfe Lesung nicht überstimmt.
+            steps = (("grau", gray, False, ("7", "8", "6")), ("sw", bw, False, ("7", "8", "6")),
+                     ("weich2", soft(2), False, ("7",)), ("weich3", soft(3), False, ("7",)),
+                     ("weich4", soft(4), False, ("7",)),
+                     ("grau-invers", gray, True, ("7", "6")), ("sw-invers", bw, True, ("7", "6")))
+            for name, base, inverted, modes in steps:
+                if out or (len(votes) and max(votes.values()) >= 2):
                     break
+                im = base.copy()
+                if inverted:
+                    im.invertPixels()
+                name = tag + name
+                path = os.path.join(d, name + ".png")
+                im.save(path, "PNG")
+                if dbg:
+                    dbg.image(name + ".png", im)
+                for psm in modes:
+                    found, err = tesseract_run(exe, path, psm)
+                    if dbg:
+                        dbg.add(f"tesseract {name} psm {psm}: Kandidaten {dbg.cands(found)}" + (f", Fehler: {err}" if err else ""))
+                    if err and err not in errs:
+                        errs.append(err)
+                    for t in found:
+                        t = t.strip(" |_—-~“”\"'`.,;:")       # Randmüll weg (tesseract setzt gern ein führendes _ oder —)
+                        if plausible(t) and len(t) <= 200:
+                            votes[t] += 1
+                            if t not in out:
+                                out.append(t)
+                    if out:
+                        break
+
+        # Zuerst jede ganz sichtbare Zeile einzeln lesen (Nachbarzeilen und am Rand abgeschnittene Reste
+        # fallen weg, die Zeichen behalten ihren vollen Rand), erst danach der ganze Ausschnitt.
+        # (Eine frühere Fassung schnitt hier die Zeichenköpfe ab: Der Maßstab war der Median der Zeilen,
+        #  der bei großer Schrift selbst „Schrift" ist. Jetzt zählt der Spitzenwert, siehe text_bands.)
+        bands = text_bands(gray0)
+        if dbg:
+            dbg.add("Zeilen: " + (", ".join(f"{b - t} px hoch" for t, b in bands[:3]) if bands else "keine ganze Zeile erkannt"))
+        for i, (t0, t1) in enumerate(bands[:3]):
+            attempt(gray0.copy(0, t0, gray0.width(), max(1, t1 - t0)), f"zeile{i + 1}-")
+            if out:
+                break
+        if not out:
+            attempt(gray0, "")
     if not out and errs:
         return [], T("Tesseract meldet: {0} (Sprachdaten fehlen? sudo pacman -S tesseract-data-eng)").format(errs[0]), info
     # Passwörter haben keine Leerzeichen und viele verschiedene Zeichen; Rauschen wie „EEE TTT“ kommt nach hinten

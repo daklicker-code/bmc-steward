@@ -147,6 +147,53 @@ class TestLocateLine(unittest.TestCase):
         self.assertEqual(len(self.dark_rows(line)), len(self.dark_rows(img)))
 
 
+def label_with_neighbours(target, px=140, w=1771, h=324, rest="Versicherungsnummer"):
+    """Erfundenes Etikett wie im Scanlog: die gesuchte Zeile in der Mitte, darüber und darunter Reste der
+    Nachbarzeilen, die der Rahmen am Bildrand abschneidet."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor, QFont, QImage, QPainter
+    img = QImage(w, h, QImage.Format.Format_RGB32)
+    img.fill(QColor(125, 120, 115))
+    pt = QPainter(img)
+    f = QFont("DejaVu Sans")
+    f.setPixelSize(px)
+    f.setBold(True)
+    pt.setFont(f)
+    pt.setPen(QColor(25, 25, 25))
+    flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    cap = int(px * 0.73)                              # Höhe der Großbuchstaben
+    top = (h - cap) // 2 - int(px * 0.2)              # Oberkante des Textfelds, Zielzeile in der Mitte
+    pitch = int(cap * 1.55)                           # Zeilenabstand: Oberkante zu Oberkante
+    pt.drawText(40, top, w, h, flags, target)
+    pt.drawText(40, top - pitch, w, h, flags, rest)   # Nachbarzeile darüber: nur der untere Rand ragt ins Bild
+    pt.drawText(40, top + pitch, w, h, flags, rest)   # Nachbarzeile darunter: nur der obere Rand ragt ins Bild
+    pt.end()
+    return img
+
+
+@need("tesseract")
+class TestReadsLineWithNeighbours(unittest.TestCase):
+    """Nachbarzeilen und angeschnittene Reste dürfen die Erkennung der Zielzeile nicht stören."""
+
+    def test_target_found_between_clipped_neighbours(self):
+        qapp()
+        from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
+        from bmc_steward.scanner import scan_decode, text_bands
+        img = label_with_neighbours("AL-1425359052")
+        data = QByteArray()                             # muss leben, solange der Puffer darauf schreibt
+        buf = QBuffer(data)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, "JPG", 92)
+        buf.close()
+        texts, err, _ = scan_decode(bytes(data), "ocr")
+        self.assertEqual(err, "")
+        self.assertIn("AL-1425359052", texts)
+        bands = text_bands(img.convertToFormat(img.Format.Format_Grayscale8))
+        self.assertEqual(len(bands), 1, "nur die ganz sichtbare Zeile bleibt übrig, die angeschnittenen fallen weg")
+        top, bottom = bands[0]
+        self.assertLess(bottom - top, img.height(), "Reste der Nachbarzeilen sind abgeschnitten")
+
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
