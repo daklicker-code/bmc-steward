@@ -156,14 +156,22 @@ class DhcpServer:
 
     def run(self):
         """Läuft bis stopped() wahr wird. Wirft OSError, wenn der Port nicht geöffnet werden kann."""
+        # Empfangs-Socket: 0.0.0.0 – verhindert WinError 10049 (IP noch nicht als lokale Adresse konfiguriert)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Sende-Socket: gebunden an die Server-IP mit IP_MULTICAST_IF, damit Windows das Paket
+        # über das richtige Interface sendet und die virtuellen Server die Antwort auch empfangen.
+        send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            # Bind auf alle Interfaces (0.0.0.0): verhindert WinError 10049 auf Windows,
-            # wenn die DHCP-Server-IP noch nicht als lokale Adresse konfiguriert ist.
-            # Die eigene IP wird weiterhin als Server-Identifier (Option 54) ins Paket geschrieben.
             sock.bind(("", self.port))
+            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            try:
+                # IP_MULTICAST_IF legt das ausgehende Interface fest ohne zu binden
+                send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                                     socket.inet_aton(str(self.ip)))
+            except OSError:
+                pass    # nicht unterstützt – Fallback: normales sendto
             sock.settimeout(0.5)
             self.log(T('DHCP-Server läuft auf {0}, Bereich {1} bis {2}').format(self.ip, self.lo, self.hi))
             while not self.stopped():
@@ -176,11 +184,12 @@ class DhcpServer:
                 try:
                     answer = self.handle(data)
                     if answer:
-                        sock.sendto(*answer)
+                        send_sock.sendto(*answer)
                 except Exception as e:      # ein kaputtes Paket darf den Server nicht beenden
                     self.log(T('Paket verworfen: {0}').format(e))
         finally:
             sock.close()
+            send_sock.close()
         self.log(T("DHCP-Server gestoppt"))
 
 
