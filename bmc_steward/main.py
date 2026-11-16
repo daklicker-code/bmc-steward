@@ -1,6 +1,6 @@
 """BMC-Steward: Hauptfenster (alle Reiter) und Programmstart."""
 from pathlib import Path
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QStyledItemDelegate, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QStyledItemDelegate, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QProcess, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
@@ -27,6 +27,7 @@ from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
+from . import selfguard, trust
 
 
 DHCP_YELLOW = "#c9a100"      # Menüpunkt „DHCP-Server“ als dunkelgelber Knopf
@@ -312,6 +313,22 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         sl.setSpacing(8)
         sl.addWidget(monitor_block)
         sl.addWidget(self.tabs.menu, 1)
+        self.guard_btn = QPushButton()
+        self.guard_btn.clicked.connect(self.edit_selfguard)
+        self.update_guard_btn()
+        sl.addWidget(self.guard_btn)
+        tools = QHBoxLayout()
+        pins_btn = QPushButton(T("Zertifikate …"))
+        pins_btn.setToolTip(T("Gemerkte Zertifikats-Fingerabdrücke der BMCs ansehen und einzelne entfernen "
+                              "(nach gewolltem Zertifikatswechsel oder Mainboard-Tausch)."))
+        pins_btn.clicked.connect(self.edit_pins)
+        data_btn = QPushButton(T("Sicherungen/Protokolle"))
+        data_btn.setToolTip(T("Öffnet den Datenordner mit den automatischen Sicherungen vor jeder Änderung und dem "
+                              "Revisionsprotokoll aller scharfen Läufe:\n{0}").format(i18n.DATA))
+        data_btn.clicked.connect(self.open_data_dir)
+        tools.addWidget(pins_btn)
+        tools.addWidget(data_btn)
+        sl.addLayout(tools)
         sl.addWidget(self.lang)
         body = QHBoxLayout()
         body.addWidget(side)
@@ -1370,6 +1387,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 "Betriebssystem wird dabei nicht sauber heruntergefahren.") if reboot else
                 T("Es wird kein Neustart ausgelöst; die Änderung wirkt erst beim nächsten Neustart."))
             info += "\n\n" + T("Falsche UEFI-Werte können dazu führen, dass ein Server nicht mehr startet.")
+            info += self.selfguard_note()
             if not self.confirm(T("Scharf ausführen?"),
                                 T('Auf {0} Servern werden jetzt wirklich UEFI-Einstellungen geändert.').format(len(rows)),
                                 info, len(rows)):
@@ -2281,9 +2299,46 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         crow.addWidget(self.cert_label, 1)
         f.addRow(crow)
 
+        self.hard_box = QGroupBox(T("Härtung (empfohlen)"))
+        self.hard_box.setCheckable(True)
+        self.hard_box.setChecked(False)
+        self.hard_box.setToolTip(T("Schaltet unnötige Netzwerkdienste ab und setzt Kontosperre und Session-Zeitlimit "
+                                   "über Standard-Redfish. Was ein BMC nicht kennt, wird übersprungen."))
+        self.hard_ipmi = QCheckBox(T("IPMI über LAN abschalten"))
+        self.hard_ipmi.setChecked(True)
+        self.hard_ipmi.setToolTip(T("IPMI hat schwache Anmeldeverfahren. Achtung: Die Textkonsole (SOL) bei Supermicro "
+                                    "und Überwachungssysteme, die IPMI nutzen, gehen danach nicht mehr."))
+        self.hard_ssdp = QCheckBox(T("SSDP-Ankündigung abschalten"))
+        self.hard_ssdp.setChecked(True)
+        self.hard_ssdp.setToolTip(T("Der BMC kündigt sich dann nicht mehr per Multicast im Netz an."))
+        self.hard_snmp = QCheckBox(T("SNMP abschalten"))
+        self.hard_snmp.setToolTip(T("Nur, wenn kein Monitoring per SNMP genutzt wird."))
+        self.hard_lock = QSpinBox()
+        self.hard_lock.setRange(0, 20)
+        self.hard_lock.setValue(5)
+        self.hard_lock.setSpecialValueText(T("unverändert"))
+        self.hard_lock_min = QSpinBox()
+        self.hard_lock_min.setRange(1, 1440)
+        self.hard_lock_min.setValue(15)
+        self.hard_lock_min.setSuffix(" min")
+        self.hard_tmo = QSpinBox()
+        self.hard_tmo.setRange(0, 1440)
+        self.hard_tmo.setValue(15)
+        self.hard_tmo.setSuffix(" min")
+        self.hard_tmo.setSpecialValueText(T("unverändert"))
+        f = QFormLayout(self.hard_box)
+        f.addRow(self.hard_ipmi)
+        f.addRow(self.hard_ssdp)
+        f.addRow(self.hard_snmp)
+        self.tip_row(f, T("Kontosperre nach Fehlversuchen"), self.hard_lock,
+                     T("Sperrt ein Konto nach so vielen falschen Passwörtern (0 = unverändert)."))
+        self.tip_row(f, T("Sperrdauer"), self.hard_lock_min, T("So lange bleibt ein gesperrtes Konto gesperrt."))
+        self.tip_row(f, T("Session-Zeitlimit"), self.hard_tmo,
+                     T("Untätige Anmeldungen (Weboberfläche, Redfish) enden nach dieser Zeit (0 = unverändert)."))
+
         settings = QWidget()
         sv = QVBoxLayout(settings)
-        for w in (box_login, self.ntp_box, self.syslog_box, self.ldap_box, self.cert_box):
+        for w in (box_login, self.ntp_box, self.syslog_box, self.ldap_box, self.cert_box, self.hard_box):
             sv.addWidget(w)
         sv.addStretch()
         scroll = QScrollArea()
@@ -2400,6 +2455,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             if not self.cert_pem.strip():
                 return bad(None, T("HTTPS-Zertifikat: erst eine PEM-Datei wählen."))
             out["cert"] = {"pem": self.cert_pem}
+        if self.hard_box.isChecked():
+            out["hard"] = {"ipmi": self.hard_ipmi.isChecked(), "ssdp": self.hard_ssdp.isChecked(),
+                           "snmp": self.hard_snmp.isChecked(), "lockout": self.hard_lock.value(),
+                           "lockout_min": self.hard_lock_min.value(), "timeout_min": self.hard_tmo.value()}
+            if not any(out["hard"][k] for k in ("ipmi", "ssdp", "snmp", "lockout", "timeout_min")):
+                return bad(None, T("Härtung: mindestens eine Einstellung wählen."))
         return out
 
     def services_run(self):
@@ -2414,13 +2475,16 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             QMessageBox.warning(self, T("Dienste"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.svc_dry.isChecked()
-        names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat")}
-        chosen = ", ".join(names[k] for k in ("ntp", "syslog", "ldap", "cert") if k in services)
+        names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat"), "hard": T("Härtung")}
+        chosen = ", ".join(names[k] for k in ("ntp", "syslog", "ldap", "cert", "hard") if k in services)
         if not dry:
             info = T("Dienste: {0}").format(chosen) + "\n\n" + T(
                 "Es werden Verwaltungseinstellungen der BMCs geändert. Eine falsche LDAP- oder "
                 "Zertifikatseinstellung kann die Anmeldung erschweren; der lokale Administrator bleibt "
                 "aber bestehen.")
+            if services.get("hard", {}).get("ipmi"):
+                info += "\n\n" + T("Härtung: Nach dem Abschalten von IPMI geht die Textkonsole (SOL) bei Supermicro "
+                                    "nicht mehr, ebenso Überwachung per IPMI.")
             if not self.confirm(T("Scharf ausführen?"),
                                 T('Auf {0} Servern werden jetzt wirklich Dienste eingerichtet.').format(len(rows)),
                                 info, len(rows)):
@@ -2478,6 +2542,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                              self.ldap_groups.item(r, 1).text() if self.ldap_groups.item(r, 1) else "")
                             for r in range(self.ldap_groups.rowCount())],
             "cert_on": self.cert_box.isChecked(), "cert_pem": self.cert_pem, "cert_name": self.cert_name,
+            "hard_on": self.hard_box.isChecked(), "hard_ipmi": self.hard_ipmi.isChecked(),
+            "hard_ssdp": self.hard_ssdp.isChecked(), "hard_snmp": self.hard_snmp.isChecked(),
+            "hard_lock": self.hard_lock.value(), "hard_lock_min": self.hard_lock_min.value(),
+            "hard_tmo": self.hard_tmo.value(),
         }
 
     def import_services(self, s):
@@ -2508,6 +2576,146 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.cert_pem = s["cert_pem"]
         self.cert_name = s["cert_name"]
         self.cert_label.setText(self.cert_name or T("keine Datei gewählt"))
+        self.hard_box.setChecked(s.get("hard_on", False))
+        self.hard_ipmi.setChecked(s.get("hard_ipmi", True))
+        self.hard_ssdp.setChecked(s.get("hard_ssdp", True))
+        self.hard_snmp.setChecked(s.get("hard_snmp", False))
+        self.hard_lock.setValue(s.get("hard_lock", 5))
+        self.hard_lock_min.setValue(s.get("hard_lock_min", 15))
+        self.hard_tmo.setValue(s.get("hard_tmo", 15))
+
+    # ---------- Zertifikate und Datenordner ----------
+    def open_data_dir(self):
+        path = i18n.private_dir(i18n.DATA)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def edit_pins(self):
+        st = trust.store()
+        st.load()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(T("Zertifikate"))
+        dlg.resize(760, 420)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(T("BMC-Steward merkt sich beim ersten Kontakt das Zertifikat jedes BMC. Zeigt dasselbe Gerät "
+                        "später ein anderes, wird es gesperrt, bevor ein Passwort gesendet wird. War der Wechsel "
+                        "gewollt (neues Zertifikat, Mainboard-Tausch, Werksreset), den Eintrag hier entfernen; beim "
+                        "nächsten Kontakt wird das neue Zertifikat gemerkt. Den Fingerabdruck vorher mit der "
+                        "Anzeige in der BMC-Oberfläche vergleichen."))
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        filt = QLineEdit()
+        filt.setPlaceholderText(T("Suchen (Adresse, Kennung, Fingerabdruck)"))
+        lay.addWidget(filt)
+        table = QTableWidget(0, 4)
+        table.setHorizontalHeaderLabels([T("Adresse"), T("Gerät"), T("Fingerabdruck (SHA-256)"), T("Zuletzt gesehen")])
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        lay.addWidget(table, 1)
+
+        def fill():
+            needle = filt.text().strip().lower()
+            items = sorted(st.pins.items(), key=lambda kv: kv[1].get("ip", ""))
+            items = [(k, v) for k, v in items
+                     if not needle or needle in (k + " " + v.get("ip", "") + " " + v.get("fp", "")).lower()]
+            table.setRowCount(len(items))
+            for r, (k, v) in enumerate(items):
+                cells = [v.get("ip", ""), k.split(":", 1)[-1], trust.short(v.get("fp")), v.get("seen", "")]
+                for c, text in enumerate(cells):
+                    it = QTableWidgetItem(text)
+                    it.setData(Qt.ItemDataRole.UserRole, k)
+                    it.setToolTip(trust.pretty(v.get("fp")) + (
+                        "\n" + T("vorher: {0}").format(trust.pretty(v["previous"])) if v.get("previous") else ""))
+                    table.setItem(r, c, it)
+        filt.textChanged.connect(fill)
+        fill()
+        row = QHBoxLayout()
+        b_del = QPushButton(T("Markierte entfernen"))
+        b_close = QPushButton(T("Schließen"))
+        row.addWidget(b_del)
+        row.addStretch(1)
+        row.addWidget(b_close)
+        lay.addLayout(row)
+
+        def remove():
+            keys = {table.item(i.row(), 0).data(Qt.ItemDataRole.UserRole) for i in table.selectedIndexes()}
+            if not keys:
+                return
+            if QMessageBox.question(self, T("Zertifikate"), T("{0} Einträge entfernen? Beim nächsten Kontakt wird das "
+                                    "dann gezeigte Zertifikat ungeprüft übernommen.").format(len(keys))) \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            for k in keys:
+                st.forget(k)
+            fill()
+        b_del.clicked.connect(remove)
+        b_close.clicked.connect(dlg.accept)
+        dlg.exec()
+
+    # ---------- Eigenschutz ----------
+    def update_guard_btn(self):
+        g = selfguard.get()
+        if g.unprotected_vm:
+            self.guard_btn.setText(T("⚠ Eigenschutz: Schutzliste leer"))
+            self.guard_btn.setStyleSheet("color:#d9534f;font-weight:bold;")
+            self.guard_btn.setToolTip(T("BMC-Steward läuft in einer VM ({0}). Den Host dieser VM in die "
+                                        "Schutzliste eintragen, sonst kann er versehentlich neu gestartet "
+                                        "werden.").format(g.virt))
+        else:
+            self.guard_btn.setText(T("Eigenschutz ({0})").format(len(g.entries) + len(g.own)))
+            self.guard_btn.setStyleSheet("")
+            self.guard_btn.setToolTip(T("Server, die BMC-Steward nie neu startet oder mit Firmware bespielt."))
+
+    def selfguard_note(self):
+        """Zusatztext für Sicherheitsabfragen, wenn der eigene Host nicht erkannt werden kann."""
+        g = selfguard.get()
+        if not g.unprotected_vm:
+            return ""
+        return "\n\n" + T("ACHTUNG: BMC-Steward läuft in einer VM ({0}) und die Schutzliste ist leer. Steht "
+                           "der Host dieser VM in der Liste, schaltet sich das Tool mitten im Lauf selbst ab. "
+                           "Vorher unter „Eigenschutz“ eintragen.").format(g.virt)
+
+    def edit_selfguard(self):
+        g = selfguard.get()
+        g.refresh()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(T("Eigenschutz"))
+        dlg.resize(560, 460)
+        lay = QVBoxLayout(dlg)
+        if g.virt:
+            where = T("BMC-Steward läuft in einer virtuellen Maschine ({0}). Die VM kennt ihren Host nicht: "
+                      "Tragen Sie hier alle Hosts ein, auf denen diese VM laufen kann (z. B. den ganzen "
+                      "Management-Cluster).").format(g.virt)
+        elif g.own:
+            where = T("BMC-Steward läuft auf echter Hardware; die eigene Kennung wurde erkannt und ist "
+                      "automatisch geschützt ({0} Werte).").format(len(g.own))
+        else:
+            where = T("Eigene Kennung nicht lesbar (unter Linux braucht das Root-Rechte). Läuft BMC-Steward "
+                      "auf einem Server, dessen BMC in der Liste stehen könnte, diesen hier eintragen.")
+        info = QLabel(where + "\n\n" + T(
+            "Je Zeile ein Eintrag: Seriennummer bzw. Service-Tag, System-UUID oder BMC-Adresse. Diese Server "
+            "werden nie neu gestartet, bekommen keine UEFI-Änderungen und keine Firmware. Im scharfen Lauf "
+            "wird außerdem jeder Server übersprungen, dessen Identität nicht lesbar ist."))
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        edit = QPlainTextEdit("\n".join(g.entries))
+        edit.setPlaceholderText("ABC1234\n4c4c4544-0042-3510-8048-b2c04f593132\n10.20.0.11")
+        lay.addWidget(edit, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        b_save, b_cancel = QPushButton(T("Speichern")), QPushButton(T("Abbrechen"))
+        row.addWidget(b_save)
+        row.addWidget(b_cancel)
+        lay.addLayout(row)
+        b_cancel.clicked.connect(dlg.reject)
+        b_save.clicked.connect(dlg.accept)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            g.save(edit.toPlainText().splitlines())
+        except OSError as e:
+            QMessageBox.warning(self, T("Eigenschutz"), T('Datei nicht schreibbar:\n{0}').format(e))
+        self.update_guard_btn()
 
     def confirm(self, title, text, info="", type_count=None):
         """Sicherheitsabfrage, bei der „Abbrechen“ vorausgewählt ist. Mit type_count muss zusätzlich
@@ -2784,7 +2992,14 @@ def run():
     # Handshake (net_error -202), obwohl BmcPage das Zertifikat danach akzeptiert. Das flutet die Konsole;
     # nur fatale Chromium-Meldungen anzeigen. Wer alles sehen will, setzt QTWEBENGINE_CHROMIUM_FLAGS selbst.
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--log-level=3"
+        flags = "--log-level=3"
+        if selfguard.get().virt:
+            # In VMs (VMware, Proxmox, Hyper-V) gibt es meist keine echte GPU: Chromium zeichnet sonst die
+            # Web-Konsole gelegentlich schwarz. Software-Zeichnen ist dort zuverlässiger.
+            flags += " --disable-gpu --disable-gpu-compositing"
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = flags
+    if selfguard.get().virt and "QT_QUICK_BACKEND" not in os.environ:
+        os.environ["QT_QUICK_BACKEND"] = "software"
     app = QApplication(sys.argv)
     app.setApplicationName("bmc-steward")
     app.setApplicationDisplayName("BMC-Steward")

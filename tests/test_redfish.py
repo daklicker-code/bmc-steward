@@ -154,3 +154,12 @@ class TestVerifyWait(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSecretScrub(unittest.TestCase):
+    def test_nested_and_vendor_style_keys(self):
+        out = scrub({"Attributes": {"Users.3.Password": "geheim", "SNMP.1.AgentCommunity": "public"},
+                     "LDAP": {"Authentication": {"Password": "x"}}, "Token": "t", "UserName": "admin"})
+        for leak in ("geheim", "public", '"x"', '"t"'):
+            self.assertNotIn(leak, out)
+        self.assertIn("admin", out)

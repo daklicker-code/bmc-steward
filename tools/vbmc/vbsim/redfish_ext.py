@@ -58,7 +58,8 @@ def get(bmc, p, SYS, MGR):
 
     if p == "/redfish/v1/SessionService":
         return {"@odata.id": p, "Id": "SessionService", "ServiceEnabled": True,
-                "SessionTimeout": sim.SESSION_TTL, "Sessions": {"@odata.id": p + "/Sessions"}}
+                "SessionTimeout": bmc.extra.get("session_timeout", sim.SESSION_TTL),
+                "Sessions": {"@odata.id": p + "/Sessions"}}
     if p == "/redfish/v1/SessionService/Sessions":
         with sim.lock:
             mem = [{"@odata.id": f"{p}/{t[:8]}"} for t in sim.sessions]

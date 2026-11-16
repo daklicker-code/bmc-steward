@@ -2,6 +2,7 @@
 from pathlib import Path
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QProcess, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
 import json
+import os
 import sys
 
 
@@ -37,6 +38,34 @@ PROFILES = HERE / "bmc-profile.json"   # Profile: Einstellungen ohne Passwörter
 
 
 BIOS_PROFILES = HERE / "bmc-bios-profile.json"   # UEFI-Vorlagen: eigener Bereich, getrennt von PROFILES
+
+
+# Arbeitsdaten des Tools (Zertifikats-Fingerabdrücke, Sicherungen, Revisionsprotokoll). Vorgabe: neben dem
+# Tool; mit BMC_STEWARD_DATA lässt sich ein anderer Ordner wählen (z. B. ein verschlüsseltes Laufwerk).
+DATA = Path(os.environ.get("BMC_STEWARD_DATA") or HERE)
+
+
+def private_dir(path):
+    """Legt einen Ordner an, der nur für den eigenen Benutzer lesbar ist, und gibt ihn zurück."""
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    if not sys.platform.startswith("win"):
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return path
+
+
+def write_private(path, text):
+    """Schreibt eine Datei atomar mit Rechten 0600 (nur der eigene Benutzer)."""
+    path = Path(path)
+    private_dir(path.parent)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
 
 
 def build_texts():
@@ -105,6 +134,1151 @@ def set_language(code):
 # Übersetzungen: deutscher Text -> (English, Français, Schwiizerdütsch)
 # ======================================================================
 TR = {
+"Für die Textkonsole fehlt „pyte“: pip install pyte (unter Arch/CachyOS: sudo pacman -S python-pyte)": [
+"The text console needs “pyte”: pip install pyte (on Arch/CachyOS: sudo pacman -S python-pyte)",
+"La console texte a besoin de « pyte » : pip install pyte (sous Arch/CachyOS : sudo pacman -S python-pyte)",
+"Für d Textkonsole fählt „pyte“: pip install pyte (under Arch/CachyOS: sudo pacman -S python-pyte)"
+],
+"Es fehlt: {0}. Installation: {1}": [
+"Missing: {0}. Install: {1}",
+"Manquant : {0}. Installation : {1}",
+"Es fählt: {0}. Installation: {1}"
+],
+"SHA-256 laut Hersteller (optional, empfohlen)": [
+"SHA-256 from the vendor (optional, recommended)",
+"SHA-256 du fabricant (facultatif, recommandé)",
+"SHA-256 vom Herställer (optional, empfohle)"
+],
+"Prüfsumme von der Download-Seite des Herstellers. Stimmt sie nicht mit der Datei überein, wird nichts eingespielt. Die Prüfsumme der gewählten Datei steht im Protokoll und im Tooltip des Dateinamens.": [
+"Checksum from the vendor's download page. If it does not match the file, nothing is flashed. The checksum of the chosen file is shown in the log and in the tooltip of the file name.",
+"Somme de contrôle de la page de téléchargement du fabricant. Si elle ne correspond pas au fichier, rien n'est flashé. La somme du fichier choisi figure dans le journal et dans l'infobulle du nom de fichier.",
+"Prüefsumme vo de Download-Siite vom Herställer. Stimmt si nöd mit de Datei überii, wird nüt iigspielt. D Prüefsumme vo de gwählte Datei staht im Protokoll und im Tooltip vom Dateiname."
+],
+"Bei Fehler anhalten": [
+"Stop on error",
+"Arrêter en cas d'erreur",
+"Bi Fehler aahalte"
+],
+"Schlägt ein Server fehl, werden die übrigen nicht mehr bearbeitet. So trifft ein fehlerhaftes Paket höchstens ein Gerät.": [
+"If a server fails, the remaining ones are not processed. A faulty package then hits at most one device.",
+"Si un serveur échoue, les suivants ne sont pas traités. Un paquet défectueux touche ainsi au plus un appareil.",
+"Wänn en Server fehlschlaat, wärded di übrige nümm bearbeitet. So trifft es fählerhafts Paket höchschtens eis Grät."
+],
+"Die Prüfsumme muss ein SHA-256-Wert mit 64 Hex-Zeichen sein.": [
+"The checksum must be a SHA-256 value of 64 hex characters.",
+"La somme de contrôle doit être une valeur SHA-256 de 64 caractères hexadécimaux.",
+"D Prüefsumme muess en SHA-256-Wärt mit 64 Hex-Zeiche sii."
+],
+"Seriennummer bzw. Service-Tag des Geräts, nur zur eigenen Übersicht; wird nirgends an den BMC gesendet. Lässt sich auch per Handy-Scanner einscannen.": [
+"Serial number or service tag of the device, for your own overview only; never sent to the BMC. Can also be scanned with the phone scanner.",
+"Numéro de série ou service tag de l'appareil, pour votre propre vue d'ensemble ; jamais envoyé au BMC. Peut aussi être scanné avec le scanner du téléphone.",
+"Seriennummere bzw. Service-Tag vom Grät, nume für di eige Übersicht; wird nienet a de BMC gschickt. Lat sich au mit em Handy-Scanner iiscanne."
+],
+"Hersteller/Typ, automatisch anhand der Aktuelle-IP ermittelt. Nur Anzeige,\nnicht editierbar; wird beim Eintragen/Ändern der Aktuelle IP neu geprüft.": [
+"Vendor/type, detected automatically from the current IP. Display only,\nnot editable; checked again whenever the current IP is entered or changed.",
+"Fabricant/type, détecté automatiquement d'après l'IP actuelle. Affichage seul,\nnon modifiable ; revérifié à chaque saisie ou modification de l'IP actuelle.",
+"Herställer/Typ, automatisch aahand vo de aktuelle IP ermittlet. Nume Aazeig,\nnöd editierbar; wird bim Iitrage/Ändere vo de aktuelle IP neu prüeft."
+],
+"Zur Sicherheit das Passwort ein zweites Mal eingeben.\nSolange nicht angehakt, ist das Feld deaktiviert und wird nicht geprüft.\nAngehakt: Stimmen die beiden Eingaben nicht überein, startet kein Lauf.": [
+"Enter the password a second time for safety.\nWhile unticked, the field is disabled and not checked.\nTicked: if the two entries differ, no run starts.",
+"Saisissez le mot de passe une seconde fois par sécurité.\nTant que la case n'est pas cochée, le champ est désactivé et non vérifié.\nCochée : si les deux saisies diffèrent, aucune exécution ne démarre.",
+"Zur Sicherheit s Passwort es zweits Mal iigäh.\nSolang nöd aaghäklet, isch s Fäld deaktiviert und wird nöd prüeft.\nAaghäklet: Stimmed di beide Iigabe nöd überii, startet kei Lauf."
+],
+"Lädt eine gespeicherte Liste oder eine CSV-Datei, z. B. aus Excel:\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer ist optional, auch ganz ohne diese Spalte ladbar)": [
+"Loads a saved list or a CSV file, e.g. from Excel:\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer is optional; files without this column load too)",
+"Charge une liste enregistrée ou un fichier CSV, p. ex. depuis Excel :\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer est facultatif, chargeable aussi sans cette colonne)",
+"Ladet e gspichereti Lischte oder e CSV-Datei, z. B. us Excel:\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer isch optional, au ganz ohni die Spalte ladbar)"
+],
+"Protokoll öffnen …": [
+"Open log …",
+"Ouvrir le journal …",
+"Protokoll öffne …"
+],
+"Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\nErsetzt die aktuelle Anzeige, ändert aber nichts an den Servern.": [
+"Opens a previously saved log text file for viewing.\nReplaces the current display but changes nothing on the servers.",
+"Ouvre un fichier journal enregistré pour consultation.\nRemplace l'affichage actuel mais ne modifie rien sur les serveurs.",
+"Öffnet e früener gspichereti Protokoll-Textdatei zum Aaluege.\nErsetzt di aktuell Aazeig, änderet aber nüt a de Server."
+],
+"Zertifikate …": [
+"Certificates …",
+"Certificats …",
+"Zertifikat …"
+],
+"Gemerkte Zertifikats-Fingerabdrücke der BMCs ansehen und einzelne entfernen (nach gewolltem Zertifikatswechsel oder Mainboard-Tausch).": [
+"View the stored certificate fingerprints of the BMCs and remove individual ones (after an intended certificate change or a mainboard replacement).",
+"Afficher les empreintes de certificat mémorisées des BMC et en supprimer (après un changement de certificat voulu ou un remplacement de carte mère).",
+"Gmerkti Zertifikats-Fingerabdrück vo de BMCs aaluege und einzelni entferne (nach eme gwollte Zertifikatswächsel oder Mainboard-Tuusch)."
+],
+"Sicherungen/Protokolle": [
+"Backups/logs",
+"Sauvegardes/journaux",
+"Sicherige/Protokoll"
+],
+"„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller.\nEine feste Wahl überspringt die Erkennung und gilt für alle Zeilen.": [
+"“Detect automatically” asks each device for its vendor.\nA fixed choice skips detection and applies to all rows.",
+"« Détection automatique » interroge chaque appareil sur son fabricant.\nUn choix fixe saute la détection et vaut pour toutes les lignes.",
+"„Automatisch erkänne“ fragt jedes Grät nach sim Herställer.\nE feschti Wahl überspringt d Erkännig und gilt für alli Zile."
+],
+"Benutzer, mit dem sich das Tool am BMC anmeldet. Leer lassen: Werksbenutzer je Hersteller.": [
+"User the tool logs in to the BMC with. Leave empty: factory user per vendor.",
+"Utilisateur avec lequel l'outil se connecte au BMC. Vide : utilisateur d'usine selon le fabricant.",
+"Benutzer, mit dem sich s Tool am BMC aamäldet. Leer lah: Werksbenutzer je Herställer."
+],
+"Gilt für alle Zeilen, wenn Sie unten auf „Für alle Zeilen übernehmen“ klicken.\nAbweichende Zugangsdaten tragen Sie direkt in der Tabelle je Zeile ein.": [
+"Applies to all rows when you click “Apply to all rows” below.\nEnter different credentials directly in the table per row.",
+"S'applique à toutes les lignes si vous cliquez sur « Appliquer à toutes les lignes » ci-dessous.\nSaisissez des identifiants différents directement dans le tableau, ligne par ligne.",
+"Gilt für alli Zile, wänn Sie une uf „Für alli Zile übernäh“ klicked.\nAbwichendi Zuegangsdate träged Sie direkt i de Tabälle je Zile ii."
+],
+"Trägt Benutzer und Passwort von oben in alle Zeilen ein und überschreibt vorhandene Werte.": [
+"Enters user and password from above into all rows and overwrites existing values.",
+"Reporte l'utilisateur et le mot de passe ci-dessus dans toutes les lignes et écrase les valeurs existantes.",
+"Treit Benutzer und Passwort vo obe i alli Zile ii und überschribt vorhandeni Wärt."
+],
+"Fügt für jede Adresse von … bis … eine Zeile ein (höchstens 256 auf einmal).": [
+"Adds one row for each address from … to … (at most 256 at once).",
+"Ajoute une ligne par adresse de … à … (256 au maximum à la fois).",
+"Füegt für jedi Adrässe vo … bis … e Zile ii (höchschtens 256 uf eimal)."
+],
+"Übernimmt Adressen und Passwörter aus „Neuware“ (Aktuelle IP, Passwort).": [
+"Takes addresses and passwords from “New hardware” (current IP, password).",
+"Reprend les adresses et mots de passe de « Nouveau matériel » (IP actuelle, mot de passe).",
+"Übernimmt Adrässe und Passwörter us „Neuwar“ (aktuelli IP, Passwort)."
+],
+"Prüft je Server nur lesend: Port, Verschlüsselung, Hersteller, Anmeldung, Modell,\nFirmware und Administratorrechte. Es wird nichts geändert. Jeder Server bekommt\ngenau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt.": [
+"Checks each server read-only: port, encryption, vendor, login, model,\nfirmware and administrator rights. Nothing is changed. Each server gets\nexactly one login attempt so that a wrong password cannot lock an account.",
+"Vérifie chaque serveur en lecture seule : port, chiffrement, fabricant, connexion, modèle,\nfirmware et droits d'administrateur. Rien n'est modifié. Chaque serveur a\nexactement une tentative de connexion, pour qu'un mauvais mot de passe ne bloque aucun compte.",
+"Prüeft je Server nume läsend: Port, Verschlüsselig, Herställer, Aamäldig, Modell,\nFirmware und Adminrächt. Es wird nüt gänderet. Jede Server überchunnt\ngenau ein Aamäldeversuech, damit es falsches Passwort kei Konto sperrt."
+],
+"Übernimmt alle erfolgreich getesteten Server in die Serverliste („Neuware“) und trägt\nden Benutzer in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ ein. Danach dort die Einstellungen wählen und starten.": [
+"Copies all successfully tested servers into the server list (“New hardware”) and enters\nthe user in “New hardware”, “UEFI settings” and “Services”. Then choose the settings there and start.",
+"Reprend tous les serveurs testés avec succès dans la liste (« Nouveau matériel ») et saisit\nl'utilisateur dans « Nouveau matériel », « Réglages UEFI » et « Services ». Choisissez ensuite les réglages et lancez.",
+"Übernimmt alli erfolgriich teschtete Server i d Serverlischte („Neuwar“) und treit\ndä Benutzer i „Neuwar“, „UEFI-Iistellige“ und „Dienscht“ ii. Dänn det d Iistellige wähle und starte."
+],
+"Härtung (empfohlen)": [
+"Hardening (recommended)",
+"Durcissement (recommandé)",
+"Härtig (empfohle)"
+],
+"Schaltet unnötige Netzwerkdienste ab und setzt Kontosperre und Session-Zeitlimit über Standard-Redfish. Was ein BMC nicht kennt, wird übersprungen.": [
+"Switches off unneeded network services and sets account lockout and session timeout via standard Redfish. Whatever a BMC does not know is skipped.",
+"Désactive les services réseau inutiles et règle le verrouillage de compte et le délai de session via Redfish standard. Ce qu'un BMC ne connaît pas est ignoré.",
+"Schaltet unnötigi Netzwärkdienscht ab und setzt Kontosperri und Session-Zitlimit über Standard-Redfish. Was en BMC nöd kennt, wird übersprunge."
+],
+"IPMI über LAN abschalten": [
+"Disable IPMI over LAN",
+"Désactiver IPMI sur LAN",
+"IPMI über LAN abschalte"
+],
+"IPMI hat schwache Anmeldeverfahren. Achtung: Die Textkonsole (SOL) bei Supermicro und Überwachungssysteme, die IPMI nutzen, gehen danach nicht mehr.": [
+"IPMI has weak authentication. Note: the text console (SOL) on Supermicro and monitoring systems that use IPMI stop working afterwards.",
+"IPMI a des procédés d'authentification faibles. Attention : la console texte (SOL) sur Supermicro et les systèmes de supervision utilisant IPMI ne fonctionnent plus ensuite.",
+"IPMI hät schwachi Aamäldeverfahre. Achtig: D Textkonsole (SOL) bi Supermicro und Überwachigssystem, wo IPMI bruuched, gönd dänn nümm."
+],
+"SSDP-Ankündigung abschalten": [
+"Disable SSDP announcement",
+"Désactiver l'annonce SSDP",
+"SSDP-Aakündigung abschalte"
+],
+"Der BMC kündigt sich dann nicht mehr per Multicast im Netz an.": [
+"The BMC then no longer announces itself via multicast on the network.",
+"Le BMC ne s'annonce alors plus par multicast sur le réseau.",
+"De BMC kündet sich dänn nümm per Multicast im Netz aa."
+],
+"SNMP abschalten": [
+"Disable SNMP",
+"Désactiver SNMP",
+"SNMP abschalte"
+],
+"Nur, wenn kein Monitoring per SNMP genutzt wird.": [
+"Only if no SNMP monitoring is used.",
+"Uniquement si aucune supervision SNMP n'est utilisée.",
+"Nume, wänn kei Monitoring per SNMP bruucht wird."
+],
+"unverändert": [
+"unchanged",
+"inchangé",
+"unveränderet"
+],
+"Kontosperre nach Fehlversuchen": [
+"Account lockout after failed attempts",
+"Verrouillage après tentatives échouées",
+"Kontosperri nach Fehlversüech"
+],
+"Sperrt ein Konto nach so vielen falschen Passwörtern (0 = unverändert).": [
+"Locks an account after this many wrong passwords (0 = unchanged).",
+"Verrouille un compte après autant de mots de passe erronés (0 = inchangé).",
+"Sperrt es Konto nach so vill falsche Passwörter (0 = unveränderet)."
+],
+"Sperrdauer": [
+"Lockout duration",
+"Durée de verrouillage",
+"Sperrduur"
+],
+"So lange bleibt ein gesperrtes Konto gesperrt.": [
+"A locked account stays locked this long.",
+"Durée pendant laquelle un compte verrouillé le reste.",
+"So lang blibt es gsperrts Konto gsperrt."
+],
+"Session-Zeitlimit": [
+"Session timeout",
+"Délai de session",
+"Session-Zitlimit"
+],
+"Untätige Anmeldungen (Weboberfläche, Redfish) enden nach dieser Zeit (0 = unverändert).": [
+"Idle logins (web interface, Redfish) end after this time (0 = unchanged).",
+"Les connexions inactives (interface web, Redfish) se terminent après ce délai (0 = inchangé).",
+"Untätigi Aamäldige (Weboberflächi, Redfish) ändet nach dere Zit (0 = unveränderet)."
+],
+"Härtung": [
+"Hardening",
+"Durcissement",
+"Härtig"
+],
+"Zertifikate": [
+"Certificates",
+"Certificats",
+"Zertifikat"
+],
+"BMC-Steward merkt sich beim ersten Kontakt das Zertifikat jedes BMC. Zeigt dasselbe Gerät später ein anderes, wird es gesperrt, bevor ein Passwort gesendet wird. War der Wechsel gewollt (neues Zertifikat, Mainboard-Tausch, Werksreset), den Eintrag hier entfernen; beim nächsten Kontakt wird das neue Zertifikat gemerkt. Den Fingerabdruck vorher mit der Anzeige in der BMC-Oberfläche vergleichen.": [
+"BMC-Steward remembers each BMC's certificate on first contact. If the same device later shows a different one, it is blocked before any password is sent. If the change was intended (new certificate, mainboard replacement, factory reset), remove the entry here; the new certificate is remembered on the next contact. Compare the fingerprint with the one shown in the BMC's web interface first.",
+"BMC-Steward mémorise le certificat de chaque BMC au premier contact. Si le même appareil en présente un autre plus tard, il est bloqué avant l'envoi de tout mot de passe. Si le changement était voulu (nouveau certificat, remplacement de carte mère, réinitialisation usine), supprimez l'entrée ici ; le nouveau certificat sera mémorisé au prochain contact. Comparez d'abord l'empreinte avec celle affichée dans l'interface du BMC.",
+"BMC-Steward merkt sich bim erschte Kontakt s Zertifikat vo jedem BMC. Zeigt s gliiche Grät spöter es anders, wird es gsperrt, bevor es Passwort gschickt wird. Isch de Wächsel gwollt gsi (neus Zertifikat, Mainboard-Tuusch, Werksreset), dä Iitrag da entferne; bim nächschte Kontakt wird s neue Zertifikat gmerkt. Dä Fingerabdruck vorher mit de Aazeig i de BMC-Oberflächi vergliiche."
+],
+"Suchen (Adresse, Kennung, Fingerabdruck)": [
+"Search (address, identifier, fingerprint)",
+"Rechercher (adresse, identifiant, empreinte)",
+"Sueche (Adrässe, Kennig, Fingerabdruck)"
+],
+"Markierte entfernen": [
+"Remove selected",
+"Supprimer la sélection",
+"Markierti entferne"
+],
+"Schließen": [
+"Close",
+"Fermer",
+"Schliesse"
+],
+"Protokoll öffnen": [
+"Open log",
+"Ouvrir le journal",
+"Protokoll öffne"
+],
+"IPv4-Adresse des BMC (iDRAC, iLO, Supermicro-IPMI, XCC).": [
+"IPv4 address of the BMC (iDRAC, iLO, Supermicro IPMI, XCC).",
+"Adresse IPv4 du BMC (iDRAC, iLO, IPMI Supermicro, XCC).",
+"IPv4-Adrässe vom BMC (iDRAC, iLO, Supermicro-IPMI, XCC)."
+],
+"HTTPS-Port des BMC, normalerweise 443.": [
+"HTTPS port of the BMC, usually 443.",
+"Port HTTPS du BMC, normalement 443.",
+"HTTPS-Port vom BMC, normalerwiis 443."
+],
+"Benutzer dieses Geräts. Leer: Werksbenutzer je Hersteller.": [
+"User of this device. Empty: factory user per vendor.",
+"Utilisateur de cet appareil. Vide : utilisateur d'usine selon le fabricant.",
+"Benutzer vo dem Grät. Leer: Werksbenutzer je Herställer."
+],
+"Passwort dieses Geräts.": [
+"Password of this device.",
+"Mot de passe de cet appareil.",
+"Passwort vo dem Grät."
+],
+"Ergebnis des Verbindungstests.": [
+"Result of the connection test.",
+"Résultat du test de connexion.",
+"Ergebnis vom Verbindigstest."
+],
+"Bitte eine gültige Start- und Endadresse (Start vor Ende) eintragen.": [
+"Please enter a valid start and end address (start before end).",
+"Veuillez saisir une adresse de début et de fin valides (début avant fin).",
+"Bitte e gültigi Start- und Ändadrässe (Start vor Änd) iitrage."
+],
+"Höchstens 256 Adressen auf einmal.": [
+"At most 256 addresses at once.",
+"256 adresses au maximum à la fois.",
+"Höchschtens 256 Adrässe uf eimal."
+],
+"{0} Server in die Serverliste („Neuware“) übernommen, Benutzer „{1}“ eingetragen.": [
+"{0} servers added to the server list (“New hardware”), user “{1}” entered.",
+"{0} serveurs repris dans la liste (« Nouveau matériel »), utilisateur « {1} » saisi.",
+"{0} Server i d Serverlischte („Neuwar“) übernoh, Benutzer „{1}“ iitreit."
+],
+"Gerät": [
+"Device",
+"Appareil",
+"Grät"
+],
+"Fingerabdruck (SHA-256)": [
+"Fingerprint (SHA-256)",
+"Empreinte (SHA-256)",
+"Fingerabdruck (SHA-256)"
+],
+"Zuletzt gesehen": [
+"Last seen",
+"Vu pour la dernière fois",
+"Zletscht gseh"
+],
+"Öffnet den Datenordner mit den automatischen Sicherungen vor jeder Änderung und dem Revisionsprotokoll aller scharfen Läufe:\n{0}": [
+"Opens the data folder with the automatic backups taken before every change and the audit log of all live runs:\n{0}",
+"Ouvre le dossier de données avec les sauvegardes automatiques faites avant chaque modification et le journal d'audit de toutes les exécutions réelles :\n{0}",
+"Öffnet dä Dateordner mit de automatische Sicherige vor jeder Änderig und em Revisionsprotokoll vo allne schaarfe Läuf:\n{0}"
+],
+"Härtung: mindestens eine Einstellung wählen.": [
+"Hardening: choose at least one setting.",
+"Durcissement : choisissez au moins un réglage.",
+"Härtig: mindeschtens ei Iistellig wähle."
+],
+"Härtung: Nach dem Abschalten von IPMI geht die Textkonsole (SOL) bei Supermicro nicht mehr, ebenso Überwachung per IPMI.": [
+"Hardening: after IPMI is switched off, the text console (SOL) on Supermicro no longer works, nor does monitoring via IPMI.",
+"Durcissement : une fois IPMI désactivé, la console texte (SOL) sur Supermicro ne fonctionne plus, ni la supervision via IPMI.",
+"Härtig: Nach em Abschalte vo IPMI gaht d Textkonsole (SOL) bi Supermicro nümm, und au kei Überwachig per IPMI."
+],
+"Protokoll geladen aus {0}": [
+"Log loaded from {0}",
+"Journal chargé depuis {0}",
+"Protokoll glade us {0}"
+],
+"{0} getestete Server blieben draußen: anderer Benutzer als „{1}“ oder Port ungleich 443. „Neuware“, „UEFI-Einstellungen“ und „Dienste“ kennen nur einen Benutzer für alle Server; diese Server in einem zweiten Durchgang übernehmen.": [
+"{0} tested servers were left out: user other than “{1}” or port other than 443. “New hardware”, “UEFI settings” and “Services” know only one user for all servers; add these servers in a second pass.",
+"{0} serveurs testés ont été laissés de côté : utilisateur autre que « {1} » ou port différent de 443. « Nouveau matériel », « Réglages UEFI » et « Services » ne connaissent qu'un utilisateur pour tous les serveurs ; reprenez ces serveurs lors d'un second passage.",
+"{0} teschteti Server sind dusse blibe: andere Benutzer als „{1}“ oder Port ungliich 443. „Neuwar“, „UEFI-Iistellige“ und „Dienscht“ kenned nume ein Benutzer für alli Server; die Server imene zweite Durchgang übernäh."
+],
+"Zeile {0}: keine gültige IPv4-Adresse": [
+"Row {0}: not a valid IPv4 address",
+"Ligne {0} : adresse IPv4 non valide",
+"Zile {0}: kei gültigi IPv4-Adrässe"
+],
+"{0} Einträge entfernen? Beim nächsten Kontakt wird das dann gezeigte Zertifikat ungeprüft übernommen.": [
+"Remove {0} entries? On the next contact, the certificate then shown is accepted unchecked.",
+"Supprimer {0} entrées ? Au prochain contact, le certificat alors présenté sera accepté sans vérification.",
+"{0} Iiträg entferne? Bim nächschte Kontakt wird s dänn zeigte Zertifikat ungprüeft übernoh."
+],
+"Zeile {0}: ungültiger Port": [
+"Row {0}: invalid port",
+"Ligne {0} : port non valide",
+"Zile {0}: ungültige Port"
+],
+"Zeile {0}: Passwort fehlt": [
+"Row {0}: password missing",
+"Ligne {0} : mot de passe manquant",
+"Zile {0}: Passwort fählt"
+],
+"Zeile {0}: Adresse und Port kommen mehrfach vor": [
+"Row {0}: address and port occur more than once",
+"Ligne {0} : adresse et port apparaissent plusieurs fois",
+"Zile {0}: Adrässe und Port chömed mehrfach vor"
+],
+"vorher: {0}": [
+"before: {0}",
+"avant : {0}",
+"vorher: {0}"
+],
+"Nicht erneut versuchen, bevor Benutzer und Passwort geklärt sind: Mehrfache Fehlversuche können das Konto sperren.": [
+"Do not retry before user and password are clarified: repeated failed attempts can lock the account.",
+"Ne réessayez pas avant d'avoir clarifié l'utilisateur et le mot de passe : des échecs répétés peuvent verrouiller le compte.",
+"Nöd nomal probiere, bevor Benutzer und Passwort klärt sind: Mehrfachi Fehlversüech chönd s Konto sperre."
+],
+"Zertifikat hat sich während des Laufs geändert (vorher {0}, jetzt {1})": [
+"Certificate changed during the run (before {0}, now {1})",
+"Le certificat a changé pendant l'exécution (avant {0}, maintenant {1})",
+"Zertifikat hät sich während em Lauf gänderet (vorher {0}, jetzt {1})"
+],
+"  Warnung: Sicherung nicht möglich (nichts lesbar), es geht ohne weiter.": [
+"  Warning: backup not possible (nothing readable), continuing without.",
+"  Attention : sauvegarde impossible (rien de lisible), on continue sans.",
+"  Warnig: Sicherig nöd möglich (nüt läsbar), es gaht ohni wiiter."
+],
+"IPMI über LAN aus": [
+"IPMI over LAN off",
+"IPMI sur LAN désactivé",
+"IPMI über LAN us"
+],
+"SSDP aus": [
+"SSDP off",
+"SSDP désactivé",
+"SSDP us"
+],
+"SNMP aus": [
+"SNMP off",
+"SNMP désactivé",
+"SNMP us"
+],
+"Prüfsumme stimmt mit dem Sollwert überein.": [
+"Checksum matches the expected value.",
+"La somme de contrôle correspond à la valeur attendue.",
+"Prüefsumme stimmt mit em Sollwärt überii."
+],
+"Kein HTTPS-Handshake möglich": [
+"No HTTPS handshake possible",
+"Aucune négociation HTTPS possible",
+"Kei HTTPS-Handshake möglich"
+],
+"Der BMC antwortet am Port, spricht aber kein HTTPS oder ist noch nicht bereit.": [
+"The BMC answers on the port but does not speak HTTPS or is not ready yet.",
+"Le BMC répond sur le port mais ne parle pas HTTPS ou n'est pas encore prêt.",
+"De BMC antwortet am Port, redt aber kei HTTPS oder isch no nöd parat."
+],
+"nicht erreichbar": [
+"not reachable",
+"injoignable",
+"nöd erreichbar"
+],
+"Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)": [
+"Vendor not recognised (neither iDRAC, iLO, Supermicro nor XCC)",
+"Fabricant non reconnu (ni iDRAC, ni iLO, ni Supermicro, ni XCC)",
+"Herställer nöd erkännt (weder iDRAC, iLO, Supermicro no XCC)"
+],
+"Gerät antwortet nicht (Zeitüberschreitung oder Verbindung abgelehnt).": [
+"Device does not answer (timeout or connection refused).",
+"L'appareil ne répond pas (délai dépassé ou connexion refusée).",
+"Grät antwortet nöd (Zitüberschritig oder Verbindig abglehnt)."
+],
+"  Einstellungen gesichert: {0}": [
+"  Settings backed up: {0}",
+"  Réglages sauvegardés : {0}",
+"  Iistellige gsicheret: {0}"
+],
+"Hinweis: Die Datei wird unverschlüsselt geholt; der BMC prüft die Signatur des Pakets selbst. Wenn möglich HTTPS verwenden.": [
+"Note: the file is fetched unencrypted; the BMC checks the package signature itself. Use HTTPS if possible.",
+"Remarque : le fichier est récupéré sans chiffrement ; le BMC vérifie lui-même la signature du paquet. Utilisez HTTPS si possible.",
+"Hiiwis: D Datei wird unverschlüsslet gholt; de BMC prüeft d Signatur vom Paket sälber. Wänn möglich HTTPS bruuche."
+],
+"Datei {0}: {1:.1f} MB, SHA-256 {2}": [
+"File {0}: {1:.1f} MB, SHA-256 {2}",
+"Fichier {0} : {1:.1f} Mo, SHA-256 {2}",
+"Datei {0}: {1:.1f} MB, SHA-256 {2}"
+],
+"Hinweis: Kein Sollwert für die Prüfsumme angegeben; bitte mit der Angabe des Herstellers vergleichen.": [
+"Note: no expected checksum given; please compare with the vendor's value.",
+"Remarque : aucune somme de contrôle attendue indiquée ; comparez avec la valeur du fabricant.",
+"Hiiwis: Kei Sollwärt für d Prüefsumme aagäh; bitte mit de Aagab vom Herställer vergliiche."
+],
+"== Angehalten nach dem ersten Fehler, übrige Server nicht bearbeitet („Bei Fehler anhalten“).": [
+"== Stopped after the first error, remaining servers not processed (“Stop on error”).",
+"== Arrêt après la première erreur, serveurs restants non traités (« Arrêter en cas d'erreur »).",
+"== Aaghalte nach em erschte Fehler, übrigi Server nöd bearbeitet („Bi Fehler aahalte“)."
+],
+"Adresse und Port prüfen, außerdem Routing/Firewall zwischen diesem Rechner und dem BMC-Netz.": [
+"Check address and port, as well as routing/firewall between this computer and the BMC network.",
+"Vérifiez l'adresse et le port, ainsi que le routage/pare-feu entre cet ordinateur et le réseau BMC.",
+"Adrässe und Port prüefe, usserdem Routing/Firewall zwüsched dem Rächner und em BMC-Netz."
+],
+"Anmeldung ok, aber das Konto darf den BMC nicht lesen (HTTP 403)": [
+"Login ok, but the account may not read the BMC (HTTP 403)",
+"Connexion ok, mais le compte n'a pas le droit de lire le BMC (HTTP 403)",
+"Aamäldig ok, aber s Konto darf dä BMC nöd läse (HTTP 403)"
+],
+"  Hinweis: Administratorrechte nicht prüfbar.": [
+"  Note: administrator rights could not be checked.",
+"  Remarque : droits d'administrateur non vérifiables.",
+"  Hiiwis: Adminrächt nöd prüefbar."
+],
+"unbekannt": [
+"unknown",
+"inconnu",
+"unbekannt"
+],
+"  Zertifikat nach eigener Änderung erneuert, neu gemerkt (SHA-256 {0})": [
+"  Certificate renewed after our own change, remembered again (SHA-256 {0})",
+"  Certificat renouvelé après notre propre modification, mémorisé à nouveau (SHA-256 {0})",
+"  Zertifikat nach eigener Änderig erneueret, neu gmerkt (SHA-256 {0})"
+],
+"  Neues Gerät: Zertifikat gemerkt (SHA-256 {0})": [
+"  New device: certificate remembered (SHA-256 {0})",
+"  Nouvel appareil : certificat mémorisé (SHA-256 {0})",
+"  Neus Grät: Zertifikat gmerkt (SHA-256 {0})"
+],
+"  Warnung: Revisionsprotokoll nicht schreibbar ({0})": [
+"  Warning: audit log not writable ({0})",
+"  Attention : journal d'audit non inscriptible ({0})",
+"  Warnig: Revisionsprotokoll nöd schriibbar ({0})"
+],
+"Kontrolle der neuen Adressen (bis zu {0}s)... Die Liste bleibt bis dahin gesperrt; „Abbrechen“ beendet die Kontrolle vorzeitig.": [
+"Checking the new addresses (up to {0}s)... The list stays locked until then; “Cancel” ends the check early.",
+"Contrôle des nouvelles adresses (jusqu'à {0} s)... La liste reste verrouillée jusque-là ; « Annuler » termine le contrôle plus tôt.",
+"Kontrolle vo de neue Adrässe (bis zu {0}s)... D Lischte blibt bis dänn gsperrt; „Abbräche“ beändet d Kontrolle vorzitig."
+],
+"  {0}: auf diesem Gerät nicht unterstützt, übersprungen": [
+"  {0}: not supported on this device, skipped",
+"  {0} : non pris en charge sur cet appareil, ignoré",
+"  {0}: uf dem Grät nöd unterstützt, übersprunge"
+],
+"  FEHLER: {0}": [
+"  ERROR: {0}",
+"  ERREUR : {0}",
+"  FEHLER: {0}"
+],
+"Weder Dell iDRAC, HPE iLO, Supermicro noch Lenovo XCC erkannt.": [
+"Neither Dell iDRAC, HPE iLO, Supermicro nor Lenovo XCC recognised.",
+"Ni Dell iDRAC, ni HPE iLO, ni Supermicro, ni Lenovo XCC reconnu.",
+"Weder Dell iDRAC, HPE iLO, Supermicro no Lenovo XCC erkännt."
+],
+"Zertifikat dieses Geräts hat sich geändert (gemerkt {0}, jetzt {1}). Möglicher Angriff (Man-in-the-Middle) – es wurde kein Passwort gesendet. War der Wechsel gewollt (neues Zertifikat, Mainboard-Tausch, Werksreset), den Eintrag unter „Zertifikate“ (links unten) entfernen.": [
+"This device's certificate has changed (remembered {0}, now {1}). Possible attack (man-in-the-middle) – no password was sent. If the change was intended (new certificate, mainboard replacement, factory reset), remove the entry under “Certificates” (bottom left).",
+"Le certificat de cet appareil a changé (mémorisé {0}, maintenant {1}). Attaque possible (homme du milieu) – aucun mot de passe n'a été envoyé. Si le changement était voulu (nouveau certificat, remplacement de carte mère, réinitialisation usine), supprimez l'entrée sous « Certificats » (en bas à gauche).",
+"S Zertifikat vo dem Grät hät sich gänderet (gmerkt {0}, jetzt {1}). Mögliche Aagriff (Man-in-the-Middle) – es isch kei Passwort gschickt worde. Isch de Wächsel gwollt gsi (neus Zertifikat, Mainboard-Tuusch, Werksreset), dä Iitrag under „Zertifikat“ (links une) entferne."
+],
+"  Warnung: Sicherung nicht schreibbar ({0}), es geht ohne weiter.": [
+"  Warning: backup not writable ({0}), continuing without.",
+"  Attention : sauvegarde non inscriptible ({0}), on continue sans.",
+"  Warnig: Sicherig nöd schriibbar ({0}), es gaht ohni wiiter."
+],
+"GESPERRT: ": [
+"BLOCKED: ",
+"BLOQUÉ : ",
+"GSPERRT: "
+],
+"  ... noch {0} von {1} Server(n) nicht erreichbar, warte weiter ({2}s vergangen)": [
+"  ... {0} of {1} server(s) still not reachable, waiting ({2}s elapsed)",
+"  ... encore {0} serveur(s) sur {1} injoignable(s), on attend ({2} s écoulées)",
+"  ... no {0} vo {1} Server nöd erreichbar, warte wiiter ({2}s vergange)"
+],
+"Härtung: Kontosperre nach {0} Fehlversuchen für {1} min": [
+"Hardening: lock account after {0} failed attempts for {1} min",
+"Durcissement : verrouillage après {0} échecs pendant {1} min",
+"Härtig: Kontosperri nach {0} Fehlversüech für {1} min"
+],
+"Härtung: Session-Zeitlimit {0} min": [
+"Hardening: session timeout {0} min",
+"Durcissement : délai de session {0} min",
+"Härtig: Session-Zitlimit {0} min"
+],
+"FEHLER: Datei nicht lesbar: {0}": [
+"ERROR: file not readable: {0}",
+"ERREUR : fichier illisible : {0}",
+"FEHLER: Datei nöd läsbar: {0}"
+],
+"FEHLER: Prüfsumme stimmt nicht mit dem Sollwert überein (erwartet {0}). Die Datei ist beschädigt oder nicht die richtige. Es wurde nichts eingespielt.": [
+"ERROR: checksum does not match the expected value (expected {0}). The file is damaged or not the right one. Nothing was flashed.",
+"ERREUR : la somme de contrôle ne correspond pas à la valeur attendue ({0}). Le fichier est endommagé ou n'est pas le bon. Rien n'a été flashé.",
+"FEHLER: Prüefsumme stimmt nöd mit em Sollwärt überii (erwartet {0}). D Datei isch kaputt oder nöd di richtig. Es isch nüt iigspielt worde."
+],
+"keine brauchbare Antwort der XML-Schnittstelle (HTTP {0})": [
+"no usable answer from the XML interface (HTTP {0})",
+"aucune réponse exploitable de l'interface XML (HTTP {0})",
+"kei bruuchbari Antwort vo de XML-Schnittstell (HTTP {0})"
+],
+"Anmeldung nicht möglich (HTTP {0})": [
+"Login not possible (HTTP {0})",
+"Connexion impossible (HTTP {0})",
+"Aamäldig nöd möglich (HTTP {0})"
+],
+"Härtung: {0}": [
+"Hardening: {0}",
+"Durcissement : {0}",
+"Härtig: {0}"
+],
+"Starte … %p %": [
+"Starting … %p %",
+"Démarrage … %p %",
+"Start … %p %"
+],
+"In welche Spalte der Serverliste die Scans eingetragen werden, z. B. „Passwort“ oder „Seriennummer“. Lässt sich jederzeit umschalten, auch während der Scanner läuft - ab dem nächsten Scan gilt die neue Spalte.": [
+"Which column of the server list the scans go into, e.g. “Password” or “Serial number”. Can be switched at any time, even while the scanner runs – the new column applies from the next scan.",
+"Colonne de la liste où les scans sont saisis, p. ex. « Mot de passe » ou « Numéro de série ». Modifiable à tout moment, même pendant le scan – la nouvelle colonne s'applique dès le scan suivant.",
+"I weli Spalte vo de Serverlischte d Scans iitreit wärded, z. B. „Passwort“ oder „Seriennummere“. Lat sich jederzit umschalte, au während de Scanner lauft – ab em nächschte Scan gilt di neu Spalte."
+],
+"erneut prüfen": [
+"check again",
+"revérifier",
+"nomal prüefe"
+],
+"Nach dem Installieren eines Pakets erneut prüfen – ohne Neustart.": [
+"Check again after installing a package – no restart needed.",
+"Revérifier après l'installation d'un paquet – sans redémarrage.",
+"Nach em Installiere vomene Paket nomal prüefe – ohni Neustart."
+],
+"Das Handy zeigt nur die Kamera. Bilder werden nicht auf dem Handy gespeichert: Der PC liest den Text und verwirft das Bild sofort. Der Wert landet im unten gewählten Zielfeld der markierten Zeile (sonst der ersten offenen Zeile, in der dieses Feld noch leer ist); danach springt die Markierung eine Zeile weiter.": [
+"The phone only shows the camera. Images are not saved on the phone: the PC reads the text and discards the image at once. The value goes into the target field chosen below in the selected row (otherwise the first open row where this field is still empty); the selection then moves down one row.",
+"Le téléphone affiche seulement la caméra. Les images ne sont pas enregistrées sur le téléphone : le PC lit le texte et jette l'image aussitôt. La valeur va dans le champ cible choisi ci-dessous de la ligne sélectionnée (sinon la première ligne ouverte où ce champ est vide) ; la sélection descend ensuite d'une ligne.",
+"S Handy zeigt nume d Kamera. Bilder wärded nöd uf em Handy gspicheret: De PC list de Text und verwirft s Bild sofort. De Wärt landet im une gwählte Zielfäld vo de markierte Zile (suscht de erschte offene Zile, wo das Fäld no leer isch); dänn springt d Markierig e Zile wiiter."
+],
+"Zwischenbilder mitspeichern (zeigen das Passwort!)": [
+"Keep intermediate images (they show the password!)",
+"Conserver les images intermédiaires (elles montrent le mot de passe !)",
+"Zwüschebilder mitspichere (zeiged s Passwort!)"
+],
+"Das Protokoll enthält nie Passwörter, nur Länge und Form (A groß, a klein, 9 Ziffer, # Rest).\nAn: Zusätzlich liegen die Bilder der Erkennung im Export. Die zeigen das Passwort lesbar. Nur zur Fehlersuche einschalten und die ZIP danach löschen.": [
+"The log never contains passwords, only length and shape (A upper, a lower, 9 digit, # other).\nOn: the recognition images are added to the export as well. They show the password legibly. Switch on only for troubleshooting and delete the ZIP afterwards.",
+"Le journal ne contient jamais de mots de passe, seulement la longueur et la forme (A majuscule, a minuscule, 9 chiffre, # autre).\nActivé : les images de reconnaissance sont ajoutées à l'export. Elles montrent le mot de passe lisiblement. N'activer que pour le dépannage et supprimer le ZIP ensuite.",
+"S Protokoll enthaltet nie Passwörter, nume Längi und Form (A gross, a chli, 9 Ziffer, # Rescht).\nAa: Zuesätzlich ligged d Bilder vo de Erkännig im Export. Die zeiged s Passwort läsbar. Nume zur Fehlersuech iischalte und d ZIP dänn lösche."
+],
+"Log exportieren …": [
+"Export log …",
+"Exporter le journal …",
+"Log exportiere …"
+],
+"HTTPS-Zertifikat (zum Starten nötig)": [
+"HTTPS certificate (needed to start)",
+"Certificat HTTPS (nécessaire au démarrage)",
+"HTTPS-Zertifikat (zum Starte nötig)"
+],
+"Barcode (Paket „zbar“)": [
+"Barcode (package “zbar”)",
+"Code-barres (paquet « zbar »)",
+"Barcode (Paket „zbar“)"
+],
+"Texterkennung (OCR)": [
+"Text recognition (OCR)",
+"Reconnaissance de texte (OCR)",
+"Texterkännig (OCR)"
+],
+"QR-Code zum Verbinden": [
+"QR code to connect",
+"Code QR pour se connecter",
+"QR-Code zum Verbinde"
+],
+"Handy verbunden": [
+"Phone connected",
+"Téléphone connecté",
+"Handy verbunde"
+],
+"Log exportieren": [
+"Export log",
+"Exporter le journal",
+"Log exportiere"
+],
+"ZIP (*.zip)": [
+"ZIP (*.zip)",
+"ZIP (*.zip)",
+"ZIP (*.zip)"
+],
+"Bereit – QR-Code mit dem Handy scannen": [
+"Ready – scan the QR code with the phone",
+"Prêt – scannez le code QR avec le téléphone",
+"Parat – QR-Code mit em Handy scanne"
+],
+"Zielfeld": [
+"Target field",
+"Champ cible",
+"Zielfäld"
+],
+"Log exportiert: {0}": [
+"Log exported: {0}",
+"Journal exporté : {0}",
+"Log exportiert: {0}"
+],
+"Hilfsprogramme am PC": [
+"Helper programs on the PC",
+"Programmes auxiliaires sur le PC",
+"Hilfsprogramm am PC"
+],
+"Fehlt etwas? Unter CachyOS:": [
+"Something missing? On CachyOS:",
+"Il manque quelque chose ? Sous CachyOS :",
+"Fählt öppis? Under CachyOS:"
+],
+"{0} in Zeile {1} eingetragen": [
+"{0} entered in row {1}",
+"{0} saisi en ligne {1}",
+"{0} i Zile {1} iitreit"
+],
+"Virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs verhalten - zum Testen und Vorführen ohne Hardware. Im Modus Konfigraum oder Router bekommt jeder Server eine eigene Netzwerkkarte mit MAC, holt sich per DHCP eine Adresse (oder hat eine feste Werks-IP) und zieht beim Umstellen wirklich um.": [
+"Virtual Dell/HPE/Lenovo/Supermicro servers that behave like real BMCs – for testing and demos without hardware. In Config room or Router mode each server gets its own network card with a MAC, obtains an address via DHCP (or has a static factory IP) and really moves when reconfigured.",
+"Serveurs virtuels Dell/HPE/Lenovo/Supermicro qui se comportent comme de vrais BMC – pour tester et présenter sans matériel. En mode Salle de config ou Routeur, chaque serveur a sa propre carte réseau avec MAC, obtient une adresse par DHCP (ou a une IP d'usine fixe) et déménage réellement lors de la reconfiguration.",
+"Virtuelli Dell/HPE/Lenovo/Supermicro-Server, wo sich wie ächti BMCs verhalted – zum Teschte und Vorfüehre ohni Hardware. Im Modus Konfigruum oder Router überchunnt jede Server e eigeti Netzwärkcharte mit MAC, holt sich per DHCP e Adrässe (oder hät e feschti Werks-IP) und zieht bim Umstelle würkli um."
+],
+"Netz": [
+"Network",
+"Réseau",
+"Netz"
+],
+"Loopback: läuft ohne Root nur auf diesem PC, Adressen als IP:PORT.\nKonfigraum: eigener virtueller Staging-Switch, DHCP über „DHCP-Server“.\nRouter: die Server hängen im echten LAN und erscheinen im Router.\nKonfigraum und Router brauchen beim Start einmal Root (pkexec).": [
+"Loopback: runs without root on this PC only, addresses as IP:PORT.\nConfig room: own virtual staging switch, DHCP via “DHCP server”.\nRouter: the servers sit on the real LAN and appear in the router.\nConfig room and Router need root once at start (pkexec).",
+"Loopback : fonctionne sans root sur ce PC uniquement, adresses en IP:PORT.\nSalle de config : propre switch de staging virtuel, DHCP via « Serveur DHCP ».\nRouteur : les serveurs sont sur le vrai LAN et apparaissent dans le routeur.\nSalle de config et Routeur demandent root une fois au démarrage (pkexec).",
+"Loopback: lauft ohni Root nume uf dem PC, Adrässe als IP:PORT.\nKonfigruum: eigete virtuelle Staging-Switch, DHCP über „DHCP-Server“.\nRouter: d Server hanged im ächte LAN und erschiined im Router.\nKonfigruum und Router bruuched bim Start eimal Root (pkexec)."
+],
+"Modus": [
+"Mode",
+"Mode",
+"Modus"
+],
+"Adresse(n) dieses PCs am Staging-Switch, ohne Gateway - wie die Staging-Karte im Konfigraum. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, damit auch die neuen Adressen im Zielnetz erreichbar sind.": [
+"Address(es) of this PC on the staging switch, without gateway – like the staging card in the config room. Several separated by commas, e.g. 192.168.0.1/24, 10.20.30.1/24, so the new addresses in the target network are reachable too.",
+"Adresse(s) de ce PC sur le switch de staging, sans passerelle – comme la carte de staging en salle de config. Plusieurs séparées par des virgules, p. ex. 192.168.0.1/24, 10.20.30.1/24, pour que les nouvelles adresses du réseau cible soient aussi joignables.",
+"Adrässe vo dem PC am Staging-Switch, ohni Gateway – wie d Staging-Charte im Konfigruum. Mehreri mit Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, damit au di neue Adrässe im Zielnetz erreichbar sind."
+],
+"Dieser PC": [
+"This PC",
+"Ce PC",
+"Dä PC"
+],
+"Nach dem Start ist in „DHCP-Server“ die Karte „bmclab0“ schon gewählt: dort den DHCP-Server starten (wie am Staging-Switch). Server mit fester Werks-IP sind sofort da - zwei mit derselben IP stören sich wie in echt.": [
+"After the start, the card “bmclab0” is already selected in “DHCP server”: start the DHCP server there (as on the staging switch). Servers with a static factory IP are there at once – two with the same IP interfere as in real life.",
+"Après le démarrage, la carte « bmclab0 » est déjà choisie dans « Serveur DHCP » : lancez-y le serveur DHCP (comme sur le switch de staging). Les serveurs avec IP d'usine fixe sont là tout de suite – deux avec la même IP se gênent comme en vrai.",
+"Nach em Start isch i „DHCP-Server“ d Charte „bmclab0“ scho gwählt: det dä DHCP-Server starte (wie am Staging-Switch). Server mit feschter Werks-IP sind sofort da – zwei mit de gliiche IP störed sich wie i echt."
+],
+"Kabel-Netzwerkkarte, die am Router hängt. WLAN geht nicht: ein WLAN-Router nimmt von einem Client keine zusätzlichen MAC-Adressen an.": [
+"Wired network card connected to the router. Wi-Fi does not work: a Wi-Fi router does not accept additional MAC addresses from one client.",
+"Carte réseau filaire reliée au routeur. Le Wi-Fi ne fonctionne pas : un routeur Wi-Fi n'accepte pas d'adresses MAC supplémentaires d'un client.",
+"Kabel-Netzwärkcharte, wo am Router hanget. WLAN gaht nöd: En WLAN-Router nimmt vo eim Client kei zuesätzlichi MAC-Adrässe aa."
+],
+"Jeder Server bekommt eine eigene MAC (Hersteller-Kennung) und holt sich seine Adresse vom Router; er erscheint dort als eigenes Gerät. Dieser PC erreicht die Server über einen eigenen Labor-Anschluss „bmcshim“ (bekommt ebenfalls eine Adresse vom Router).": [
+"Each server gets its own MAC (vendor prefix) and obtains its address from the router; it appears there as a device of its own. This PC reaches the servers through its own lab port “bmcshim” (which also gets an address from the router).",
+"Chaque serveur reçoit sa propre MAC (préfixe fabricant) et obtient son adresse du routeur ; il y apparaît comme appareil distinct. Ce PC joint les serveurs par son propre accès labo « bmcshim » (qui reçoit aussi une adresse du routeur).",
+"Jede Server überchunnt e eigeti MAC (Herställer-Kennig) und holt sich sini Adrässe vom Router; er erschiint det als eiges Grät. Dä PC erreicht d Server über en eigete Labor-Aaschluss „bmcshim“ (überchunnt au e Adrässe vom Router)."
+],
+"Hersteller des virtuellen Servers": [
+"Vendor of the virtual server",
+"Fabricant du serveur virtuel",
+"Herställer vom virtuelle Server"
+],
+"Firmware-Generation. „iDRAC8, Firmware zu alt“ und iLO 3/4 prüfen die Sonderwege von BMC-Steward.": [
+"Firmware generation. “iDRAC8, firmware too old” and iLO 3/4 test BMC-Steward's special paths.",
+"Génération de firmware. « iDRAC8, firmware trop ancien » et iLO 3/4 testent les chemins particuliers de BMC-Steward.",
+"Firmware-Generation. „iDRAC8, Firmware z alt“ und iLO 3/4 prüefed d Sonderwäg vo BMC-Steward."
+],
+"Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Konfigraum/Router.": [
+"Factory default via DHCP or with a static factory IP (e.g. Dell 192.168.0.120). Config room/Router only.",
+"D'usine par DHCP ou avec une IP d'usine fixe (p. ex. Dell 192.168.0.120). Salle de config/Routeur uniquement.",
+"Ab Wärk per DHCP oder mit feschter Werks-IP (z. B. Dell 192.168.0.120). Nume Konfigruum/Router."
+],
+"Feste Werks-IP (nur bei „Feste IP“)": [
+"Static factory IP (only with “Static IP”)",
+"IP d'usine fixe (seulement avec « IP fixe »)",
+"Feschti Werks-IP (nume bi „Feschti IP“)"
+],
+"Werksbenutzer, mit dem BMC-Steward sich anmeldet": [
+"Factory user BMC-Steward logs in with",
+"Utilisateur d'usine avec lequel BMC-Steward se connecte",
+"Werksbenutzer, mit dem sich BMC-Steward aamäldet"
+],
+"Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in „Neuware“.": [
+"Factory password (as on the sticker). Is entered per row in “New hardware” when added.",
+"Mot de passe d'usine (comme sur l'étiquette). Saisi par ligne dans « Nouveau matériel » lors de la reprise.",
+"Werkspasswort (wie uf em Chläber). Staht bim Übernäh je Zile i „Neuwar“."
+],
+"Leer = Standardmodell der Generation": [
+"Empty = default model of the generation",
+"Vide = modèle par défaut de la génération",
+"Leer = Standardmodell vo de Generation"
+],
+"Bestimmt auch die MAC-Adresse: gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse.": [
+"Also determines the MAC address: same serial number = same MAC = same DHCP address.",
+"Détermine aussi l'adresse MAC : même numéro de série = même MAC = même adresse DHCP.",
+"Bestimmt au d MAC-Adrässe: gliichi Seriennummere = gliichi MAC = gliichi DHCP-Adrässe."
+],
+"Nur Dell: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). BMC-Steward darf ihn nicht überschreiben.": [
+"Dell only: this user slot is already taken by another user (e.g. 3). BMC-Steward must not overwrite it.",
+"Dell uniquement : cet emplacement utilisateur est déjà occupé par un autre utilisateur (p. ex. 3). BMC-Steward ne doit pas l'écraser.",
+"Nume Dell: dä User-Slot isch scho vomene andere Benutzer beleit (z. B. 3). BMC-Steward darf en nöd überschriibe."
+],
+"Je Hersteller einer": [
+"One per vendor",
+"Un par fabricant",
+"Je Herställer eine"
+],
+"Entfernen": [
+"Remove",
+"Supprimer",
+"Entferne"
+],
+"Zufällige Werkspasswörter": [
+"Random factory passwords",
+"Mots de passe d'usine aléatoires",
+"Zuefälligi Werkspasswörter"
+],
+"Setzt für die markierten Zeilen (ohne Markierung: alle) zufällige Passwörter im Stil der Aufkleber, wie bei neuen Geräten.": [
+"Sets random sticker-style passwords for the selected rows (no selection: all), as on new devices.",
+"Définit des mots de passe aléatoires de style étiquette pour les lignes sélectionnées (sans sélection : toutes), comme sur les appareils neufs.",
+"Setzt für di markierte Zile (ohni Markierig: alli) zuefälligi Passwörter im Stil vo de Chläber, wie bi neue Grät."
+],
+"Szenario laden …": [
+"Load scenario …",
+"Charger un scénario …",
+"Szenario lade …"
+],
+"Szenario speichern …": [
+"Save scenario …",
+"Enregistrer le scénario …",
+"Szenario spichere …"
+],
+"Speichert Modus, Netz und alle Server (inkl. Seriennummern und Werkspasswörter) als JSON, um den Aufbau genau so nachzustellen.": [
+"Saves mode, network and all servers (incl. serial numbers and factory passwords) as JSON to recreate exactly this setup.",
+"Enregistre le mode, le réseau et tous les serveurs (y compris numéros de série et mots de passe d'usine) en JSON pour recréer exactement ce montage.",
+"Spicheret Modus, Netz und alli Server (inkl. Seriennummere und Werkspasswörter) als JSON, zum dä Ufbau genau so nachestelle."
+],
+"Laufende Server": [
+"Running servers",
+"Serveurs en marche",
+"Laufendi Server"
+],
+"In Serverliste übernehmen („Neuware“)": [
+"Add to server list (“New hardware”)",
+"Reprendre dans la liste (« Nouveau matériel »)",
+"I Serverlischte übernäh („Neuwar“)"
+],
+"Trägt die markierten (ohne Markierung: alle) laufenden Server mit ihrer aktuellen Adresse und ihrem Werks-Passwort in die Serverliste ein und schlägt neue Adressen vor.": [
+"Enters the selected (no selection: all) running servers with their current address and factory password into the server list and suggests new addresses.",
+"Saisit les serveurs en marche sélectionnés (sans sélection : tous) avec leur adresse actuelle et leur mot de passe d'usine dans la liste et propose de nouvelles adresses.",
+"Treit di markierte (ohni Markierig: alli) laufende Server mit ihrer aktuelle Adrässe und ihrem Werkspasswort i d Serverlischte ii und schlaat neui Adrässe vor."
+],
+"Nur im Loopback-Modus. Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit deinem Präfix vorgefüllt (nur Trockenlauf). Loopback: die neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft.": [
+"Loopback mode only. Real network: gateway/subnet are detected and the new IP is prefilled with your prefix (dry run only). Loopback: the new IP stays on 127.x:port so that a live run also completes green.",
+"Mode loopback uniquement. Réseau réel : passerelle/sous-réseau détectés et nouvelle IP préremplie avec votre préfixe (simulation seulement). Loopback : la nouvelle IP reste sur 127.x:port pour qu'une exécution réelle passe aussi au vert.",
+"Nume im Loopback-Modus. Ächts Netz: Gateway/Subnetz wärded erkännt und di neu IP mit dim Präfix vorgfüllt (nume Trochelauf). Loopback: di neu IP blibt uf 127.x:Port, damit au en schaarfe Lauf grüen durelauft."
+],
+"Ausgabe des Clusters (DHCP, Umzüge, Hinweise) …": [
+"Cluster output (DHCP, moves, notes) …",
+"Sortie du cluster (DHCP, déménagements, remarques) …",
+"Usgab vom Cluster (DHCP, Umzüg, Hiiwis) …"
+],
+"Protokoll anzeigen …": [
+"Show log …",
+"Afficher le journal …",
+"Protokoll aazeige …"
+],
+"Schreibt die aktuelle Ausgabe des Clusters in eine Textdatei und öffnet sie im Standardprogramm für Textdateien (z. B. zum Suchen in einem langen Protokoll).": [
+"Writes the current cluster output to a text file and opens it in the default text editor (e.g. to search a long log).",
+"Écrit la sortie actuelle du cluster dans un fichier texte et l'ouvre avec l'éditeur par défaut (p. ex. pour chercher dans un long journal).",
+"Schribt di aktuell Usgab vom Cluster imene Textdatei und öffnet si im Standardprogramm für Textdateie (z. B. zum Sueche imene lange Protokoll)."
+],
+"Speichert die Ausgabe des Clusters als Textdatei, z. B. um einen Fehler wie „Gerät nicht erreichbar“ weiterzugeben.": [
+"Saves the cluster output as a text file, e.g. to pass on an error such as “device not reachable”.",
+"Enregistre la sortie du cluster en fichier texte, p. ex. pour transmettre une erreur comme « appareil injoignable ».",
+"Spicheret d Usgab vom Cluster als Textdatei, z. B. zum en Fehler wie „Grät nöd erreichbar“ wiitergäh."
+],
+"Szenario speichern": [
+"Save scenario",
+"Enregistrer le scénario",
+"Szenario spichere"
+],
+"Szenario (*.json)": [
+"Scenario (*.json)",
+"Scénario (*.json)",
+"Szenario (*.json)"
+],
+"Bitte mindestens einen Server hinzufügen (oder ein Szenario laden).": [
+"Please add at least one server (or load a scenario).",
+"Veuillez ajouter au moins un serveur (ou charger un scénario).",
+"Bitte mindeschtens ein Server dezuefüege (oder es Szenario lade)."
+],
+"Router: bitte die Kabel-Netzwerkkarte wählen.": [
+"Router: please choose the wired network card.",
+"Routeur : veuillez choisir la carte réseau filaire.",
+"Router: bitte d Kabel-Netzwärkcharte wähle."
+],
+"Cluster wird gestoppt (Adressen werden freigegeben) …": [
+"Stopping cluster (releasing addresses) …",
+"Arrêt du cluster (libération des adresses) …",
+"Cluster wird gstoppt (Adrässe wärded freigäh) …"
+],
+"Generation": [
+"Generation",
+"Génération",
+"Generation"
+],
+"Werks-Netz": [
+"Factory network",
+"Réseau d'usine",
+"Werks-Netz"
+],
+"Werks-IP": [
+"Factory IP",
+"IP d'usine",
+"Werks-IP"
+],
+"Werks-Benutzer": [
+"Factory user",
+"Utilisateur d'usine",
+"Werks-Benutzer"
+],
+"Werks-Passwort": [
+"Factory password",
+"Mot de passe d'usine",
+"Werks-Passwort"
+],
+"Modell": [
+"Model",
+"Modèle",
+"Modell"
+],
+"Belegter Slot": [
+"Occupied slot",
+"Emplacement occupé",
+"Beleite Slot"
+],
+"Einen virtuellen Server dieses Herstellers hinzufügen": [
+"Add a virtual server of this vendor",
+"Ajouter un serveur virtuel de ce fabricant",
+"En virtuelle Server vo dem Herställer dezuefüege"
+],
+"Nr": [
+"No.",
+"N°",
+"Nr"
+],
+"Modell · Seriennummer": [
+"Model · serial number",
+"Modèle · numéro de série",
+"Modell · Seriennummere"
+],
+"MAC": [
+"MAC",
+"MAC",
+"MAC"
+],
+"Zustand": [
+"State",
+"État",
+"Zuestand"
+],
+"Werks-Login": [
+"Factory login",
+"Identifiant d'usine",
+"Werks-Login"
+],
+"Kabel": [
+"Cable",
+"Câble",
+"Kabel"
+],
+"Bereit. Server hinzufügen (oder Szenario laden) und „Cluster starten“.": [
+"Ready. Add servers (or load a scenario) and “Start cluster”.",
+"Prêt. Ajoutez des serveurs (ou chargez un scénario) et « Démarrer le cluster ».",
+"Parat. Server dezuefüege (oder Szenario lade) und „Cluster starte“."
+],
+"Szenario laden": [
+"Load scenario",
+"Charger un scénario",
+"Szenario lade"
+],
+"Szenario (*.json);;Alle Dateien (*)": [
+"Scenario (*.json);;All files (*)",
+"Scénario (*.json);;Tous les fichiers (*)",
+"Szenario (*.json);;Alli Dateie (*)"
+],
+"Szenario geladen: {0} Server": [
+"Scenario loaded: {0} servers",
+"Scénario chargé : {0} serveurs",
+"Szenario glade: {0} Server"
+],
+"Protokoll anzeigen": [
+"Show log",
+"Afficher le journal",
+"Protokoll aazeige"
+],
+"Konfigraum: Adresse dieses PCs fehlt, z. B. 192.168.0.1/24.": [
+"Config room: address of this PC missing, e.g. 192.168.0.1/24.",
+"Salle de config : adresse de ce PC manquante, p. ex. 192.168.0.1/24.",
+"Konfigruum: Adrässe vo dem PC fählt, z. B. 192.168.0.1/24."
+],
+"Für diesen Modus sind Root-Rechte nötig; pkexec ist nicht verfügbar. Bitte im Terminal starten:": [
+"This mode needs root rights; pkexec is not available. Please start in a terminal:",
+"Ce mode nécessite les droits root ; pkexec n'est pas disponible. Veuillez lancer dans un terminal :",
+"Für dä Modus bruuchts Root-Rächt; pkexec isch nöd verfüegbar. Bitte im Terminal starte:"
+],
+"Cluster startet …": [
+"Cluster starting …",
+"Démarrage du cluster …",
+"Cluster startet …"
+],
+"Cluster startet … (Rechteabfrage bestätigen)": [
+"Cluster starting … (confirm the privilege prompt)",
+"Démarrage du cluster … (confirmez la demande de droits)",
+"Cluster startet … (Rächteabfrog bestätige)"
+],
+"Rechteabfrage abgebrochen, der Cluster wurde nicht gestartet.": [
+"Privilege prompt cancelled, the cluster was not started.",
+"Demande de droits annulée, le cluster n'a pas démarré.",
+"Rächteabfrog abbroche, de Cluster isch nöd gstartet worde."
+],
+"Neue IP im Staging-Netz vorgeschlagen; Gateway des Zielnetzes noch eintragen.": [
+"New IP suggested in the staging network; still enter the gateway of the target network.",
+"Nouvelle IP proposée dans le réseau de staging ; saisissez encore la passerelle du réseau cible.",
+"Neui IP im Staging-Netz vorgschlage; Gateway vom Zielnetz no iitrage."
+],
+"keine IPv4": [
+"no IPv4",
+"pas d'IPv4",
+"kei IPv4"
+],
+"(kein Kabel)": [
+"(no cable)",
+"(pas de câble)",
+"(kei Kabel)"
+],
+"Szenario gespeichert: {0}": [
+"Scenario saved: {0}",
+"Scénario enregistré : {0}",
+"Szenario gspicheret: {0}"
+],
+"Protokoll geöffnet: {0}": [
+"Log opened: {0}",
+"Journal ouvert : {0}",
+"Protokoll göffnet: {0}"
+],
+"(geändert)": [
+"(changed)",
+"(modifié)",
+"(gänderet)"
+],
+"({0} unbekannte Einträge übersprungen)": [
+"({0} unknown entries skipped)",
+"({0} entrées inconnues ignorées)",
+"({0} unbekannti Iiträg übersprunge)"
+],
+"Kein Standardprogramm für Textdateien gefunden.\nDatei liegt unter {0}": [
+"No default program for text files found.\nThe file is at {0}",
+"Aucun programme par défaut pour les fichiers texte.\nLe fichier se trouve sous {0}",
+"Kei Standardprogramm für Textdateie gfunde.\nD Datei ligt under {0}"
+],
+"Kabel ziehen": [
+"Unplug cable",
+"Débrancher le câble",
+"Kabel zieh"
+],
+"Kabel stecken": [
+"Plug in cable",
+"Brancher le câble",
+"Kabel stecke"
+],
+"Netz erkannt (Gateway {0}, Maske {1}); bei „Neue IP“ nur noch die letzte Ziffer eintragen. Ein scharfer Lauf geht in diesem Übungsmodus nicht.": [
+"Network detected (gateway {0}, mask {1}); for “New IP” just enter the last digit. A live run is not possible in this practice mode.",
+"Réseau détecté (passerelle {0}, masque {1}) ; pour « Nouvelle IP », saisissez juste le dernier chiffre. Une exécution réelle n'est pas possible dans ce mode d'exercice.",
+"Netz erkännt (Gateway {0}, Maske {1}); bi „Neui IP“ nume no di letscht Ziffer iitrage. En schaarfe Lauf gaht i dem Üebigsmodus nöd."
+],
+"Router-Netz übernommen (Gateway {0}); bei „Neue IP“ eine freie letzte Ziffer außerhalb des DHCP-Bereichs des Routers eintragen.": [
+"Router network applied (gateway {0}); for “New IP” enter a free last digit outside the router's DHCP range.",
+"Réseau du routeur repris (passerelle {0}) ; pour « Nouvelle IP », saisissez un dernier chiffre libre hors de la plage DHCP du routeur.",
+"Router-Netz übernoh (Gateway {0}); bi „Neui IP“ e freii letschti Ziffer usserhalb vom DHCP-Beriich vom Router iitrage."
+],
+"Zeile {0}: Werks-Passwort fehlt.": [
+"Row {0}: factory password missing.",
+"Ligne {0} : mot de passe d'usine manquant.",
+"Zile {0}: Werks-Passwort fählt."
+],
+"Zeile {0}: Seriennummer {1} kommt doppelt vor (sie bestimmt die MAC-Adresse).": [
+"Row {0}: serial number {1} occurs twice (it determines the MAC address).",
+"Ligne {0} : le numéro de série {1} apparaît deux fois (il détermine l'adresse MAC).",
+"Zile {0}: Seriennummere {1} chunnt doppelt vor (si bestimmt d MAC-Adrässe)."
+],
+"Cluster beendet mit Fehler: {0}": [
+"Cluster ended with error: {0}",
+"Cluster terminé avec une erreur : {0}",
+"Cluster beändet mit Fehler: {0}"
+],
+"Cluster läuft: {0} von {1} Servern haben eine Adresse. Die übrigen warten auf DHCP - in „DHCP-Server“ auf „bmclab0“ den DHCP-Server starten.": [
+"Cluster running: {0} of {1} servers have an address. The others wait for DHCP – start the DHCP server on “bmclab0” in “DHCP server”.",
+"Cluster en marche : {0} serveurs sur {1} ont une adresse. Les autres attendent le DHCP – lancez le serveur DHCP sur « bmclab0 » dans « Serveur DHCP ».",
+"Cluster lauft: {0} vo {1} Server händ e Adrässe. Di übrige warted uf DHCP – i „DHCP-Server“ uf „bmclab0“ dä DHCP-Server starte."
+],
+"{0} Server übernommen, Werks-Passwörter stehen schon in der Liste.": [
+"{0} servers added, factory passwords are already in the list.",
+"{0} serveurs repris, les mots de passe d'usine sont déjà dans la liste.",
+"{0} Server übernoh, Werks-Passwörter stönd scho i de Lischte."
+],
+"Konfigraum, Adresse dieses PCs: {0}": [
+"Config room, address of this PC: {0}",
+"Salle de config, adresse de ce PC : {0}",
+"Konfigruum, Adrässe vo dem PC: {0}"
+],
+"Cluster läuft: {0} von {1} Servern haben eine Adresse, die übrigen warten auf DHCP.": [
+"Cluster running: {0} of {1} servers have an address, the others wait for DHCP.",
+"Cluster en marche : {0} serveurs sur {1} ont une adresse, les autres attendent le DHCP.",
+"Cluster lauft: {0} vo {1} Server händ e Adrässe, di übrige warted uf DHCP."
+],
+"Cluster läuft: {0} Server erreichbar. Übernehmen in „Neuware“ oder dort selbst eintragen.": [
+"Cluster running: {0} servers reachable. Add them in “New hardware” or enter them there yourself.",
+"Cluster en marche : {0} serveurs joignables. Reprenez-les dans « Nouveau matériel » ou saisissez-les vous-même.",
+"Cluster lauft: {0} Server erreichbar. Übernäh i „Neuwar“ oder det sälber iitrage."
+],
+"Zeile {0}: Belegter Slot „{1}“ - erlaubt sind 3 bis 16.": [
+"Row {0}: occupied slot “{1}” – allowed are 3 to 16.",
+"Ligne {0} : emplacement occupé « {1} » – autorisé de 3 à 16.",
+"Zile {0}: Beleite Slot „{1}“ – erlaubt sind 3 bis 16."
+],
+"Zeile {0}: Werks-IP „{1}“ ist keine gültige IPv4-Adresse.": [
+"Row {0}: factory IP “{1}” is not a valid IPv4 address.",
+"Ligne {0} : l'IP d'usine « {1} » n'est pas une adresse IPv4 valide.",
+"Zile {0}: Werks-IP „{1}“ isch kei gültigi IPv4-Adrässe."
+],
+"  GESPERRT (Eigenschutz): Adresse {0} steht in der Schutzliste. Nichts geändert.": [
+"  BLOCKED (self-protection): address {0} is on the protection list. Nothing changed.",
+"  BLOQUÉ (auto-protection) : l'adresse {0} figure dans la liste de protection. Rien n'a été modifié.",
+"  GSPERRT (Eigeschutz): Adrässe {0} staht i de Schutzlischte. Nüt gänderet."
+],
+"  Eigenschutz: Identität im Trockenlauf nicht geprüft (Gerät nicht erreichbar).": [
+"  Self-protection: identity not checked in dry run (device not reachable).",
+"  Auto-protection : identité non vérifiée en simulation (appareil injoignable).",
+"  Eigeschutz: Identität im Trochelauf nöd prüeft (Grät nöd erreichbar)."
+],
+"  Eigenschutz: Identität nicht lesbar; im scharfen Lauf würde dieser Server übersprungen.": [
+"  Self-protection: identity not readable; a live run would skip this server.",
+"  Auto-protection : identité illisible ; une exécution réelle ignorerait ce serveur.",
+"  Eigeschutz: Identität nöd läsbar; im schaarfe Lauf würd dä Server übersprunge."
+],
+"  GESPERRT (Eigenschutz): Identität des Servers nicht lesbar, aus Sicherheitsgründen übersprungen.": [
+"  BLOCKED (self-protection): server identity not readable, skipped for safety.",
+"  BLOQUÉ (auto-protection) : identité du serveur illisible, ignoré par sécurité.",
+"  GSPERRT (Eigeschutz): Identität vom Server nöd läsbar, us Sicherheitsgründ übersprunge."
+],
+"  GESPERRT (Eigenschutz): {0} ist der Rechner, auf dem BMC-Steward läuft (Treffer: {1}). Nichts geändert.": [
+"  BLOCKED (self-protection): {0} is the machine BMC-Steward runs on (match: {1}). Nothing changed.",
+"  BLOQUÉ (auto-protection) : {0} est la machine qui exécute BMC-Steward (correspondance : {1}). Rien n'a été modifié.",
+"  GSPERRT (Eigeschutz): {0} isch dä Rächner, wo BMC-Steward druf lauft (Träffer: {1}). Nüt gänderet."
+],
+"  Warnung: BMC-Steward läuft in einer VM ({0}), die Schutzliste ist leer. Der eigene Host wird nicht erkannt.": [
+"  Warning: BMC-Steward runs in a VM ({0}) and the protection list is empty. Its own host cannot be recognised.",
+"  Attention : BMC-Steward tourne dans une VM ({0}) et la liste de protection est vide. Son propre hôte n'est pas reconnu.",
+"  Warnig: BMC-Steward lauft innere VM ({0}), d Schutzlischte isch leer. Dä eiget Host wird nöd erkennt."
+],
+"Eigenschutz: Neustart gesperrt.": [
+"Self-protection: restart blocked.",
+"Auto-protection : redémarrage bloqué.",
+"Eigeschutz: Neustart gsperrt."
+],
+"⚠ Eigenschutz: Schutzliste leer": [
+"⚠ Self-protection: list empty",
+"⚠ Auto-protection : liste vide",
+"⚠ Eigeschutz: Schutzlischte leer"
+],
+"BMC-Steward läuft in einer VM ({0}). Den Host dieser VM in die Schutzliste eintragen, sonst kann er versehentlich neu gestartet werden.": [
+"BMC-Steward runs in a VM ({0}). Add this VM's host to the protection list, otherwise it could be restarted by mistake.",
+"BMC-Steward tourne dans une VM ({0}). Ajoutez l'hôte de cette VM à la liste de protection, sinon il pourrait être redémarré par erreur.",
+"BMC-Steward lauft innere VM ({0}). Dä Host vo dere VM i d Schutzlischte iitrage, suscht chan er us Versehe neu gstartet werde."
+],
+"Eigenschutz ({0})": [
+"Self-protection ({0})",
+"Auto-protection ({0})",
+"Eigeschutz ({0})"
+],
+"Server, die BMC-Steward nie neu startet oder mit Firmware bespielt.": [
+"Servers that BMC-Steward never restarts or flashes.",
+"Serveurs que BMC-Steward ne redémarre ni ne flashe jamais.",
+"Server, wo BMC-Steward nie neu startet oder mit Firmware bespielt."
+],
+"ACHTUNG: BMC-Steward läuft in einer VM ({0}) und die Schutzliste ist leer. Steht der Host dieser VM in der Liste, schaltet sich das Tool mitten im Lauf selbst ab. Vorher unter „Eigenschutz“ eintragen.": [
+"WARNING: BMC-Steward runs in a VM ({0}) and the protection list is empty. If this VM's host is in the list, the tool shuts itself down in the middle of the run. Add it under “Self-protection” first.",
+"ATTENTION : BMC-Steward tourne dans une VM ({0}) et la liste de protection est vide. Si l'hôte de cette VM est dans la liste, l'outil s'arrête lui-même en pleine exécution. Ajoutez-le d'abord sous « Auto-protection ».",
+"ACHTIG: BMC-Steward lauft innere VM ({0}) und d Schutzlischte isch leer. Staht dä Host vo dere VM i de Lischte, schaltet sich s Tool mitts im Lauf sälber ab. Vorher under „Eigeschutz“ iitrage."
+],
+"Eigenschutz": [
+"Self-protection",
+"Auto-protection",
+"Eigeschutz"
+],
+"BMC-Steward läuft in einer virtuellen Maschine ({0}). Die VM kennt ihren Host nicht: Tragen Sie hier alle Hosts ein, auf denen diese VM laufen kann (z. B. den ganzen Management-Cluster).": [
+"BMC-Steward runs in a virtual machine ({0}). The VM does not know its host: enter every host this VM can run on (e.g. the whole management cluster).",
+"BMC-Steward tourne dans une machine virtuelle ({0}). La VM ne connaît pas son hôte : saisissez tous les hôtes sur lesquels elle peut tourner (p. ex. tout le cluster de gestion).",
+"BMC-Steward lauft innere virtuelle Maschine ({0}). D VM kennt ihre Host nöd: Trag da alli Hosts ii, wo die VM druf laufe chan (z. B. dä ganz Management-Cluster)."
+],
+"BMC-Steward läuft auf echter Hardware; die eigene Kennung wurde erkannt und ist automatisch geschützt ({0} Werte).": [
+"BMC-Steward runs on real hardware; its own identity was detected and is protected automatically ({0} values).",
+"BMC-Steward tourne sur du matériel réel ; sa propre identité a été détectée et est protégée automatiquement ({0} valeurs).",
+"BMC-Steward lauft uf ächter Hardware; di eigeti Kennig isch erkennt und automatisch gschützt ({0} Wärt)."
+],
+"Eigene Kennung nicht lesbar (unter Linux braucht das Root-Rechte). Läuft BMC-Steward auf einem Server, dessen BMC in der Liste stehen könnte, diesen hier eintragen.": [
+"Own identity not readable (on Linux this needs root). If BMC-Steward runs on a server whose BMC could be in the list, enter it here.",
+"Identité propre illisible (sous Linux, il faut les droits root). Si BMC-Steward tourne sur un serveur dont le BMC pourrait être dans la liste, saisissez-le ici.",
+"Eigeti Kennig nöd läsbar (under Linux bruchts Root-Rächt). Lauft BMC-Steward uf emne Server, wo sin BMC i de Lischte chönnt stah, dä da iitrage."
+],
+"Je Zeile ein Eintrag: Seriennummer bzw. Service-Tag, System-UUID oder BMC-Adresse. Diese Server werden nie neu gestartet, bekommen keine UEFI-Änderungen und keine Firmware. Im scharfen Lauf wird außerdem jeder Server übersprungen, dessen Identität nicht lesbar ist.": [
+"One entry per line: serial number or service tag, system UUID or BMC address. These servers are never restarted and get no UEFI changes and no firmware. In a live run, every server whose identity cannot be read is skipped as well.",
+"Une entrée par ligne : numéro de série ou service tag, UUID système ou adresse BMC. Ces serveurs ne sont jamais redémarrés et ne reçoivent ni modification UEFI ni firmware. En exécution réelle, tout serveur dont l'identité est illisible est également ignoré.",
+"Pro Zile en Iitrag: Seriennummere bzw. Service-Tag, System-UUID oder BMC-Adrässe. Die Server wärded nie neu gstartet, überchömed kei UEFI-Änderige und kei Firmware. Im schaarfe Lauf wird usserdem jede Server übersprunge, wo sini Identität nöd läsbar isch."
+],
 "{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen. Werks-Login(s): {3}.": [
 "{0} servers added. Network detected (gateway {1}, mask {2}); for “New IP” just enter the last digit. Factory login(s): {3}.",
 "{0} serveurs ajoutés. Réseau détecté (passerelle {1}, masque {2}) ; pour « Nouvelle IP », saisissez juste le dernier chiffre. Identifiant(s) d'usine : {3}.",
@@ -3095,8 +4269,8 @@ TR = {
 
 
 HELP = {
-"de": "<h2>BMC-Steward</h2>\n<p>Der BMC-Steward bedient jeden Server der Reihe nach: Er legt den neuen Administrator an, setzt den\nHostnamen und stellt den BMC auf eine feste Adresse um. Die Server müssen nicht alle auf einmal\neingetragen werden, sie können nach und nach dazukommen.</p>\n\n<h2>Schutz vor Fehlbedienung</h2>\n<p>Das Tool ist so gebaut, dass ein Fehlgriff möglichst nichts kaputt macht:</p>\n<ul>\n<li><b>Trockenlauf ist voreingestellt.</b> Solange der Haken gesetzt ist, wird nichts geändert.</li>\n<li><b>Jeder scharfe Lauf wird vorher gezeigt</b> (alte IP → neue IP, Hostname). In allen Abfragen ist\n    „Abbrechen“ vorausgewählt, Enter bricht also ab.</li>\n<li><b>Ungewöhnliche Fälle verlangen das Eintippen der Server-Anzahl</b>, z. B. wenn ein Gerät nicht im\n    eigenen Staging-Netz liegt, und immer bei UEFI-Änderungen.</li>\n<li><b>Adressen werden geprüft:</b> doppelte IPs oder Hostnamen, Gateway außerhalb des Netzes, eine\n    Adresse dieses Rechners, eine Adresse aus dem laufenden DHCP-Bereich und die aktuelle IP eines\n    anderen Geräts werden abgelehnt. Vor dem Umstellen prüft das Tool außerdem, ob unter der neuen IP\n    schon ein Gerät antwortet, und lässt das Gerät dann unverändert.</li>\n<li><b>Dell:</b> Ein schon belegter User-Slot wird nie überschrieben.</li>\n<li><b>Das neue Passwort wird zweimal eingegeben.</b> Stimmen die Eingaben nicht überein, startet kein\n    Lauf.</li>\n<li><b>Der Adresswechsel wird geprüft:</b> Reißt beim Umstellen nur die Verbindung ab, gilt ein Gerät\n    erst als fertig, wenn es unter der alten Adresse wirklich nicht mehr antwortet.</li>\n<li><b>DHCP-Server:</b> startet nicht auf einer Karte mit öffentlicher Adresse, mit der Standardroute\n    (Internet/Firmennetz), mit einer per DHCP bezogenen Adresse oder wenn dort schon ein DHCP-Server\n    antwortet. Er stoppt von selbst, wenn die Karte später zur Standardroute wird. Geräte, die ihre\n    Adresse von einem anderen Server haben, werden nie abgewiesen. Ein nach einem Absturz\n    übrig gebliebener DHCP-Server wird beim nächsten Start beendet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribute sind gesperrt. Werte, die nicht zum Typ passen,\n    werden nicht gesetzt. Ein Neustart ist nicht vorausgewählt.</li>\n<li><b>Passwörter</b> bleiben im Arbeitsspeicher und landen nur auf ausdrücklichen Wunsch in einer\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b>: Die Netzwerkkarte am getrennten Staging-Switch braucht eine feste\n    Adresse ohne Gateway. DHCP starten, die Geräte holen sich eine Adresse und erscheinen in der Liste,\n    von dort „In Serverliste übernehmen“. Mit dem Haken „Automatisch übernehmen“ (voreingestellt) trägt das Tool\n    neue Geräte von selbst in die Serverliste ein; ohne Haken geht es nur per Knopf. Unter Linux läuft dafür dnsmasq.</li>\n<li><b>Neuware</b>: neue IP, Subnetzmaske, Gateway und Hostname eintragen. Was noch fehlt,\n    ist <b>gelb</b> markiert, Fehlerhaftes <b>rot</b>, Fertiges <b>grün</b>. Über dem Start-Knopf steht in\n    einer Zeile, was vor dem Lauf noch auszufüllen ist; der Grund zu jedem Feld steht im Tooltip.</li>\n<li><b>Trockenlauf</b>: zeigt im Protokoll, was gesendet würde.</li>\n<li><b>Scharfer Lauf</b>: Haken bei „Trockenlauf“ entfernen. Der Start-Knopf wird rot und heißt dann\n    „Scharf starten“. Klicken und die Abfrage bestätigen.</li>\n<li><b>Kontrolle</b>: Am Ende prüft das Tool, ob jede neue Adresse mit dem neuen Benutzer antwortet. Das\n    klappt nur, wenn dieser Rechner das neue Netz erreicht; sonst steht dort „FEHLT“, obwohl die\n    Umstellung geklappt haben kann.</li>\n</ol>\n\n<h2>Server nacheinander konfigurieren</h2>\n<ul>\n<li>Man kann einen Server konfigurieren, Start drücken, den nächsten anschließen und wieder Start\n    drücken, beliebig oft. Der DHCP-Server läuft dabei weiter.</li>\n<li>Erfolgreich umgestellte Zeilen werden <b>grün</b> markiert, bleiben in der Liste stehen und werden\n    beim nächsten Start übersprungen. Fehlgeschlagene werden erneut versucht.</li>\n<li>Soll ein grünes Gerät noch einmal bearbeitet werden: Zeile markieren, „Erneut bearbeiten“ und die\n    „Aktuelle IP“ auf seine jetzige Adresse setzen.</li>\n<li>Der Trockenlauf markiert nie etwas als fertig.</li>\n<li>„Liste speichern“ schreibt die grüne Markierung mit in die Datei (Spalte „fertig“), nach\n    „Liste laden“ sind die Zeilen wieder grün. So lässt sich ein Rollout auch an einem anderen Tag\n    fortsetzen.</li>\n</ul>\n\n<h2>Handy-Scanner (Passwort per Kamera)</h2>\n<ul>\n<li>In „Neuware“ öffnet „Handy-Scanner …“ ein Fenster. Adresse wählen, <b>Starten</b>, am Handy den QR-Code scannen (Handy und PC im selben Netz). Die Zertifikatswarnung einmal bestätigen und die Kamera erlauben.</li>\n<li>Am Handy zwischen <b>Barcode</b> und <b>Text (OCR)</b> umschalten, <b>Aufnehmen</b> tippen, den erkannten Wert prüfen und übernehmen. Er landet im Feld „Passwort“ der markierten Zeile (sonst der ersten ohne Passwort), danach rückt die Markierung eine Zeile weiter.</li>\n<li>Es wird kein Foto auf dem Handy gespeichert: Die Seite zeigt nur das Kamerabild, der PC liest den Text und verwirft das Bild sofort. Der Link ist geheim und gilt nur, solange der Scanner läuft.</li>\n<li>Am PC nötig: <code>openssl</code>, für Barcodes <code>zbar</code>, für Text <code>tesseract</code>, für den QR-Code <code>qrencode</code>. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Bei aktiver Firewall den Port freigeben (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>Texterkennung verwechselt gern 0/O und 1/l/I. Den Wert am Handy vor dem Übernehmen kontrollieren; er lässt sich dort korrigieren.</li>\n<li><b>Verbindungsweg:</b> Im Fenster wählst du, wie das Handy den PC erreicht. <i>Vorhandenes Netz</i>: beide im selben WLAN/LAN. <i>USB-Tethering</i>: Handy per Kabel anstecken und dort „USB-Tethering“ einschalten, dann erscheint die Adresse in der Liste (↻ liest neu ein). <i>Eigener WLAN-Hotspot</i> (nur Linux mit NetworkManager): Der PC öffnet ein WLAN mit zufälligem Namen und Passwort, zwei QR-Codes führen durch die Verbindung. Der WLAN-Adapter ist dabei belegt, eine bestehende WLAN-Verbindung des PCs wird getrennt. Beim Beenden wird der Hotspot samt Passwort wieder entfernt.</li>\n<li><b>Log-Export:</b> Am Handy ein paar Aufnahmen machen, dann im Scanner-Fenster <b>Log exportieren …</b>. Die ZIP-Datei enthält <code>log.txt</code> (Version, System, Tesseract/zbar, Handy-Angaben, jeder Erkennungsschritt). <b>Passwörter stehen nie im Protokoll</b>, nur Länge und Form (A groß, a klein, 9 Ziffer, # Rest). Mit dem Haken <i>Zwischenbilder mitspeichern</i> liegen zusätzlich die Bilder der Erkennung in der ZIP; die zeigen das Passwort lesbar, deshalb nur zur Fehlersuche nutzen und die ZIP danach löschen.</li>\n</ul>\n<h2>Profile</h2>\n<ul>\n<li>Ein Profil merkt sich die Einstellungen der Maske: Hersteller, Werksbenutzer, neuen Administrator,\n    User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen. Passwörter und die Serverliste\n    gehören nie dazu.</li>\n<li>Die Profile liegen in <code>bmc-profile.json</code> neben dem Tool; beim Start werden das zuletzt\n    genutzte Profil und die zuletzt gewählte Sprache geladen.</li>\n</ul>\n\n<h2>Bestandsserver</h2>\n<p>Für BMCs, die schon konfiguriert sind. Je Zeile Adresse, Port (Standard 443), Benutzer und Passwort eintragen, dann <b>Verbindung testen</b>: Das Tool prüft nur lesend Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware und Administratorrechte. Jeder Server bekommt genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt. Erfolgreiche Server übernimmt <b>Übernehmen in Neuware, UEFI, Dienste</b> in die Serverliste; dort stellen Sie Netzwerk, UEFI und Dienste ein. „Neuware“, „UEFI-Einstellungen“ und „Dienste“ kennen einen Benutzer für alle Server, abweichende Benutzer in einem zweiten Durchgang. Der Reiter speichert nichts.</p>\n<h2>UEFI-Einstellungen</h2>\n<ul>\n<li>UEFI-Attribute unterscheiden sich je Modell. Das Tool liest deshalb die tatsächlich vorhandenen\n    Attribute von einem <b>Referenzgerät</b>, statt sie zu raten. Lesen ändert nichts.</li>\n<li><b>Ändern:</b> bei den gewünschten Zeilen „Neuer Wert“ ausfüllen, die Suche grenzt die Liste ein.\n    Leere Felder bleiben unverändert. Graue Zeilen (Passwörter, TPM, Löschfunktionen) sind gesperrt.</li>\n<li><b>Anwenden:</b> „Auf allen Servern der Liste setzen“ nutzt die Serverliste aus „Neuware“; grüne\n    Zeilen werden unter ihrer neuen IP angesprochen. Jedes Gerät bekommt nur Attribute, die es auch\n    hat. Werte, die schon stimmen, werden übersprungen.</li>\n<li><b>Neustart:</b> UEFI-Werte wirken erst nach einem Neustart. Mit dem Haken „Danach hart neu\n    starten“ wird ein laufender Server hart neu gestartet (wie mit der Reset-Taste), ein\n    ausgeschalteter eingeschaltet. Nur bei Servern ohne laufendes Betriebssystem verwenden.</li>\n<li><b>UEFI-Vorlagen</b> merken sich Hersteller und „Neuer Wert“-Felder und liegen getrennt in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienste: NTP, Syslog, LDAP, Zertifikat</h2>\n<p>„Dienste“ richtet auf allen Servern der Liste gemeinsame Verwaltungsdienste ein. Nur angehakte\nAbschnitte werden angewendet; grüne (fertige) Server werden unter ihrer neuen Adresse angesprochen.\nAngemeldet wird mit dem Werksbenutzer, der Werks-Administrator bleibt bestehen. Der Trockenlauf ist\nvoreingestellt und zeigt nur, was gesendet würde; Passwörter und der Zertifikatsinhalt stehen dabei\nnicht im Protokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwei Zeitserver. Die Zeitzone wird nur bei Dell gesetzt; bei HPE, Supermicro\n    und Lenovo bitte in der Oberfläche wählen.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bei Supermicro und Lenovo gibt es keinen einheitlichen Weg, der\n    Abschnitt wird dort übersprungen.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional ein Bind-Konto, Benutzer- und\n    Gruppen-Attribut. Unter „Gruppen → Rolle“ werden LDAP-Gruppen den Rollen Administrator, Operator\n    oder ReadOnly zugeordnet. Funktioniert bei allen vier Herstellern über den Standard-Redfish-Weg.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert ein von einer CA signiertes PEM-Zertifikat. Das ist\n    experimentell und je Hersteller verschieden. Bei HPE muss der passende Schlüssel aus einer auf dem\n    iLO erzeugten Zertifikatsanforderung (CSR) stammen, sonst scheitert der Import. Beim Import kann der\n    BMC neu starten.</li>\n</ul>\n<p>Für jeden Dienst gilt: Ein Hersteller, der ihn nicht kennt, wird übersprungen, nicht geraten.\niLO 3/4 (über RIBCL) werden hier nicht bedient. Die Abläufe sind bisher nur gegen simulierte\nGegenstellen geprüft; vor einem großen Lauf immer zuerst ein einzelnes Gerät.</p>\n<h2>UEFI-Konsole</h2>\n<p>Zeigt das UEFI/BIOS eines Servers über den BMC an. Drei Wege: <b>Bild</b> (eingebettete HTML5-Konsole des BMC, Maus und Tastatur wie am Original, Anmeldung automatisch), <b>Text</b> (serielle Konsole über IPMI-SOL oder SSH, läuft unter Linux, braucht <code>pyte</code>, <code>paramiko</code> und <code>pyghmi</code>) und <b>Standardbrowser</b>. „Ins UEFI-Setup booten“ merkt per Redfish den Start ins Setup vor und startet den Server hart neu. Der Reiter speichert nichts. Alte BMCs mit nur TLS 1.0/1.1 gehen nur per Textkonsole. Oben links im Fenster zeigt der <b>Monitor</b> dezentes Rauschen, solange nichts verbunden ist; darin baut sich alle acht Sekunden das Logo mit der Kugel auf und wieder ab; zum Häkchen leuchtet es kurz grün. Mit Verbindung erscheint dort die Konsole als Miniatur, ein Klick darauf öffnet sie in voller Größe. Der Schalter unter dem Monitor wählt den Weg (HTML5, Text oder Browser). Ist die Web-Ansicht gerade verdeckt, bleibt im Monitor das letzte Bild als Standbild stehen. Der Knopf <b>Vollbild</b> lässt die Konsole den ganzen Bildschirm füllen; die Textkonsole vergrößert dazu ihre Schrift. Beendet wird mit „Vollbild beenden“ in der Leiste oben, denn Esc und F11 gehören dem Server.</p>\n<h2>Testlabor</h2>\n<p>Virtuelle Dell/HPE/Lenovo/Supermicro-Server zum Üben ohne Hardware. Jede Zeile des Clusters ist ein Server mit eigener Firmware-Generation, eigenem Werks-Login, Modell/Seriennummer und bei Dell optional einem belegten User-Slot. <b>Szenario speichern/laden</b> stellt denselben Aufbau wieder her (gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse); Beispiele liegen in <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> ohne Root, nur dieser PC. Adressen als <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Konfigraum:</b> ein virtueller Staging-Switch <code>bmclab0</code>, an dem dieser PC mit fester Adresse hängt. Die Server holen sich ihre Adresse über den DHCP-Reiter (Karte bmclab0) oder haben eine feste Werks-IP, z. B. Dell 192.168.0.120 - zwei davon stören sich wie in echt. „Kabel ziehen/stecken“ schließt sie nacheinander an.</li>\n<li><b>Zuhause/Router:</b> die Server hängen an der Kabel-Netzwerkkarte, bekommen ihre Adresse vom Router und erscheinen dort als eigene Geräte; ein Umzug auf eine feste Adresse im LAN läuft wirklich durch. WLAN geht nicht.</li>\n</ul>\n<p>Konfigraum und Router brauchen beim Start einmal Root (pkexec); beim Stoppen werden Adressen freigegeben und alle Labor-Netzwerkgeräte wieder entfernt. Die Server antworten dort auf 443/22/623, also ohne <code>:Port</code>.</p>\n<h2>Hersteller im Vergleich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Auszug)</td><td>individuell,\n    Anhänger am Gerät</td><td>individuell auf dem Aufkleber, alte Boards ADMIN</td><td>individuell,\n    Anhänger am Gerät</td></tr>\n<tr><td><b>Neuer Benutzer</b></td><td>in den User-Slot, nur wenn frei</td><td>neu angelegt</td>\n    <td>neu angelegt</td><td>neu angelegt</td></tr>\n<tr><td><b>Adresswechsel</b></td><td>sofort</td><td>nach iLO-Neustart (löst das Tool aus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunden</td><td>1 bis 3 Minuten</td><td>Sekunden</td>\n    <td>Sekunden</td></tr>\n</table>\n<p>Bleibt „Benutzer“ beim aktuellen Login leer, wird je Hersteller der Werksbenutzer verwendet; so gehen\nauch gemischte Listen. „Automatisch erkennen“ ermittelt den Hersteller pro Gerät, eine feste Wahl gilt\nfür alle Zeilen.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 ist root). Ist der Slot von einem anderen Benutzer belegt,\n    bricht das Tool für dieses Gerät ab und ändert nichts.</li>\n<li><b>Hostname:</b> gesetzt wird der DNS-Name des iDRAC, nicht der des Betriebssystems.</li>\n<li><b>Auslieferung:</b> je nach Bestellung DHCP oder feste Adresse 192.168.0.120. Mit fester Adresse\n    erscheint der iDRAC nicht in der DHCP-Liste; mehrere solche Geräte am selben Switch kollidieren,\n    dann einzeln anschließen.</li>\n<li><b>Generationen:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    brauchen mindestens Firmware 2.50.50.50; ältere erkennt das Tool, meldet es und ändert nichts.\n    iDRAC10 zuerst an einem Gerät testen. iDRAC6 wird nicht unterstützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile in die Spalte „Passwort“ eintragen.</li>\n<li><b>Zuordnung:</b> in der DHCP-Liste meldet sich ein iLO meist als „ILO“ plus Seriennummer.</li>\n<li><b>Neustart:</b> Hostname und Adresse werden erst nach dem iLO-Neustart aktiv; der Server selbst\n    läuft weiter.</li>\n<li><b>Port:</b> konfiguriert wird der dedizierte iLO-Port. Neue Passwörter brauchen mindestens 8\n    Zeichen.</li>\n<li><b>Generationen:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 ist nicht geprüft. Für iLO 3\n    und 4 siehe den nächsten Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (ältere Server)</h2>\n<ul>\n<li><b>Geräte:</b> iLO 3 steckt in G7-Servern, iLO 4 in Gen8 und Gen9. Das Tool erkennt sie von selbst;\n    wer den Hersteller fest wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>Anderer Weg:</b> iLO 3 kennt kein Redfish. Das Tool nutzt deshalb für iLO 3 und iLO 4 die\n    XML-Schnittstelle RIBCL, die beide ab Werk mitbringen. Im Trockenlauf stehen die XML-Befehle im\n    Protokoll, Passwörter sind dort durch *** ersetzt.</li>\n<li><b>Neustart:</b> Nach dem Setzen von Adresse und Hostname startet das iLO von selbst neu; der Server\n    läuft weiter. Bis es unter der neuen Adresse antwortet, vergehen 1 bis 3 Minuten.</li>\n<li><b>Alte Verschlüsselung:</b> iLO 3 kann nur TLS 1.0/1.1. Das Tool schaltet dafür je Gerät von selbst\n    auf die alte Verschlüsselung um und schreibt einen Hinweis ins Protokoll. Solche Geräte gehören in\n    ein abgeschottetes Verwaltungsnetz.</li>\n<li><b>Grenzen:</b> Hostname höchstens 49 Zeichen. UEFI-Einstellungen („UEFI-Einstellungen“) gehen bei iLO 3 nicht.\n    iLO 2 und älter werden nicht unterstützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Aufkleber, je Zeile eintragen.</li>\n<li><b>Zugriffsarten:</b> das Tool vergibt Web, IPMI und Konsole mit. Steht im Protokoll „ohne\n    Zugriffsarten angelegt“, die Web-Anmeldung einmal prüfen.</li>\n<li><b>Lizenz:</b> bei älteren Boards können Redfish-Funktionen eine Lizenz brauchen.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erkannt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile eintragen.</li>\n<li><b>Werksbenutzer:</b> USERID in Großbuchstaben.</li>\n<li><b>Port:</b> konfiguriert wird die Schnittstelle „NIC“, der dedizierte XCC-Port.</li>\n<li><b>Generationen:</b> XCC2/XCC3. XCC1 zuerst an einem Gerät testen.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>Das Tool setzt nur BMC-Adresse und BMC-Benutzer, nicht Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> der Cluster-Erstellung so umstellen. Bei einem laufenden Cluster das\n    Nutanix-Verfahren nutzen, weil der Cluster die BMC-Daten selbst verwendet.</li>\n</ul>\n\n<h2>Wenn etwas nicht klappt</h2>\n<ul>\n<li><b>DHCP startet nicht:</b> Die Meldung nennt den Grund. Meist hat die Karte ein Gateway oder ihre\n    Adresse per DHCP. Unter Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;karte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Keine Geräte in der DHCP-Liste:</b> Firewall (Linux mit ufw: UDP 67 freigeben) oder der BMC steht nicht auf DHCP.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Feld „Benutzer“ leeren, Passwort der Zeile\n    prüfen.</li>\n<li><b>Hersteller nicht erkannt:</b> Das Gerät antwortet weder per Redfish noch als iLO 3/4. iDRAC6,\n    iLO 2 und sehr alte Firmware werden nicht unterstützt. Ein iLO 3/4, bei dem die Geräteauskunft\n    abgeschaltet wurde, lässt sich über die feste Wahl „HPE iLO 3/4“ trotzdem ansprechen.</li>\n<li><b>Benutzer abgelehnt:</b> meist Passwortregeln. Die Meldung des BMC steht unter der\n    Fehlerzeile.</li>\n<li><b>„neue IP ist schon vergeben“:</b> Unter der Adresse antwortet bereits ein Gerät. Andere Adresse\n    wählen.</li>\n<li><b>Liste aus Excel oder einem anderen Tool:</b> Ohne Spalte „fertig“ sind alle Zeilen offen. Schon\n    umgestellte Geräte sind unter der alten Adresse nicht erreichbar, diese Zeilen entfernen oder\n    anpassen.</li>\n</ul>\n\n<h2>Daten und Grenzen</h2>\n<ul>\n<li>Das Tool speichert nichts von selbst. „Liste speichern“ fragt, ob Passwörter mit in die Datei\n    sollen (dann im Klartext). Eine solche Datei nach dem Rollout löschen.</li>\n<li>Die Abläufe für HPE (auch iLO 3/4), ältere iDRAC7/8, Supermicro, Lenovo und UEFI sind bisher nur gegen simulierte Gegenstellen geprüft. Vor einem großen Lauf immer zuerst ein einzelnes Gerät\n    konfigurieren.</li>\n<li>„Protokoll speichern“ schreibt das Protokoll des letzten Laufs in eine Textdatei, z. B. für die\n    Dokumentation. Passwörter stehen nicht darin.</li>\n<li>Die Sprache lässt sich links unten unter dem Menü umstellen, solange kein Lauf aktiv ist und der DHCP-Server\n    gestoppt ist.</li>\n</ul>\n\n",
-"en": "<h2>BMC-Steward</h2>\n<p>BMC-Steward serves one server after another: it creates the new administrator, sets the hostname and\nswitches the BMC to a static address. You don't have to enter all servers at once; they can be added\none by one.</p>\n\n<h2>Protection against mistakes</h2>\n<p>The tool is built so that a slip does as little damage as possible:</p>\n<ul>\n<li><b>Dry run is the default.</b> As long as it is ticked, nothing is changed.</li>\n<li><b>Every live run is shown first</b> (old IP → new IP, hostname). “Cancel” is preselected in every\n    prompt, so pressing Enter cancels.</li>\n<li><b>Unusual cases require typing the number of servers</b>, e.g. when a device is not in the\n    computer's own staging network, and always for UEFI changes.</li>\n<li><b>Addresses are checked:</b> duplicate IPs or hostnames, a gateway outside the network, an address\n    of this computer, an address from the running DHCP range and the current IP of another device are\n    rejected. Before reconfiguring, the tool also checks whether a device already answers on the new IP\n    and, if so, leaves the device unchanged.</li>\n<li><b>Dell:</b> an occupied user slot is never overwritten.</li>\n<li><b>The new password is entered twice.</b> If the entries differ, no run starts.</li>\n<li><b>The address change is verified:</b> if only the connection drops during the change, a device\n    counts as done only once it really no longer answers on the old address.</li>\n<li><b>DHCP server:</b> does not start on a card with a public address, with the default route\n    (internet/company network), with an address obtained via DHCP, or when a DHCP server already\n    answers there. It stops by itself if the card later becomes the default route. Devices that got\n    their address from another server are never refused. A DHCP server left over after a crash is\n    stopped at the next start.</li>\n<li><b>UEFI:</b> password, TPM and erase attributes are locked. Values that don't match the type are\n    not set. A restart is not preselected.</li>\n<li><b>Passwords</b> stay in memory and only go into a file if you explicitly ask for it.</li>\n</ul>\n\n<h2>Procedure</h2>\n<ol>\n<li><b>DHCP server</b>: the network card on the separate staging switch needs a static address\n    without a gateway. Start DHCP; the devices get an address and appear in the list. From there,\n    “Add to server list”. With “Add automatically” ticked (the default) the tool enters new devices into the\n    server list by itself; untick it to add them by button only. On Linux dnsmasq is used.</li>\n<li><b>New hardware</b>: enter new IP, subnet mask, gateway and hostname. Whatever is still\n    missing is marked <b>yellow</b>, wrong entries <b>red</b>, finished ones <b>green</b>. A line above the\n    Start button says what still has to be filled in; the tooltip of each field gives the reason.</li>\n<li><b>Dry run</b>: the log shows what would be sent.</li>\n<li><b>Live run</b>: untick “Dry run”. The Start button turns red and reads “Start live run”. Click it\n    and confirm the prompt.</li>\n<li><b>Check</b>: at the end the tool checks whether each new address answers with the new user. That\n    only works if this computer can reach the new network; otherwise it shows “MISSING” even though\n    the change may have worked.</li>\n</ol>\n\n<h2>Configuring servers one after another</h2>\n<ul>\n<li>You can configure one server, press Start, connect the next one and press Start again, as often as\n    you like. The DHCP server keeps running.</li>\n<li>Successfully reconfigured rows turn <b>green</b>, stay in the list and are skipped at the next\n    start. Failed ones are tried again.</li>\n<li>To process a green device again: select the row, click “Process again” and set “Current IP” to its\n    present address.</li>\n<li>A dry run never marks anything as done.</li>\n<li>“Save list” writes the green mark into the file as well (column “fertig”); after “Load list” the\n    rows are green again. This lets you continue a rollout on another day.</li>\n</ul>\n\n<h2>Phone scanner (password by camera)</h2>\n<ul>\n<li>On “New hardware”, “Phone scanner …” opens a window. Choose the address, press <b>Start</b> and scan the QR code with the phone (phone and PC on the same network). Accept the certificate warning once and allow the camera.</li>\n<li>On the phone switch between <b>Barcode</b> and <b>Text (OCR)</b>, tap <b>Capture</b>, check the recognised value and send it. It goes into the “Password” field of the selected row (otherwise the first one without a password); the selection then moves down one row.</li>\n<li>No photo is saved on the phone: the page only shows the camera view, the PC reads the text and discards the image at once. The link is secret and only valid while the scanner runs.</li>\n<li>Needed on the PC: <code>openssl</code>, <code>zbar</code> for barcodes, <code>tesseract</code> for text, <code>qrencode</code> for the QR code. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. With an active firewall open the port (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>Text recognition often confuses 0/O and 1/l/I. Check the value on the phone before sending; it can be corrected there.</li>\n<li><b>Connection method:</b> In the window you choose how the phone reaches the PC. <i>Existing network</i>: both on the same Wi-Fi/LAN. <i>USB tethering</i>: connect the phone by cable and switch on “USB tethering” there; the address then appears in the list (↻ reads again). <i>Own Wi-Fi hotspot</i> (Linux with NetworkManager only): the PC opens a Wi-Fi with a random name and password, two QR codes guide you through connecting. The Wi-Fi adapter is occupied and an existing Wi-Fi connection of the PC is dropped. On stop the hotspot and its password are removed again.</li>\n<li><b>Log export:</b> Take a few shots on the phone, then click <b>Export log …</b> in the scanner window. The ZIP holds <code>log.txt</code> (version, system, tesseract/zbar, phone details, every recognition step). <b>Passwords are never in the log</b>, only length and shape (A upper, a lower, 9 digit, # other). With <i>Keep intermediate images</i> ticked the recognition images are added to the ZIP; they show the password legibly, so use it only for troubleshooting and delete the ZIP afterwards.</li>\n</ul>\n<h2>Profiles</h2>\n<ul>\n<li>A profile remembers the settings of the form: vendor, factory user, new administrator, user slot,\n    defaults for new rows and the DHCP settings. Passwords and the server list are never included.</li>\n<li>Profiles are stored in <code>bmc-profile.json</code> next to the tool; at start-up the last used\n    profile and the last chosen language are loaded.</li>\n</ul>\n\n<h2>Existing servers</h2>\n<p>For BMCs that are already configured. Enter address, port (default 443), user and password per row, then <b>Test connection</b>: the tool checks read-only the port, encryption, vendor, login, model, firmware and administrator rights. Each server gets exactly one login attempt so a wrong password cannot lock an account. <b>Use in New hardware, UEFI, Services</b> copies the successful servers into the server list, where you set network, UEFI and services. “New hardware”, “UEFI settings” and “Services” know one user for all servers; use different users in a second pass. This tab stores nothing.</p>\n<h2>UEFI settings</h2>\n<ul>\n<li>UEFI attributes differ per model. The tool therefore reads the attributes that actually exist from\n    a <b>reference device</b> instead of guessing. Reading changes nothing.</li>\n<li><b>Change:</b> fill in “New value” in the rows you want; the search narrows the list. Empty fields\n    stay unchanged. Grey rows (passwords, TPM, erase functions) are locked.</li>\n<li><b>Apply:</b> “Set on all servers in the list” uses the server list from “New hardware”; green rows are\n    addressed at their new IP. Each device only gets attributes it actually has. Values that are\n    already correct are skipped.</li>\n<li><b>Restart:</b> UEFI values only take effect after a restart. With “Then hard restart” ticked, a\n    running server is hard restarted (like pressing reset) and a powered-off one is switched on. Use\n    only for servers without a running operating system.</li>\n<li><b>UEFI templates</b> remember the vendor and the “New value” fields and are stored separately in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services: NTP, syslog, LDAP, certificate</h2>\n<p>“Services” sets up shared management services on every server in the list. Only ticked sections are\napplied; green (finished) servers are reached at their new address. Login uses the factory user and the\nfactory administrator stays in place. The dry run is the default and only shows what would be sent;\npasswords and the certificate content do not appear in the log.</p>\n<ul>\n<li><b>NTP:</b> one or two time servers. The time zone is set on Dell only; on HPE, Supermicro and\n    Lenovo please choose it in the web interface.</li>\n<li><b>Syslog:</b> Dell and HPE only. There is no uniform way on Supermicro and Lenovo, so the section\n    is skipped there.</li>\n<li><b>LDAP / Active Directory:</b> server, base DN, an optional bind account, user and group attribute.\n    Under “Groups → role” LDAP groups are mapped to the roles Administrator, Operator or ReadOnly. Works\n    on all four vendors through the standard Redfish path.</li>\n<li><b>HTTPS certificate:</b> imports a CA-signed PEM certificate. This is experimental and\n    vendor-specific. On HPE the matching key must come from a CSR generated on the iLO, otherwise the\n    import fails. The BMC may restart during the import.</li>\n</ul>\n<p>For each service a vendor that does not know it is skipped, not guessed. iLO 3/4 (via RIBCL) are not\nhandled here. The procedures have so far only been tested against simulated counterparts; always\nconfigure a single device first before a large run.</p>\n<h2>UEFI console</h2>\n<p>Shows a server's UEFI/BIOS through the BMC. Three ways: <b>Picture</b> (embedded HTML5 console of the BMC, mouse and keyboard like the original, automatic login), <b>Text</b> (serial console via IPMI-SOL or SSH, runs on Linux, needs <code>pyte</code>, <code>paramiko</code> and <code>pyghmi</code>) and <b>default browser</b>. \"Boot into UEFI setup\" schedules the next boot into setup via Redfish and hard-restarts the server. This tab stores nothing. Old BMCs with TLS 1.0/1.1 only work via the text console. At the top left of the window, the <b>monitor</b> shows subtle noise while nothing is connected; every eight seconds the logo with the sphere builds up in it and fades away again; with the check mark it briefly glows green. Once connected, the console appears there as a thumbnail; a click on it opens the console full size. The switch below the monitor picks the way (HTML5, Text or Browser). While the web view is hidden, the monitor keeps the last picture as a still frame. The <b>Full screen</b> button makes the console fill the whole screen; the text console enlarges its font to match. Exit with “Exit full screen” in the bar at the top, because Esc and F11 belong to the server.</p>\n<h2>Test lab</h2>\n<p>Virtual Dell/HPE/Lenovo/Supermicro servers for practising without hardware. Each row of the cluster is one server with its own firmware generation, factory login, model/serial number and, for Dell, optionally an occupied user slot. <b>Save/load scenario</b> restores the same setup (same serial number = same MAC = same DHCP address); examples are in <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> no root, this PC only. Addresses as <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Config room:</b> a virtual staging switch <code>bmclab0</code> to which this PC is attached with a static address. The servers get their address from the DHCP tab (card bmclab0) or have a static factory IP, e.g. Dell 192.168.0.120 - two of them collide like real ones. “Pull/plug cable” connects them one at a time.</li>\n<li><b>Home/router:</b> the servers hang on the wired network card, get their address from the router and appear there as devices of their own; moving to a static address in the LAN really works. Wi-Fi does not work.</li>\n</ul>\n<p>Config room and router need root once at start (pkexec); on stop the addresses are released and all lab network devices are removed. There the servers answer on 443/22/623, i.e. without <code>:port</code>.</p>\n<h2>Vendors compared</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Factory user</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Factory password</b></td><td>calvin or individual (service tag sheet)</td><td>individual,\n    tag on the device</td><td>individual on the sticker, old boards ADMIN</td><td>individual, tag on\n    the device</td></tr>\n<tr><td><b>New user</b></td><td>into the user slot, only if free</td><td>created</td><td>created</td>\n    <td>created</td></tr>\n<tr><td><b>Address change</b></td><td>immediate</td><td>after iLO restart (triggered by the tool)</td>\n    <td>immediate</td><td>immediate</td></tr>\n<tr><td><b>Until reachable</b></td><td>seconds</td><td>1 to 3 minutes</td><td>seconds</td>\n    <td>seconds</td></tr>\n</table>\n<p>If “User” in the current login stays empty, the vendor's factory user is used, so mixed lists work.\n“Detect automatically” determines the vendor per device; a fixed choice applies to all rows.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User slot:</b> default 3 (slot 2 is root). If another user occupies the slot, the tool stops for\n    this device and changes nothing.</li>\n<li><b>Hostname:</b> the iDRAC DNS name is set, not the operating system's.</li>\n<li><b>As delivered:</b> DHCP or static 192.168.0.120, depending on the order. With a static address the\n    iDRAC does not appear in the DHCP list; several such devices on one switch collide, so connect\n    them one at a time.</li>\n<li><b>Generations:</b> iDRAC9 (14th to 16th generation) and iDRAC7/8 (12th and 13th generation). iDRAC7/8\n    need at least firmware 2.50.50.50; the tool detects older firmware, reports it and changes nothing.\n    Test iDRAC10 on one device first. iDRAC6 is not supported.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row in the “Password” column.</li>\n<li><b>Identification:</b> in the DHCP list an iLO usually reports as “ILO” plus serial number.</li>\n<li><b>Restart:</b> hostname and address only become active after the iLO restart; the server itself\n    keeps running.</li>\n<li><b>Port:</b> the dedicated iLO port is configured. New passwords need at least 8 characters.</li>\n<li><b>Generations:</b> iLO 5 and 6 (Gen10 to Gen11) via Redfish. iLO 7 is untested. For iLO 3 and 4 see\n    the next section.</li>\n</ul>\n\n<h2>HPE iLO 3 and iLO 4 (older servers)</h2>\n<ul>\n<li><b>Devices:</b> iLO 3 is found in G7 servers, iLO 4 in Gen8 and Gen9. The tool detects them by\n    itself; if you pick the vendor by hand, choose “HPE iLO 3/4”.</li>\n<li><b>A different route:</b> iLO 3 has no Redfish. For iLO 3 and iLO 4 the tool therefore uses the RIBCL\n    XML interface, which both ship with. In a dry run the XML commands appear in the log, with\n    passwords replaced by ***.</li>\n<li><b>Restart:</b> after the address and hostname are set, the iLO restarts by itself; the server keeps\n    running. It takes 1 to 3 minutes until it answers on the new address.</li>\n<li><b>Old encryption:</b> iLO 3 only speaks TLS 1.0/1.1. The tool switches to the old encryption per\n    device by itself and writes a note to the log. Such devices belong in an isolated management\n    network.</li>\n<li><b>Limits:</b> hostname at most 49 characters. UEFI settings (“UEFI settings”) do not work with iLO 3. iLO 2\n    and older are not supported.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Password per device:</b> on the sticker; enter it per row.</li>\n<li><b>Access types:</b> the tool also grants web, IPMI and console. If the log says “created without\n    access types”, check the web login once.</li>\n<li><b>Licence:</b> on older boards some Redfish functions may need a licence.</li>\n<li><b>Nutanix NX</b> is detected as Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row.</li>\n<li><b>Factory user:</b> USERID in capitals.</li>\n<li><b>Port:</b> the “NIC” interface, i.e. the dedicated XCC port, is configured.</li>\n<li><b>Generations:</b> XCC2/XCC3. Test XCC1 on one device first.</li>\n</ul>\n\n<h2>Nutanix nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>The tool only sets the BMC address and BMC user, not the hypervisor or CVM.</li>\n<li>Only change these <b>before</b> creating the cluster. On a running cluster use the Nutanix\n    procedure, because the cluster uses the BMC data itself.</li>\n</ul>\n\n<h2>Troubleshooting</h2>\n<ul>\n<li><b>DHCP does not start:</b> the message gives the reason. Usually the card has a gateway or got its\n    address via DHCP. On Linux, for example:\n    <code>nmcli con add type ethernet ifname &lt;card&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>No devices in the DHCP list:</b> firewall (Linux with ufw: allow UDP 67) or the BMC is not set to DHCP.</li>\n<li><b>HTTP 401:</b> wrong user or password. Clear “User”, check the row's password.</li>\n<li><b>Vendor not recognised:</b> the device answers neither via Redfish nor as an iLO 3/4. iDRAC6, iLO 2\n    and very old firmware are not supported. An iLO 3/4 whose device information has been switched off\n    can still be addressed by choosing “HPE iLO 3/4” by hand.</li>\n<li><b>User refused:</b> usually password rules. The BMC's message appears below the error line.</li>\n<li><b>“new IP is already taken”:</b> a device already answers on that address. Choose another one.</li>\n<li><b>List from Excel or another tool:</b> without the “fertig” column all rows are open. Devices\n    already reconfigured cannot be reached at their old address; remove or adjust those rows.</li>\n</ul>\n\n<h2>Data and limits</h2>\n<ul>\n<li>The tool saves nothing on its own. “Save list” asks whether passwords go into the file (then in plain\n    text). Delete such a file after the rollout.</li>\n<li>The procedures for HPE (including iLO 3/4), older iDRAC7/8, Supermicro, Lenovo and UEFI have so far only been tested against simulated counterparts. Always configure a single device first before a large\n    run.</li>\n<li>“Save log” writes the log of the last run to a text file, e.g. for documentation. It contains no\n    passwords.</li>\n<li>The language can be changed at the bottom left, below the menu while no run is active and the DHCP server is\n    stopped.</li>\n</ul>\n\n",
-"fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Avec la case « Ajouter automatiquement » (cochée par défaut), l'outil\n    inscrit lui-même les nouveaux appareils dans la liste ; décochée, seul le bouton le fait. Sous Linux, dnsmasq est utilisé.</li>\n<li><b>Matériel neuf</b> : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Scanner mobile (mot de passe par caméra)</h2>\n<ul>\n<li>Dans « Matériel neuf », « Scanner mobile … » ouvre une fenêtre. Choisir l'adresse, <b>Démarrer</b>, scanner le code QR avec le téléphone (téléphone et PC sur le même réseau). Confirmer l'avertissement de certificat une fois et autoriser la caméra.</li>\n<li>Sur le téléphone, basculer entre <b>Code-barres</b> et <b>Texte (OCR)</b>, toucher <b>Capturer</b>, vérifier la valeur reconnue et l'envoyer. Elle arrive dans le champ « Mot de passe » de la ligne sélectionnée (sinon la première sans mot de passe) ; la sélection avance ensuite d'une ligne.</li>\n<li>Aucune photo n'est enregistrée sur le téléphone : la page n'affiche que l'image de la caméra, le PC lit le texte et supprime l'image aussitôt. Le lien est secret et valable seulement tant que le scanner tourne.</li>\n<li>Nécessaire sur le PC : <code>openssl</code>, <code>zbar</code> pour les codes-barres, <code>tesseract</code> pour le texte, <code>qrencode</code> pour le code QR. CachyOS : <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Pare-feu actif : ouvrir le port (ufw : <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>La reconnaissance de texte confond souvent 0/O et 1/l/I. Vérifier la valeur sur le téléphone avant l'envoi ; elle peut y être corrigée.</li>\n<li><b>Mode de connexion :</b> Dans la fenêtre, tu choisis comment le téléphone atteint le PC. <i>Réseau existant</i> : les deux sur le même Wi-Fi/LAN. <i>Partage USB</i> : brancher le téléphone par câble et y activer « Partage de connexion USB » ; l'adresse apparaît alors dans la liste (↻ relit). <i>Point d'accès Wi-Fi propre</i> (Linux avec NetworkManager uniquement) : le PC ouvre un Wi-Fi avec un nom et un mot de passe aléatoires, deux codes QR guident la connexion. L'adaptateur Wi-Fi est occupé et une connexion Wi-Fi existante du PC est coupée. À l'arrêt, le point d'accès et son mot de passe sont supprimés.</li>\n<li><b>Export du journal :</b> faire quelques prises de vue au téléphone, puis cliquer sur <b>Exporter le journal …</b> dans la fenêtre du scanner. Le ZIP contient <code>log.txt</code> (version, système, tesseract/zbar, informations du téléphone, chaque étape de reconnaissance). <b>Les mots de passe ne figurent jamais dans le journal</b>, seulement longueur et forme (A majuscule, a minuscule, 9 chiffre, # autre). Avec la case <i>Conserver les images intermédiaires</i>, les images de reconnaissance sont ajoutées au ZIP ; elles montrent le mot de passe lisiblement, à n'utiliser que pour le dépannage, puis supprimer le ZIP.</li>\n</ul>\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Serveurs existants</h2>\n<p>Pour les BMC déjà configurés. Saisissez adresse, port (443 par défaut), utilisateur et mot de passe par ligne, puis <b>Tester la connexion</b> : l'outil vérifie en lecture seule le port, le chiffrement, le fabricant, la connexion, le modèle, le firmware et les droits d'administrateur. Chaque serveur n'a qu'une seule tentative de connexion pour qu'un mauvais mot de passe ne verrouille pas un compte. <b>Reprendre dans Matériel neuf, UEFI, Services</b> copie les serveurs réussis dans la liste, où vous réglez réseau, UEFI et services. « Matériel neuf », « Réglages UEFI » et « Services » ne connaissent qu'un utilisateur pour tous les serveurs ; les autres en deuxième passe. Cet onglet n'enregistre rien.</p>\n<h2>Réglages UEFI</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de « Matériel neuf » ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services : NTP, syslog, LDAP, certificat</h2>\n<p>« Services » configure des services de gestion communs sur tous les serveurs de la liste. Seules les\nsections cochées sont appliquées ; les serveurs verts (terminés) sont joints à leur nouvelle adresse.\nLa connexion utilise l'utilisateur d'usine et l'administrateur d'usine reste en place. La simulation\nest activée par défaut et montre seulement ce qui serait envoyé ; les mots de passe et le contenu du\ncertificat n'apparaissent pas dans le journal.</p>\n<ul>\n<li><b>NTP :</b> un ou deux serveurs de temps. Le fuseau horaire n'est défini que sur Dell ; sur HPE,\n    Supermicro et Lenovo, le choisir dans l'interface.</li>\n<li><b>Syslog :</b> Dell et HPE uniquement. Il n'existe pas de voie uniforme sur Supermicro et Lenovo,\n    la section y est ignorée.</li>\n<li><b>LDAP / Active Directory :</b> serveur, base DN, un compte de bind facultatif, attribut\n    utilisateur et de groupe. Sous « Groupes → rôle », les groupes LDAP sont associés aux rôles\n    Administrator, Operator ou ReadOnly. Fonctionne sur les quatre constructeurs via la voie Redfish\n    standard.</li>\n<li><b>Certificat HTTPS :</b> importe un certificat PEM signé par une CA. C'est expérimental et propre\n    au constructeur. Sur HPE, la clé correspondante doit provenir d'une CSR générée sur l'iLO, sinon\n    l'import échoue. Le BMC peut redémarrer pendant l'import.</li>\n</ul>\n<p>Pour chaque service, un constructeur qui ne le connaît pas est ignoré, rien n'est deviné. iLO 3/4\n(via RIBCL) ne sont pas gérés ici. Les procédures n'ont jusqu'ici été testées que contre des\néquipements simulés ; toujours configurer un seul appareil d'abord avant une grande série.</p>\n<h2>Console UEFI</h2>\n<p>Affiche l'UEFI/BIOS d'un serveur via le BMC. Trois voies : <b>Image</b> (console HTML5 intégrée du BMC, souris et clavier comme sur l'original, connexion automatique), <b>Texte</b> (console série via IPMI-SOL ou SSH, fonctionne sous Linux, nécessite <code>pyte</code>, <code>paramiko</code> et <code>pyghmi</code>) et <b>navigateur par défaut</b>. « Démarrer dans la configuration UEFI » prépare via Redfish le prochain démarrage dans la configuration et redémarre le serveur de force. Cet onglet n'enregistre rien. Les anciens BMC avec TLS 1.0/1.1 seulement ne fonctionnent qu'en console texte. En haut à gauche de la fenêtre, le <b>moniteur</b> affiche un bruit discret tant que rien n'est connecté ; toutes les huit secondes, le logo à la sphère s'y construit puis s'efface ; avec la coche, il brille brièvement en vert. Une fois connecté, la console y apparaît en miniature ; un clic l'ouvre en taille réelle. Le commutateur sous le moniteur choisit le mode (HTML5, Texte ou Browser). Tant que la vue web est masquée, le moniteur garde la dernière image figée. Le bouton <b>Plein écran</b> fait remplir tout l'écran par la console ; la console texte agrandit sa police en conséquence. On quitte avec « Quitter le plein écran » dans la barre du haut, car Échap et F11 appartiennent au serveur.</p>\n<h2>Laboratoire de test</h2>\n<p>Serveurs virtuels Dell/HPE/Lenovo/Supermicro pour s'entraîner sans matériel. Chaque ligne du cluster est un serveur avec sa propre génération de firmware, son identifiant d'usine, son modèle/numéro de série et, pour Dell, éventuellement un slot utilisateur occupé. <b>Enregistrer/charger un scénario</b> restaure le même montage (même numéro de série = même MAC = même adresse DHCP) ; des exemples se trouvent dans <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback :</b> sans root, uniquement ce PC. Adresses sous la forme <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Salle de configuration :</b> un switch de staging virtuel <code>bmclab0</code> auquel ce PC est relié avec une adresse fixe. Les serveurs obtiennent leur adresse via l'onglet DHCP (carte bmclab0) ou ont une IP d'usine fixe, p. ex. Dell 192.168.0.120 - deux d'entre eux entrent en conflit comme en vrai. « Débrancher/brancher le câble » les connecte l'un après l'autre.</li>\n<li><b>Domicile/routeur :</b> les serveurs sont reliés à la carte réseau filaire, obtiennent leur adresse du routeur et y apparaissent comme appareils à part entière ; le passage à une adresse fixe du LAN fonctionne réellement. Le Wi-Fi ne fonctionne pas.</li>\n</ul>\n<p>Salle de configuration et routeur nécessitent une fois les droits root au démarrage (pkexec) ; à l'arrêt, les adresses sont libérées et tous les périphériques réseau du laboratoire supprimés. Les serveurs y répondent sur 443/22/623, donc sans <code>:port</code>.</p>\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> iDRAC9 (14e à 16e génération) et iDRAC7/8 (12e et 13e génération). iDRAC7/8\n    exigent au moins le firmware 2.50.50.50 ; l'outil détecte un firmware plus ancien, le signale et ne\n    modifie rien. Tester d'abord iDRAC10 sur un seul appareil. iDRAC6 n'est pas pris en charge.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11) via Redfish. iLO 7 n'est pas testé. Pour iLO 3 et 4,\n    voir la section suivante.</li>\n</ul>\n\n<h2>HPE iLO 3 et iLO 4 (serveurs plus anciens)</h2>\n<ul>\n<li><b>Appareils :</b> iLO 3 équipe les serveurs G7, iLO 4 les Gen8 et Gen9. L'outil les reconnaît de\n    lui-même ; si le constructeur est choisi à la main, prendre « HPE iLO 3/4 ».</li>\n<li><b>Autre voie :</b> iLO 3 ne connaît pas Redfish. Pour iLO 3 et iLO 4, l'outil utilise donc\n    l'interface XML RIBCL, présente d'origine sur les deux. En simulation, les commandes XML figurent\n    dans le journal, les mots de passe y sont remplacés par ***.</li>\n<li><b>Redémarrage :</b> une fois l'adresse et le nom d'hôte définis, l'iLO redémarre de lui-même ; le\n    serveur continue de tourner. Il faut 1 à 3 minutes avant qu'il réponde à la nouvelle adresse.</li>\n<li><b>Chiffrement ancien :</b> iLO 3 ne gère que TLS 1.0/1.1. L'outil bascule de lui-même, appareil par\n    appareil, sur l'ancien chiffrement et l'indique dans le journal. Ces appareils ont leur place dans\n    un réseau d'administration isolé.</li>\n<li><b>Limites :</b> nom d'hôte de 49 caractères au plus. Les réglages UEFI (« Réglages UEFI ») ne fonctionnent pas\n    avec iLO 3. iLO 2 et versions antérieures ne sont pas pris en charge.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67) ou le BMC n'est pas en DHCP.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond ni en Redfish ni comme iLO 3/4. iDRAC6, iLO 2\n    et les firmwares très anciens ne sont pas pris en charge. Un iLO 3/4 dont les informations\n    d'appareil ont été désactivées reste accessible en choisissant « HPE iLO 3/4 » à la main.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE (iLO 3/4 compris), iDRAC7/8 anciens, Supermicro, Lenovo et UEFI n'ont été testés jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en bas à gauche, sous le menu, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n\n",
-"gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b>: D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Mit em Häägli „Automatisch übernäh“ (voriigstellt) träit s Tool\n    neui Grät vo sälber i d Serverlischte ii; ohni Häägli gaht s nume per Chnopf. Under Linux lauft defür dnsmasq.</li>\n<li><b>Neuware</b>: neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Handy-Scanner (Passwort per Kamera)</h2>\n<ul>\n<li>In „Neuware“ öffnet „Handy-Scanner …“ es Fänschter. Adrässe wähle, <b>Starte</b>, mit em Handy de QR-Code scanne (Handy und PC im gliiche Netz). D Zertifikatswarnig eimal bestätige und d Kamera erlaube.</li>\n<li>Am Handy zwüsche <b>Barcode</b> und <b>Text (OCR)</b> umschalte, <b>Ufnäh</b> tippe, de erchännt Wärt prüefe und übernäh. Er landet im Fäld „Passwort“ vo de markierte Ziile (susch vo de erschte ohni Passwort), dänn rückt d Markierig e Ziile wiiter.</li>\n<li>S wird keis Foti uf em Handy gspeicheret: D Siite zeigt nume s Kamerabild, de PC liest de Text und verwirft s Bild sofort. De Link isch gheim und gilt nume, solang de Scanner lauft.</li>\n<li>Am PC nötig: <code>openssl</code>, für Barcodes <code>zbar</code>, für Text <code>tesseract</code>, für de QR-Code <code>qrencode</code>. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Bi aktiver Firewall de Port freigäh (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>D Texterkennig verwächslet gärn 0/O und 1/l/I. De Wärt am Handy vor em Übernäh kontrolliere; er cha det korrigiert wärde.</li>\n<li><b>Verbindigswäg:</b> Im Fänschter wählsch, wie s Handy de PC erreicht. <i>Vorhandes Netz</i>: beidi im gliiche WLAN/LAN. <i>USB-Tethering</i>: Handy per Chabel aastecke und det „USB-Tethering“ iischalte, dänn erschiint d Adrässe i de Lischte (↻ liest neu ii). <i>Eigete WLAN-Hotspot</i> (nur Linux mit NetworkManager): De PC macht es WLAN mit zuefällige Name und Passwort uuf, zwei QR-Code füehred dur d Verbindig. De WLAN-Adapter isch debii bsetzt, e bestehendi WLAN-Verbindig vom PC wird trännt. Bim Beände wird de Hotspot samt Passwort wider entfernt.</li>\n<li><b>Log-Export:</b> Am Handy es paar Ufnahme mache, denn im Scanner-Fänschter <b>Log exportiere …</b>. D ZIP-Datei het <code>log.txt</code> (Version, System, Tesseract/zbar, Handy-Aagabe, jede Erkennigsschritt). <b>Passwörter staht nie im Log</b>, nume Läng und Form (A gross, a chli, 9 Ziffer, # Rest). Mit em Haag <i>Zwüschebilder mitspeichere</i> chömed zuesätzlich d Bilder i d ZIP; die zeiged s Passwort läsbar, drum nume zur Fehlersuech bruuche und d ZIP nachhär lösche.</li>\n</ul>\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>Bestehendi Server</h2>\n<p>Für BMCs, wo scho konfiguriert sind. Pro Zile Adrässe, Port (Standard 443), Benutzer und Passwort iitrage, dänn <b>Verbindig teste</b>: S Tool prüeft nume läsend Port, Verschlüsselig, Hersteller, Aamäldig, Modell, Firmware und Administratorrächt. Jede Server überchunnt gnau en Aamäldversuech, dass es falsches Passwort kei Konto sperrt. <b>Übernäh i Neuware, UEFI, Dienscht</b> kopiert d erfolgriichä Server i d Serverlischte; det stellsch Netzwärk, UEFI und Dienscht i. D „Neuware“, „UEFI-Iistellige“ und „Dienscht“ kännd eimal Benutzer für alli Server, anderi i emene zweite Durchgang. De Reiter speicheret nüt.</p>\n<h2>UEFI-Iistellige</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us „Neuware“; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienscht: NTP, Syslog, LDAP, Zertifikat</h2>\n<p>„Dienscht“ richtet uf allne Server vo de Lischte gmeinsami Verwaltigsdienscht ii. Nur aaghaaggti\nAbschnitt wärded aagwändet; grüeni (fertigi) Server wärded under ihrer neue Adrässe aagsproche.\nAagmäldet wird mit em Wärksbenutzer, de Wärks-Administrator bliibt bestah. De Trocheluuf isch\nvoriigstellt und zeigt nur, was gschickt wür; Passwörter und de Zertifikatsinhalt stönd debii nöd im\nProtokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwee Ziitserver. D Ziitzone wird nur bi Dell gsetzt; bi HPE, Supermicro und\n    Lenovo bitte i de Oberflächi wähle.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bi Supermicro und Lenovo gits kei einheitliche Wäg, de Abschnitt\n    wird dört übersprunge.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional es Bind-Konto, Benutzer- und\n    Gruppe-Attribut. Under „Gruppe → Rolle“ wärded LDAP-Gruppe de Rolle Administrator, Operator oder\n    ReadOnly zuegordnet. Gaht bi allne vier Hersteller über de Standard-Redfish-Wäg.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert es vonere CA signiets PEM-Zertifikat. Das isch experimentell und\n    je Hersteller andersch. Bi HPE mues de passend Schlüssel us ere uf em iLO erzüügte CSR cho, susch\n    schiitert de Import. Bim Import cha de BMC neu starte.</li>\n</ul>\n<p>Für jede Dienscht gilt: En Hersteller, wo ne nöd kännt, wird übersprunge, nöd grate. iLO 3/4 (über\nRIBCL) wärded da nöd bedient. D Abläuf sind bis jetz nur gäge simulierti Gägestelle prüeft; vor eme\ngrosse Luuf immer zerscht eis einzelns Grät.</p>\n<h2>UEFI-Konsole</h2>\n<p>Zeigt s UEFI/BIOS vomene Server über de BMC aa. Drü Wääg: <b>Bild</b> (iibettet HTML5-Konsole vom BMC, Muus und Tastatur wie am Original, Aamäldig automatisch), <b>Text</b> (serielli Konsole über IPMI-SOL oder SSH, lauft under Linux, bruucht <code>pyte</code>, <code>paramiko</code> und <code>pyghmi</code>) und <b>Standardbrowser</b>. „Is UEFI-Setup boote“ merkt per Redfish de Start is Setup vor und startet de Server hert neu. De Reiter speicheret nüt. Alti BMCs mit nume TLS 1.0/1.1 gönd nume über d Textkonsole. Obe links im Fenschter zeigt de <b>Monitor</b> dezents Rusche, solang nüt verbunde isch; drin boued sich alli acht Sekunde s Logo mit de Kugle uf und wider ab; zum Häägli lüüchtets churz grüen. Mit Verbindig erschiint det d Konsole als Miniatur, mit emene Klick druf gaht si i voller Grössi uf. De Schalter under em Monitor wählt de Wäg (HTML5, Text oder Browser). Isch d Web-Aasicht grad verdeckt, blibt im Monitor s letschte Bild als Standbild stah. De Chnopf <b>Vollbild</b> lat d Konsole de ganz Bildschirm fülle; d Textkonsole macht derfür d Schrift grösser. Beände tuet mer mit „Vollbild beände“ i de Leischte obe, wil Esc und F11 em Server ghöred.</p>\n<h2>Testlabor</h2>\n<p>Virtuelli Dell/HPE/Lenovo/Supermicro-Server zum Üebe ohni Hardware. Jedi Ziile vom Cluster isch en Server mit eigener Firmware-Generation, eigenem Wärks-Login, Modell/Seriennummere und bi Dell optional emne bsetzte User-Slot. <b>Szenario spichere/lade</b> stellt dä gliich Ufbau wieder her (gliichi Seriennummere = gliichi MAC = gliichi DHCP-Adrässe); Biispil liged i <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> ohni Root, nume dä PC. Adrässe als <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Konfigruum:</b> en virtuelle Staging-Switch <code>bmclab0</code>, wo dä PC mit fixer Adrässe dra hängt. D Server holed sich d Adrässe über de DHCP-Reiter (Charte bmclab0) oder händ e fixi Wärks-IP, z. B. Dell 192.168.0.120 - zwei devo störed sich wie in echt. „Kabel zieh/stecke“ schliesst si eis nach em andere a.</li>\n<li><b>Dihei/Router:</b> d Server hänged a de Kabel-Netzwerkcharte, überchömed d Adrässe vom Router und erschiined det als eigeni Grät; en Umzug uf e fixi Adrässe im LAN lauft würkli dure. WLAN gaht nöd.</li>\n</ul>\n<p>Konfigruum und Router bruuched bim Start eimal Root (pkexec); bim Stoppe wärded d Adrässe freigä und alli Labor-Netzwerkgrät wieder entfernt. D Server antwortet det uf 443/22/623, also ohni <code>:Port</code>.</p>\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    bruuched mindeschtens Firmware 2.50.50.50; älteri erchännt s Tool, mäldet's und änderet nüt.\n    iDRAC10 zerscht a eim Grät teste. iDRAC6 wird nöd understützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 isch nöd prüeft. Für iLO 3 und\n    4 lueg im nächschte Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (di ältere Semeschter)</h2>\n<ul>\n<li><b>Grät:</b> iLO 3 steckt i G7-Server, iLO 4 i Gen8 und Gen9. S Tool erchännt si vo sälber; wär de\n    Hersteller fescht wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>En andere Wäg:</b> iLO 3 kännt kei Redfish. S Tool bruucht drum für iLO 3 und iLO 4 d\n    XML-Schnittstell RIBCL, wo beidi ab Wärk debii händ. Im Trocheluuf stönd d XML-Befähl im Protokoll,\n    Passwörter sind dört dur *** ersetzt.</li>\n<li><b>Neustart:</b> Nach em Setze vo Adrässe und Hostname startet s iLO vo sälber neu; de Server lauft\n    wiiter. Bis es under de neue Adrässe antwortet, gaht's 1 bis 3 Minute.</li>\n<li><b>Alti Verschlüsselig:</b> iLO 3 cha nume TLS 1.0/1.1. S Tool schaltet defür pro Grät vo sälber uf\n    di alt Verschlüsselig um und schriibt en Hiiwiis is Protokoll. Söttigi Grät ghöred in es\n    abgschottets Verwaltigsnetz.</li>\n<li><b>Gränze:</b> Hostname höchschtens 49 Zeiche. UEFI-Iistellige („UEFI-Iistellige“) gönd bi iLO 3 nöd. iLO 2\n    und älter wärded nöd understützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh) oder de BMC staht nöd uf DHCP.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet weder per Redfish no als iLO 3/4. iDRAC6, iLO 2 und\n    uralti Firmware wärded nöd understützt. Es iLO 3/4, wo d Grätuuskunft abgschaltet isch, laat sich\n    über di feschti Wahl „HPE iLO 3/4“ glich aaspräche.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE (au iLO 3/4), älteri iDRAC7/8, Supermicro, Lenovo und UEFI sind bis jetzt nur gäge simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer links une under em Menü umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n\n"
+"de": "<h2>BMC-Steward</h2>\n<p>Der BMC-Steward bedient jeden Server der Reihe nach: Er legt den neuen Administrator an, setzt den\nHostnamen und stellt den BMC auf eine feste Adresse um. Die Server müssen nicht alle auf einmal\neingetragen werden, sie können nach und nach dazukommen.</p>\n\n<h2>Schutz vor Fehlbedienung</h2>\n<p>Das Tool ist so gebaut, dass ein Fehlgriff möglichst nichts kaputt macht:</p>\n<ul>\n<li><b>Trockenlauf ist voreingestellt.</b> Solange der Haken gesetzt ist, wird nichts geändert.</li>\n<li><b>Jeder scharfe Lauf wird vorher gezeigt</b> (alte IP → neue IP, Hostname). In allen Abfragen ist\n    „Abbrechen“ vorausgewählt, Enter bricht also ab.</li>\n<li><b>Ungewöhnliche Fälle verlangen das Eintippen der Server-Anzahl</b>, z. B. wenn ein Gerät nicht im\n    eigenen Staging-Netz liegt, und immer bei UEFI-Änderungen.</li>\n<li><b>Adressen werden geprüft:</b> doppelte IPs oder Hostnamen, Gateway außerhalb des Netzes, eine\n    Adresse dieses Rechners, eine Adresse aus dem laufenden DHCP-Bereich und die aktuelle IP eines\n    anderen Geräts werden abgelehnt. Vor dem Umstellen prüft das Tool außerdem, ob unter der neuen IP\n    schon ein Gerät antwortet, und lässt das Gerät dann unverändert.</li>\n<li><b>Dell:</b> Ein schon belegter User-Slot wird nie überschrieben.</li>\n<li><b>Das neue Passwort wird zweimal eingegeben.</b> Stimmen die Eingaben nicht überein, startet kein\n    Lauf.</li>\n<li><b>Der Adresswechsel wird geprüft:</b> Reißt beim Umstellen nur die Verbindung ab, gilt ein Gerät\n    erst als fertig, wenn es unter der alten Adresse wirklich nicht mehr antwortet.</li>\n<li><b>DHCP-Server:</b> startet nicht auf einer Karte mit öffentlicher Adresse, mit der Standardroute\n    (Internet/Firmennetz), mit einer per DHCP bezogenen Adresse oder wenn dort schon ein DHCP-Server\n    antwortet. Er stoppt von selbst, wenn die Karte später zur Standardroute wird. Geräte, die ihre\n    Adresse von einem anderen Server haben, werden nie abgewiesen. Ein nach einem Absturz\n    übrig gebliebener DHCP-Server wird beim nächsten Start beendet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribute sind gesperrt. Werte, die nicht zum Typ passen,\n    werden nicht gesetzt. Ein Neustart ist nicht vorausgewählt.</li>\n<li><b>Passwörter</b> bleiben im Arbeitsspeicher und landen nur auf ausdrücklichen Wunsch in einer\n    Datei.</li>\n<li><b>Eigenschutz:</b> UEFI-Änderungen, Firmware und „Ins UEFI-Setup booten“ prüfen vorher die Identität des Servers. Der Rechner, auf dem BMC-Steward läuft, und alle Server der Schutzliste (Knopf „Eigenschutz“ links unten) werden nie angefasst. Läuft BMC-Steward in einer VM (z. B. VMware), dort alle Hosts eintragen, auf denen die VM laufen kann – die VM kennt ihren Host nicht. Ist die Identität im scharfen Lauf nicht lesbar, wird der Server übersprungen.</li>\n<li><b>Zertifikate:</b> Beim ersten Kontakt merkt sich das Tool das Zertifikat jedes BMC (je Gerät, nicht je Adresse). Zeigt dasselbe Gerät später ein anderes, wird es gesperrt, bevor ein Passwort gesendet wird – Schutz gegen Mitlesen im Netz. Gewollte Wechsel unter „Zertifikate …“ links unten freigeben.</li>\n<li><b>Anmeldung per Session:</b> Das Passwort geht je Gerät einmal über die Leitung; am Ende meldet sich das Tool ab. Eine abgelehnte Anmeldung wird nie wiederholt.</li>\n<li><b>Sicherung und Revisionsprotokoll:</b> Vor jeder Änderung werden die wichtigsten Einstellungen des Geräts als JSON gesichert, jeder ändernde Aufruf eines scharfen Laufs wird protokolliert (ohne Passwörter). Beides unter „Sicherungen/Protokolle“.</li>\n<li><b>Firmware:</b> Die Datei wird einmal gelesen und per SHA-256 geprüft (Sollwert vom Hersteller eintragen); „Bei Fehler anhalten“ ist voreingestellt.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b>: Die Netzwerkkarte am getrennten Staging-Switch braucht eine feste\n    Adresse ohne Gateway. DHCP starten, die Geräte holen sich eine Adresse und erscheinen in der Liste,\n    von dort „In Serverliste übernehmen“. Mit dem Haken „Automatisch übernehmen“ (voreingestellt) trägt das Tool\n    neue Geräte von selbst in die Serverliste ein; ohne Haken geht es nur per Knopf. Unter Linux läuft dafür dnsmasq.</li>\n<li><b>Neuware</b>: neue IP, Subnetzmaske, Gateway und Hostname eintragen. Was noch fehlt,\n    ist <b>gelb</b> markiert, Fehlerhaftes <b>rot</b>, Fertiges <b>grün</b>. Über dem Start-Knopf steht in\n    einer Zeile, was vor dem Lauf noch auszufüllen ist; der Grund zu jedem Feld steht im Tooltip.</li>\n<li><b>Trockenlauf</b>: zeigt im Protokoll, was gesendet würde.</li>\n<li><b>Scharfer Lauf</b>: Haken bei „Trockenlauf“ entfernen. Der Start-Knopf wird rot und heißt dann\n    „Scharf starten“. Klicken und die Abfrage bestätigen.</li>\n<li><b>Kontrolle</b>: Am Ende prüft das Tool, ob jede neue Adresse mit dem neuen Benutzer antwortet. Das\n    klappt nur, wenn dieser Rechner das neue Netz erreicht; sonst steht dort „FEHLT“, obwohl die\n    Umstellung geklappt haben kann.</li>\n</ol>\n\n<h2>Server nacheinander konfigurieren</h2>\n<ul>\n<li>Man kann einen Server konfigurieren, Start drücken, den nächsten anschließen und wieder Start\n    drücken, beliebig oft. Der DHCP-Server läuft dabei weiter.</li>\n<li>Erfolgreich umgestellte Zeilen werden <b>grün</b> markiert, bleiben in der Liste stehen und werden\n    beim nächsten Start übersprungen. Fehlgeschlagene werden erneut versucht.</li>\n<li>Soll ein grünes Gerät noch einmal bearbeitet werden: Zeile markieren, „Erneut bearbeiten“ und die\n    „Aktuelle IP“ auf seine jetzige Adresse setzen.</li>\n<li>Der Trockenlauf markiert nie etwas als fertig.</li>\n<li>„Liste speichern“ schreibt die grüne Markierung mit in die Datei (Spalte „fertig“), nach\n    „Liste laden“ sind die Zeilen wieder grün. So lässt sich ein Rollout auch an einem anderen Tag\n    fortsetzen.</li>\n</ul>\n\n<h2>Handy-Scanner (Passwort per Kamera)</h2>\n<ul>\n<li>In „Neuware“ öffnet „Handy-Scanner …“ ein Fenster. Adresse wählen, <b>Starten</b>, am Handy den QR-Code scannen (Handy und PC im selben Netz). Die Zertifikatswarnung einmal bestätigen und die Kamera erlauben.</li>\n<li>Am Handy zwischen <b>Barcode</b> und <b>Text (OCR)</b> umschalten, <b>Aufnehmen</b> tippen, den erkannten Wert prüfen und übernehmen. Er landet im Feld „Passwort“ der markierten Zeile (sonst der ersten ohne Passwort), danach rückt die Markierung eine Zeile weiter.</li>\n<li>Es wird kein Foto auf dem Handy gespeichert: Die Seite zeigt nur das Kamerabild, der PC liest den Text und verwirft das Bild sofort. Der Link ist geheim und gilt nur, solange der Scanner läuft.</li>\n<li>Am PC nötig: <code>openssl</code>, für Barcodes <code>zbar</code>, für Text <code>tesseract</code>, für den QR-Code <code>qrencode</code>. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Bei aktiver Firewall den Port freigeben (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>Texterkennung verwechselt gern 0/O und 1/l/I. Den Wert am Handy vor dem Übernehmen kontrollieren; er lässt sich dort korrigieren.</li>\n<li><b>Verbindungsweg:</b> Im Fenster wählst du, wie das Handy den PC erreicht. <i>Vorhandenes Netz</i>: beide im selben WLAN/LAN. <i>USB-Tethering</i>: Handy per Kabel anstecken und dort „USB-Tethering“ einschalten, dann erscheint die Adresse in der Liste (↻ liest neu ein). <i>Eigener WLAN-Hotspot</i> (nur Linux mit NetworkManager): Der PC öffnet ein WLAN mit zufälligem Namen und Passwort, zwei QR-Codes führen durch die Verbindung. Der WLAN-Adapter ist dabei belegt, eine bestehende WLAN-Verbindung des PCs wird getrennt. Beim Beenden wird der Hotspot samt Passwort wieder entfernt.</li>\n<li><b>Log-Export:</b> Am Handy ein paar Aufnahmen machen, dann im Scanner-Fenster <b>Log exportieren …</b>. Die ZIP-Datei enthält <code>log.txt</code> (Version, System, Tesseract/zbar, Handy-Angaben, jeder Erkennungsschritt). <b>Passwörter stehen nie im Protokoll</b>, nur Länge und Form (A groß, a klein, 9 Ziffer, # Rest). Mit dem Haken <i>Zwischenbilder mitspeichern</i> liegen zusätzlich die Bilder der Erkennung in der ZIP; die zeigen das Passwort lesbar, deshalb nur zur Fehlersuche nutzen und die ZIP danach löschen.</li>\n</ul>\n<h2>Profile</h2>\n<ul>\n<li>Ein Profil merkt sich die Einstellungen der Maske: Hersteller, Werksbenutzer, neuen Administrator,\n    User-Slot, Vorgaben für neue Zeilen und die DHCP-Einstellungen. Passwörter und die Serverliste\n    gehören nie dazu.</li>\n<li>Die Profile liegen in <code>bmc-profile.json</code> neben dem Tool; beim Start werden das zuletzt\n    genutzte Profil und die zuletzt gewählte Sprache geladen.</li>\n</ul>\n\n<h2>Bestandsserver</h2>\n<p>Für BMCs, die schon konfiguriert sind. Je Zeile Adresse, Port (Standard 443), Benutzer und Passwort eintragen, dann <b>Verbindung testen</b>: Das Tool prüft nur lesend Port, Verschlüsselung, Hersteller, Anmeldung, Modell, Firmware und Administratorrechte. Jeder Server bekommt genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt. Erfolgreiche Server übernimmt <b>Übernehmen in Neuware, UEFI, Dienste</b> in die Serverliste; dort stellen Sie Netzwerk, UEFI und Dienste ein. „Neuware“, „UEFI-Einstellungen“ und „Dienste“ kennen einen Benutzer für alle Server, abweichende Benutzer in einem zweiten Durchgang. Der Reiter speichert nichts.</p>\n<h2>UEFI-Einstellungen</h2>\n<ul>\n<li>UEFI-Attribute unterscheiden sich je Modell. Das Tool liest deshalb die tatsächlich vorhandenen\n    Attribute von einem <b>Referenzgerät</b>, statt sie zu raten. Lesen ändert nichts.</li>\n<li><b>Ändern:</b> bei den gewünschten Zeilen „Neuer Wert“ ausfüllen, die Suche grenzt die Liste ein.\n    Leere Felder bleiben unverändert. Graue Zeilen (Passwörter, TPM, Löschfunktionen) sind gesperrt.</li>\n<li><b>Anwenden:</b> „Auf allen Servern der Liste setzen“ nutzt die Serverliste aus „Neuware“; grüne\n    Zeilen werden unter ihrer neuen IP angesprochen. Jedes Gerät bekommt nur Attribute, die es auch\n    hat. Werte, die schon stimmen, werden übersprungen.</li>\n<li><b>Neustart:</b> UEFI-Werte wirken erst nach einem Neustart. Mit dem Haken „Danach hart neu\n    starten“ wird ein laufender Server hart neu gestartet (wie mit der Reset-Taste), ein\n    ausgeschalteter eingeschaltet. Nur bei Servern ohne laufendes Betriebssystem verwenden.</li>\n<li><b>UEFI-Vorlagen</b> merken sich Hersteller und „Neuer Wert“-Felder und liegen getrennt in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienste: NTP, Syslog, LDAP, Zertifikat</h2>\n<p>„Dienste“ richtet auf allen Servern der Liste gemeinsame Verwaltungsdienste ein. Nur angehakte\nAbschnitte werden angewendet; grüne (fertige) Server werden unter ihrer neuen Adresse angesprochen.\nAngemeldet wird mit dem Werksbenutzer, der Werks-Administrator bleibt bestehen. Der Trockenlauf ist\nvoreingestellt und zeigt nur, was gesendet würde; Passwörter und der Zertifikatsinhalt stehen dabei\nnicht im Protokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwei Zeitserver. Die Zeitzone wird nur bei Dell gesetzt; bei HPE, Supermicro\n    und Lenovo bitte in der Oberfläche wählen.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bei Supermicro und Lenovo gibt es keinen einheitlichen Weg, der\n    Abschnitt wird dort übersprungen.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional ein Bind-Konto, Benutzer- und\n    Gruppen-Attribut. Unter „Gruppen → Rolle“ werden LDAP-Gruppen den Rollen Administrator, Operator\n    oder ReadOnly zugeordnet. Funktioniert bei allen vier Herstellern über den Standard-Redfish-Weg.</li>\n<li><b>Härtung:</b> schaltet IPMI über LAN, SSDP und auf Wunsch SNMP ab und setzt Kontosperre und Session-Zeitlimit über Standard-Redfish. Was ein BMC nicht kennt, wird übersprungen. Ohne IPMI geht die Textkonsole (SOL) bei Supermicro nicht mehr.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert ein von einer CA signiertes PEM-Zertifikat. Das ist\n    experimentell und je Hersteller verschieden. Bei HPE muss der passende Schlüssel aus einer auf dem\n    iLO erzeugten Zertifikatsanforderung (CSR) stammen, sonst scheitert der Import. Beim Import kann der\n    BMC neu starten.</li>\n</ul>\n<p>Für jeden Dienst gilt: Ein Hersteller, der ihn nicht kennt, wird übersprungen, nicht geraten.\niLO 3/4 (über RIBCL) werden hier nicht bedient. Die Abläufe sind bisher nur gegen simulierte\nGegenstellen geprüft; vor einem großen Lauf immer zuerst ein einzelnes Gerät.</p>\n<h2>UEFI-Konsole</h2>\n<p>Zeigt das UEFI/BIOS eines Servers über den BMC an. Drei Wege: <b>Bild</b> (eingebettete HTML5-Konsole des BMC, Maus und Tastatur wie am Original, Anmeldung automatisch), <b>Text</b> (serielle Konsole über IPMI-SOL oder SSH, läuft unter Linux, braucht <code>pyte</code>, <code>paramiko</code> und <code>pyghmi</code>) und <b>Standardbrowser</b>. „Ins UEFI-Setup booten“ merkt per Redfish den Start ins Setup vor und startet den Server hart neu. Der Reiter speichert nichts. Alte BMCs mit nur TLS 1.0/1.1 gehen nur per Textkonsole. Oben links im Fenster zeigt der <b>Monitor</b> dezentes Rauschen, solange nichts verbunden ist; darin baut sich alle acht Sekunden das Logo mit der Kugel auf und wieder ab; zum Häkchen leuchtet es kurz grün. Mit Verbindung erscheint dort die Konsole als Miniatur, ein Klick darauf öffnet sie in voller Größe. Der Schalter unter dem Monitor wählt den Weg (HTML5, Text oder Browser). Ist die Web-Ansicht gerade verdeckt, bleibt im Monitor das letzte Bild als Standbild stehen. Der Knopf <b>Vollbild</b> lässt die Konsole den ganzen Bildschirm füllen; die Textkonsole vergrößert dazu ihre Schrift. Beendet wird mit „Vollbild beenden“ in der Leiste oben, denn Esc und F11 gehören dem Server.</p>\n<h2>Testlabor</h2>\n<p>Virtuelle Dell/HPE/Lenovo/Supermicro-Server zum Üben ohne Hardware. Jede Zeile des Clusters ist ein Server mit eigener Firmware-Generation, eigenem Werks-Login, Modell/Seriennummer und bei Dell optional einem belegten User-Slot. <b>Szenario speichern/laden</b> stellt denselben Aufbau wieder her (gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse); Beispiele liegen in <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> ohne Root, nur dieser PC. Adressen als <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Konfigraum:</b> ein virtueller Staging-Switch <code>bmclab0</code>, an dem dieser PC mit fester Adresse hängt. Die Server holen sich ihre Adresse über den DHCP-Reiter (Karte bmclab0) oder haben eine feste Werks-IP, z. B. Dell 192.168.0.120 - zwei davon stören sich wie in echt. „Kabel ziehen/stecken“ schließt sie nacheinander an.</li>\n<li><b>Zuhause/Router:</b> die Server hängen an der Kabel-Netzwerkkarte, bekommen ihre Adresse vom Router und erscheinen dort als eigene Geräte; ein Umzug auf eine feste Adresse im LAN läuft wirklich durch. WLAN geht nicht.</li>\n</ul>\n<p>Konfigraum und Router brauchen beim Start einmal Root (pkexec); beim Stoppen werden Adressen freigegeben und alle Labor-Netzwerkgeräte wieder entfernt. Die Server antworten dort auf 443/22/623, also ohne <code>:Port</code>.</p>\n<h2>Hersteller im Vergleich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Auszug)</td><td>individuell,\n    Anhänger am Gerät</td><td>individuell auf dem Aufkleber, alte Boards ADMIN</td><td>individuell,\n    Anhänger am Gerät</td></tr>\n<tr><td><b>Neuer Benutzer</b></td><td>in den User-Slot, nur wenn frei</td><td>neu angelegt</td>\n    <td>neu angelegt</td><td>neu angelegt</td></tr>\n<tr><td><b>Adresswechsel</b></td><td>sofort</td><td>nach iLO-Neustart (löst das Tool aus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunden</td><td>1 bis 3 Minuten</td><td>Sekunden</td>\n    <td>Sekunden</td></tr>\n</table>\n<p>Bleibt „Benutzer“ beim aktuellen Login leer, wird je Hersteller der Werksbenutzer verwendet; so gehen\nauch gemischte Listen. „Automatisch erkennen“ ermittelt den Hersteller pro Gerät, eine feste Wahl gilt\nfür alle Zeilen.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 ist root). Ist der Slot von einem anderen Benutzer belegt,\n    bricht das Tool für dieses Gerät ab und ändert nichts.</li>\n<li><b>Hostname:</b> gesetzt wird der DNS-Name des iDRAC, nicht der des Betriebssystems.</li>\n<li><b>Auslieferung:</b> je nach Bestellung DHCP oder feste Adresse 192.168.0.120. Mit fester Adresse\n    erscheint der iDRAC nicht in der DHCP-Liste; mehrere solche Geräte am selben Switch kollidieren,\n    dann einzeln anschließen.</li>\n<li><b>Generationen:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    brauchen mindestens Firmware 2.50.50.50; ältere erkennt das Tool, meldet es und ändert nichts.\n    iDRAC10 zuerst an einem Gerät testen. iDRAC6 wird nicht unterstützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile in die Spalte „Passwort“ eintragen.</li>\n<li><b>Zuordnung:</b> in der DHCP-Liste meldet sich ein iLO meist als „ILO“ plus Seriennummer.</li>\n<li><b>Neustart:</b> Hostname und Adresse werden erst nach dem iLO-Neustart aktiv; der Server selbst\n    läuft weiter.</li>\n<li><b>Port:</b> konfiguriert wird der dedizierte iLO-Port. Neue Passwörter brauchen mindestens 8\n    Zeichen.</li>\n<li><b>Generationen:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 ist nicht geprüft. Für iLO 3\n    und 4 siehe den nächsten Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (ältere Server)</h2>\n<ul>\n<li><b>Geräte:</b> iLO 3 steckt in G7-Servern, iLO 4 in Gen8 und Gen9. Das Tool erkennt sie von selbst;\n    wer den Hersteller fest wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>Anderer Weg:</b> iLO 3 kennt kein Redfish. Das Tool nutzt deshalb für iLO 3 und iLO 4 die\n    XML-Schnittstelle RIBCL, die beide ab Werk mitbringen. Im Trockenlauf stehen die XML-Befehle im\n    Protokoll, Passwörter sind dort durch *** ersetzt.</li>\n<li><b>Neustart:</b> Nach dem Setzen von Adresse und Hostname startet das iLO von selbst neu; der Server\n    läuft weiter. Bis es unter der neuen Adresse antwortet, vergehen 1 bis 3 Minuten.</li>\n<li><b>Alte Verschlüsselung:</b> iLO 3 kann nur TLS 1.0/1.1. Das Tool schaltet dafür je Gerät von selbst\n    auf die alte Verschlüsselung um und schreibt einen Hinweis ins Protokoll. Solche Geräte gehören in\n    ein abgeschottetes Verwaltungsnetz.</li>\n<li><b>Grenzen:</b> Hostname höchstens 49 Zeichen. UEFI-Einstellungen („UEFI-Einstellungen“) gehen bei iLO 3 nicht.\n    iLO 2 und älter werden nicht unterstützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Aufkleber, je Zeile eintragen.</li>\n<li><b>Zugriffsarten:</b> das Tool vergibt Web, IPMI und Konsole mit. Steht im Protokoll „ohne\n    Zugriffsarten angelegt“, die Web-Anmeldung einmal prüfen.</li>\n<li><b>Lizenz:</b> bei älteren Boards können Redfish-Funktionen eine Lizenz brauchen.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erkannt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Gerät:</b> steht auf dem Anhänger, je Zeile eintragen.</li>\n<li><b>Werksbenutzer:</b> USERID in Großbuchstaben.</li>\n<li><b>Port:</b> konfiguriert wird die Schnittstelle „NIC“, der dedizierte XCC-Port.</li>\n<li><b>Generationen:</b> XCC2/XCC3. XCC1 zuerst an einem Gerät testen.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>Das Tool setzt nur BMC-Adresse und BMC-Benutzer, nicht Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> der Cluster-Erstellung so umstellen. Bei einem laufenden Cluster das\n    Nutanix-Verfahren nutzen, weil der Cluster die BMC-Daten selbst verwendet.</li>\n</ul>\n\n<h2>Wenn etwas nicht klappt</h2>\n<ul>\n<li><b>DHCP startet nicht:</b> Die Meldung nennt den Grund. Meist hat die Karte ein Gateway oder ihre\n    Adresse per DHCP. Unter Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;karte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Keine Geräte in der DHCP-Liste:</b> Firewall (Linux mit ufw: UDP 67 freigeben) oder der BMC steht nicht auf DHCP.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Feld „Benutzer“ leeren, Passwort der Zeile\n    prüfen.</li>\n<li><b>Hersteller nicht erkannt:</b> Das Gerät antwortet weder per Redfish noch als iLO 3/4. iDRAC6,\n    iLO 2 und sehr alte Firmware werden nicht unterstützt. Ein iLO 3/4, bei dem die Geräteauskunft\n    abgeschaltet wurde, lässt sich über die feste Wahl „HPE iLO 3/4“ trotzdem ansprechen.</li>\n<li><b>Benutzer abgelehnt:</b> meist Passwortregeln. Die Meldung des BMC steht unter der\n    Fehlerzeile.</li>\n<li><b>„neue IP ist schon vergeben“:</b> Unter der Adresse antwortet bereits ein Gerät. Andere Adresse\n    wählen.</li>\n<li><b>Liste aus Excel oder einem anderen Tool:</b> Ohne Spalte „fertig“ sind alle Zeilen offen. Schon\n    umgestellte Geräte sind unter der alten Adresse nicht erreichbar, diese Zeilen entfernen oder\n    anpassen.</li>\n</ul>\n\n<h2>Daten und Grenzen</h2>\n<ul>\n<li>Das Tool speichert nichts von selbst. „Liste speichern“ fragt, ob Passwörter mit in die Datei\n    sollen (dann im Klartext). Eine solche Datei nach dem Rollout löschen.</li>\n<li>Die Abläufe für HPE (auch iLO 3/4), ältere iDRAC7/8, Supermicro, Lenovo und UEFI sind bisher nur gegen simulierte Gegenstellen geprüft. Vor einem großen Lauf immer zuerst ein einzelnes Gerät\n    konfigurieren.</li>\n<li>„Protokoll speichern“ schreibt das Protokoll des letzten Laufs in eine Textdatei, z. B. für die\n    Dokumentation. Passwörter stehen nicht darin.</li>\n<li>Die Sprache lässt sich links unten unter dem Menü umstellen, solange kein Lauf aktiv ist und der DHCP-Server\n    gestoppt ist.</li>\n</ul>\n\n",
+"en": "<h2>BMC-Steward</h2>\n<p>BMC-Steward serves one server after another: it creates the new administrator, sets the hostname and\nswitches the BMC to a static address. You don't have to enter all servers at once; they can be added\none by one.</p>\n\n<h2>Protection against mistakes</h2>\n<p>The tool is built so that a slip does as little damage as possible:</p>\n<ul>\n<li><b>Dry run is the default.</b> As long as it is ticked, nothing is changed.</li>\n<li><b>Every live run is shown first</b> (old IP → new IP, hostname). “Cancel” is preselected in every\n    prompt, so pressing Enter cancels.</li>\n<li><b>Unusual cases require typing the number of servers</b>, e.g. when a device is not in the\n    computer's own staging network, and always for UEFI changes.</li>\n<li><b>Addresses are checked:</b> duplicate IPs or hostnames, a gateway outside the network, an address\n    of this computer, an address from the running DHCP range and the current IP of another device are\n    rejected. Before reconfiguring, the tool also checks whether a device already answers on the new IP\n    and, if so, leaves the device unchanged.</li>\n<li><b>Dell:</b> an occupied user slot is never overwritten.</li>\n<li><b>The new password is entered twice.</b> If the entries differ, no run starts.</li>\n<li><b>The address change is verified:</b> if only the connection drops during the change, a device\n    counts as done only once it really no longer answers on the old address.</li>\n<li><b>DHCP server:</b> does not start on a card with a public address, with the default route\n    (internet/company network), with an address obtained via DHCP, or when a DHCP server already\n    answers there. It stops by itself if the card later becomes the default route. Devices that got\n    their address from another server are never refused. A DHCP server left over after a crash is\n    stopped at the next start.</li>\n<li><b>UEFI:</b> password, TPM and erase attributes are locked. Values that don't match the type are\n    not set. A restart is not preselected.</li>\n<li><b>Passwords</b> stay in memory and only go into a file if you explicitly ask for it.</li>\n<li><b>Self-protection:</b> UEFI changes, firmware and “Boot into UEFI setup” check the server's identity first. The machine BMC-Steward runs on and every server on the protection list (button “Self-protection” at the bottom left) are never touched. If BMC-Steward runs in a VM (e.g. VMware), enter every host the VM can run on there – the VM does not know its host. If the identity cannot be read in a live run, the server is skipped.</li>\n<li><b>Certificates:</b> On first contact the tool remembers each BMC's certificate (per device, not per address). If the same device later shows a different one, it is blocked before any password is sent – protection against eavesdropping on the network. Release intended changes under “Certificates …” at the bottom left.</li>\n<li><b>Session login:</b> The password crosses the wire once per device; at the end the tool logs out. A rejected login is never retried.</li>\n<li><b>Backup and audit log:</b> Before every change the device's main settings are saved as JSON, and every changing call of a live run is logged (without passwords). Both under “Backups/logs”.</li>\n<li><b>Firmware:</b> The file is read once and checked by SHA-256 (enter the vendor's value); “Stop on error” is preselected.</li>\n</ul>\n\n<h2>Procedure</h2>\n<ol>\n<li><b>DHCP server</b>: the network card on the separate staging switch needs a static address\n    without a gateway. Start DHCP; the devices get an address and appear in the list. From there,\n    “Add to server list”. With “Add automatically” ticked (the default) the tool enters new devices into the\n    server list by itself; untick it to add them by button only. On Linux dnsmasq is used.</li>\n<li><b>New hardware</b>: enter new IP, subnet mask, gateway and hostname. Whatever is still\n    missing is marked <b>yellow</b>, wrong entries <b>red</b>, finished ones <b>green</b>. A line above the\n    Start button says what still has to be filled in; the tooltip of each field gives the reason.</li>\n<li><b>Dry run</b>: the log shows what would be sent.</li>\n<li><b>Live run</b>: untick “Dry run”. The Start button turns red and reads “Start live run”. Click it\n    and confirm the prompt.</li>\n<li><b>Check</b>: at the end the tool checks whether each new address answers with the new user. That\n    only works if this computer can reach the new network; otherwise it shows “MISSING” even though\n    the change may have worked.</li>\n</ol>\n\n<h2>Configuring servers one after another</h2>\n<ul>\n<li>You can configure one server, press Start, connect the next one and press Start again, as often as\n    you like. The DHCP server keeps running.</li>\n<li>Successfully reconfigured rows turn <b>green</b>, stay in the list and are skipped at the next\n    start. Failed ones are tried again.</li>\n<li>To process a green device again: select the row, click “Process again” and set “Current IP” to its\n    present address.</li>\n<li>A dry run never marks anything as done.</li>\n<li>“Save list” writes the green mark into the file as well (column “fertig”); after “Load list” the\n    rows are green again. This lets you continue a rollout on another day.</li>\n</ul>\n\n<h2>Phone scanner (password by camera)</h2>\n<ul>\n<li>On “New hardware”, “Phone scanner …” opens a window. Choose the address, press <b>Start</b> and scan the QR code with the phone (phone and PC on the same network). Accept the certificate warning once and allow the camera.</li>\n<li>On the phone switch between <b>Barcode</b> and <b>Text (OCR)</b>, tap <b>Capture</b>, check the recognised value and send it. It goes into the “Password” field of the selected row (otherwise the first one without a password); the selection then moves down one row.</li>\n<li>No photo is saved on the phone: the page only shows the camera view, the PC reads the text and discards the image at once. The link is secret and only valid while the scanner runs.</li>\n<li>Needed on the PC: <code>openssl</code>, <code>zbar</code> for barcodes, <code>tesseract</code> for text, <code>qrencode</code> for the QR code. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. With an active firewall open the port (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>Text recognition often confuses 0/O and 1/l/I. Check the value on the phone before sending; it can be corrected there.</li>\n<li><b>Connection method:</b> In the window you choose how the phone reaches the PC. <i>Existing network</i>: both on the same Wi-Fi/LAN. <i>USB tethering</i>: connect the phone by cable and switch on “USB tethering” there; the address then appears in the list (↻ reads again). <i>Own Wi-Fi hotspot</i> (Linux with NetworkManager only): the PC opens a Wi-Fi with a random name and password, two QR codes guide you through connecting. The Wi-Fi adapter is occupied and an existing Wi-Fi connection of the PC is dropped. On stop the hotspot and its password are removed again.</li>\n<li><b>Log export:</b> Take a few shots on the phone, then click <b>Export log …</b> in the scanner window. The ZIP holds <code>log.txt</code> (version, system, tesseract/zbar, phone details, every recognition step). <b>Passwords are never in the log</b>, only length and shape (A upper, a lower, 9 digit, # other). With <i>Keep intermediate images</i> ticked the recognition images are added to the ZIP; they show the password legibly, so use it only for troubleshooting and delete the ZIP afterwards.</li>\n</ul>\n<h2>Profiles</h2>\n<ul>\n<li>A profile remembers the settings of the form: vendor, factory user, new administrator, user slot,\n    defaults for new rows and the DHCP settings. Passwords and the server list are never included.</li>\n<li>Profiles are stored in <code>bmc-profile.json</code> next to the tool; at start-up the last used\n    profile and the last chosen language are loaded.</li>\n</ul>\n\n<h2>Existing servers</h2>\n<p>For BMCs that are already configured. Enter address, port (default 443), user and password per row, then <b>Test connection</b>: the tool checks read-only the port, encryption, vendor, login, model, firmware and administrator rights. Each server gets exactly one login attempt so a wrong password cannot lock an account. <b>Use in New hardware, UEFI, Services</b> copies the successful servers into the server list, where you set network, UEFI and services. “New hardware”, “UEFI settings” and “Services” know one user for all servers; use different users in a second pass. This tab stores nothing.</p>\n<h2>UEFI settings</h2>\n<ul>\n<li>UEFI attributes differ per model. The tool therefore reads the attributes that actually exist from\n    a <b>reference device</b> instead of guessing. Reading changes nothing.</li>\n<li><b>Change:</b> fill in “New value” in the rows you want; the search narrows the list. Empty fields\n    stay unchanged. Grey rows (passwords, TPM, erase functions) are locked.</li>\n<li><b>Apply:</b> “Set on all servers in the list” uses the server list from “New hardware”; green rows are\n    addressed at their new IP. Each device only gets attributes it actually has. Values that are\n    already correct are skipped.</li>\n<li><b>Restart:</b> UEFI values only take effect after a restart. With “Then hard restart” ticked, a\n    running server is hard restarted (like pressing reset) and a powered-off one is switched on. Use\n    only for servers without a running operating system.</li>\n<li><b>UEFI templates</b> remember the vendor and the “New value” fields and are stored separately in\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services: NTP, syslog, LDAP, certificate</h2>\n<p>“Services” sets up shared management services on every server in the list. Only ticked sections are\napplied; green (finished) servers are reached at their new address. Login uses the factory user and the\nfactory administrator stays in place. The dry run is the default and only shows what would be sent;\npasswords and the certificate content do not appear in the log.</p>\n<ul>\n<li><b>NTP:</b> one or two time servers. The time zone is set on Dell only; on HPE, Supermicro and\n    Lenovo please choose it in the web interface.</li>\n<li><b>Syslog:</b> Dell and HPE only. There is no uniform way on Supermicro and Lenovo, so the section\n    is skipped there.</li>\n<li><b>LDAP / Active Directory:</b> server, base DN, an optional bind account, user and group attribute.\n    Under “Groups → role” LDAP groups are mapped to the roles Administrator, Operator or ReadOnly. Works\n    on all four vendors through the standard Redfish path.</li>\n<li><b>Hardening:</b> switches off IPMI over LAN, SSDP and optionally SNMP and sets account lockout and session timeout via standard Redfish. Whatever a BMC does not know is skipped. Without IPMI the text console (SOL) on Supermicro no longer works.</li>\n<li><b>HTTPS certificate:</b> imports a CA-signed PEM certificate. This is experimental and\n    vendor-specific. On HPE the matching key must come from a CSR generated on the iLO, otherwise the\n    import fails. The BMC may restart during the import.</li>\n</ul>\n<p>For each service a vendor that does not know it is skipped, not guessed. iLO 3/4 (via RIBCL) are not\nhandled here. The procedures have so far only been tested against simulated counterparts; always\nconfigure a single device first before a large run.</p>\n<h2>UEFI console</h2>\n<p>Shows a server's UEFI/BIOS through the BMC. Three ways: <b>Picture</b> (embedded HTML5 console of the BMC, mouse and keyboard like the original, automatic login), <b>Text</b> (serial console via IPMI-SOL or SSH, runs on Linux, needs <code>pyte</code>, <code>paramiko</code> and <code>pyghmi</code>) and <b>default browser</b>. \"Boot into UEFI setup\" schedules the next boot into setup via Redfish and hard-restarts the server. This tab stores nothing. Old BMCs with TLS 1.0/1.1 only work via the text console. At the top left of the window, the <b>monitor</b> shows subtle noise while nothing is connected; every eight seconds the logo with the sphere builds up in it and fades away again; with the check mark it briefly glows green. Once connected, the console appears there as a thumbnail; a click on it opens the console full size. The switch below the monitor picks the way (HTML5, Text or Browser). While the web view is hidden, the monitor keeps the last picture as a still frame. The <b>Full screen</b> button makes the console fill the whole screen; the text console enlarges its font to match. Exit with “Exit full screen” in the bar at the top, because Esc and F11 belong to the server.</p>\n<h2>Test lab</h2>\n<p>Virtual Dell/HPE/Lenovo/Supermicro servers for practising without hardware. Each row of the cluster is one server with its own firmware generation, factory login, model/serial number and, for Dell, optionally an occupied user slot. <b>Save/load scenario</b> restores the same setup (same serial number = same MAC = same DHCP address); examples are in <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> no root, this PC only. Addresses as <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Config room:</b> a virtual staging switch <code>bmclab0</code> to which this PC is attached with a static address. The servers get their address from the DHCP tab (card bmclab0) or have a static factory IP, e.g. Dell 192.168.0.120 - two of them collide like real ones. “Pull/plug cable” connects them one at a time.</li>\n<li><b>Home/router:</b> the servers hang on the wired network card, get their address from the router and appear there as devices of their own; moving to a static address in the LAN really works. Wi-Fi does not work.</li>\n</ul>\n<p>Config room and router need root once at start (pkexec); on stop the addresses are released and all lab network devices are removed. There the servers answer on 443/22/623, i.e. without <code>:port</code>.</p>\n<h2>Vendors compared</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Factory user</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Factory password</b></td><td>calvin or individual (service tag sheet)</td><td>individual,\n    tag on the device</td><td>individual on the sticker, old boards ADMIN</td><td>individual, tag on\n    the device</td></tr>\n<tr><td><b>New user</b></td><td>into the user slot, only if free</td><td>created</td><td>created</td>\n    <td>created</td></tr>\n<tr><td><b>Address change</b></td><td>immediate</td><td>after iLO restart (triggered by the tool)</td>\n    <td>immediate</td><td>immediate</td></tr>\n<tr><td><b>Until reachable</b></td><td>seconds</td><td>1 to 3 minutes</td><td>seconds</td>\n    <td>seconds</td></tr>\n</table>\n<p>If “User” in the current login stays empty, the vendor's factory user is used, so mixed lists work.\n“Detect automatically” determines the vendor per device; a fixed choice applies to all rows.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User slot:</b> default 3 (slot 2 is root). If another user occupies the slot, the tool stops for\n    this device and changes nothing.</li>\n<li><b>Hostname:</b> the iDRAC DNS name is set, not the operating system's.</li>\n<li><b>As delivered:</b> DHCP or static 192.168.0.120, depending on the order. With a static address the\n    iDRAC does not appear in the DHCP list; several such devices on one switch collide, so connect\n    them one at a time.</li>\n<li><b>Generations:</b> iDRAC9 (14th to 16th generation) and iDRAC7/8 (12th and 13th generation). iDRAC7/8\n    need at least firmware 2.50.50.50; the tool detects older firmware, reports it and changes nothing.\n    Test iDRAC10 on one device first. iDRAC6 is not supported.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row in the “Password” column.</li>\n<li><b>Identification:</b> in the DHCP list an iLO usually reports as “ILO” plus serial number.</li>\n<li><b>Restart:</b> hostname and address only become active after the iLO restart; the server itself\n    keeps running.</li>\n<li><b>Port:</b> the dedicated iLO port is configured. New passwords need at least 8 characters.</li>\n<li><b>Generations:</b> iLO 5 and 6 (Gen10 to Gen11) via Redfish. iLO 7 is untested. For iLO 3 and 4 see\n    the next section.</li>\n</ul>\n\n<h2>HPE iLO 3 and iLO 4 (older servers)</h2>\n<ul>\n<li><b>Devices:</b> iLO 3 is found in G7 servers, iLO 4 in Gen8 and Gen9. The tool detects them by\n    itself; if you pick the vendor by hand, choose “HPE iLO 3/4”.</li>\n<li><b>A different route:</b> iLO 3 has no Redfish. For iLO 3 and iLO 4 the tool therefore uses the RIBCL\n    XML interface, which both ship with. In a dry run the XML commands appear in the log, with\n    passwords replaced by ***.</li>\n<li><b>Restart:</b> after the address and hostname are set, the iLO restarts by itself; the server keeps\n    running. It takes 1 to 3 minutes until it answers on the new address.</li>\n<li><b>Old encryption:</b> iLO 3 only speaks TLS 1.0/1.1. The tool switches to the old encryption per\n    device by itself and writes a note to the log. Such devices belong in an isolated management\n    network.</li>\n<li><b>Limits:</b> hostname at most 49 characters. UEFI settings (“UEFI settings”) do not work with iLO 3. iLO 2\n    and older are not supported.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Password per device:</b> on the sticker; enter it per row.</li>\n<li><b>Access types:</b> the tool also grants web, IPMI and console. If the log says “created without\n    access types”, check the web login once.</li>\n<li><b>Licence:</b> on older boards some Redfish functions may need a licence.</li>\n<li><b>Nutanix NX</b> is detected as Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Password per device:</b> on the tag; enter it per row.</li>\n<li><b>Factory user:</b> USERID in capitals.</li>\n<li><b>Port:</b> the “NIC” interface, i.e. the dedicated XCC port, is configured.</li>\n<li><b>Generations:</b> XCC2/XCC3. Test XCC1 on one device first.</li>\n</ul>\n\n<h2>Nutanix nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>The tool only sets the BMC address and BMC user, not the hypervisor or CVM.</li>\n<li>Only change these <b>before</b> creating the cluster. On a running cluster use the Nutanix\n    procedure, because the cluster uses the BMC data itself.</li>\n</ul>\n\n<h2>Troubleshooting</h2>\n<ul>\n<li><b>DHCP does not start:</b> the message gives the reason. Usually the card has a gateway or got its\n    address via DHCP. On Linux, for example:\n    <code>nmcli con add type ethernet ifname &lt;card&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>No devices in the DHCP list:</b> firewall (Linux with ufw: allow UDP 67) or the BMC is not set to DHCP.</li>\n<li><b>HTTP 401:</b> wrong user or password. Clear “User”, check the row's password.</li>\n<li><b>Vendor not recognised:</b> the device answers neither via Redfish nor as an iLO 3/4. iDRAC6, iLO 2\n    and very old firmware are not supported. An iLO 3/4 whose device information has been switched off\n    can still be addressed by choosing “HPE iLO 3/4” by hand.</li>\n<li><b>User refused:</b> usually password rules. The BMC's message appears below the error line.</li>\n<li><b>“new IP is already taken”:</b> a device already answers on that address. Choose another one.</li>\n<li><b>List from Excel or another tool:</b> without the “fertig” column all rows are open. Devices\n    already reconfigured cannot be reached at their old address; remove or adjust those rows.</li>\n</ul>\n\n<h2>Data and limits</h2>\n<ul>\n<li>The tool saves nothing on its own. “Save list” asks whether passwords go into the file (then in plain\n    text). Delete such a file after the rollout.</li>\n<li>The procedures for HPE (including iLO 3/4), older iDRAC7/8, Supermicro, Lenovo and UEFI have so far only been tested against simulated counterparts. Always configure a single device first before a large\n    run.</li>\n<li>“Save log” writes the log of the last run to a text file, e.g. for documentation. It contains no\n    passwords.</li>\n<li>The language can be changed at the bottom left, below the menu while no run is active and the DHCP server is\n    stopped.</li>\n</ul>\n\n",
+"fr": "<h2>BMC-Steward</h2>\n<p>BMC-Steward sert les serveurs l'un après l'autre : il crée le nouvel administrateur, définit le nom\nd'hôte et passe le BMC sur une adresse fixe. Inutile de saisir tous les serveurs d'un coup, ils peuvent\nêtre ajoutés au fur et à mesure.</p>\n\n<h2>Protection contre les erreurs de manipulation</h2>\n<p>L'outil est conçu pour qu'une fausse manœuvre cause le moins de dégâts possible :</p>\n<ul>\n<li><b>La simulation est activée par défaut.</b> Tant que la case est cochée, rien n'est modifié.</li>\n<li><b>Chaque exécution réelle est d'abord affichée</b> (ancienne IP → nouvelle IP, nom d'hôte).\n    « Annuler » est présélectionné dans toutes les questions : la touche Entrée annule.</li>\n<li><b>Les cas inhabituels exigent de saisir le nombre de serveurs</b>, p. ex. lorsqu'un appareil n'est\n    pas dans le réseau de staging de l'ordinateur, et toujours pour les modifications UEFI.</li>\n<li><b>Les adresses sont vérifiées :</b> IP ou noms d'hôte en double, passerelle hors du réseau, adresse\n    de cet ordinateur, adresse de la plage DHCP active et IP actuelle d'un autre appareil sont\n    refusées. Avant la reconfiguration, l'outil vérifie aussi si un appareil répond déjà sur la\n    nouvelle IP et, le cas échéant, ne modifie pas l'appareil.</li>\n<li><b>Dell :</b> un emplacement utilisateur occupé n'est jamais écrasé.</li>\n<li><b>Le nouveau mot de passe est saisi deux fois.</b> Si les saisies diffèrent, rien ne démarre.</li>\n<li><b>Le changement d'adresse est vérifié :</b> si seule la connexion est coupée pendant le\n    changement, un appareil n'est considéré comme terminé que lorsqu'il ne répond vraiment plus à\n    l'ancienne adresse.</li>\n<li><b>Serveur DHCP :</b> ne démarre pas sur une carte ayant une adresse publique, portant la route par\n    défaut (Internet/réseau d'entreprise), ayant obtenu son adresse par DHCP, ou si un serveur DHCP y\n    répond déjà. Il s'arrête de lui-même si la carte devient plus tard la route par défaut. Les\n    appareils ayant reçu leur adresse d'un autre serveur ne sont jamais refusés. Un serveur DHCP resté\n    actif après un plantage est arrêté au démarrage suivant.</li>\n<li><b>UEFI :</b> les attributs de mot de passe, TPM et effacement sont verrouillés. Les valeurs qui ne\n    correspondent pas au type ne sont pas appliquées. Le redémarrage n'est pas présélectionné.</li>\n<li><b>Les mots de passe</b> restent en mémoire et ne sont écrits dans un fichier que sur demande\n    explicite.</li>\n<li><b>Auto-protection :</b> les modifications UEFI, le firmware et « Démarrer dans le setup UEFI » vérifient d'abord l'identité du serveur. La machine qui exécute BMC-Steward et tous les serveurs de la liste de protection (bouton « Auto-protection » en bas à gauche) ne sont jamais touchés. Si BMC-Steward tourne dans une VM (p. ex. VMware), y saisir tous les hôtes sur lesquels la VM peut tourner – la VM ne connaît pas son hôte. Si l'identité est illisible lors d'une exécution réelle, le serveur est ignoré.</li>\n<li><b>Certificats :</b> Au premier contact, l'outil mémorise le certificat de chaque BMC (par appareil, pas par adresse). Si le même appareil en présente un autre plus tard, il est bloqué avant l'envoi de tout mot de passe – protection contre l'écoute sur le réseau. Autoriser les changements voulus sous « Certificats … » en bas à gauche.</li>\n<li><b>Connexion par session :</b> Le mot de passe ne passe qu'une fois par appareil ; à la fin, l'outil se déconnecte. Une connexion refusée n'est jamais répétée.</li>\n<li><b>Sauvegarde et journal d'audit :</b> Avant chaque modification, les principaux réglages de l'appareil sont sauvegardés en JSON, et chaque appel modifiant d'une exécution réelle est journalisé (sans mots de passe). Les deux sous « Sauvegardes/journaux ».</li>\n<li><b>Firmware :</b> Le fichier est lu une seule fois et vérifié par SHA-256 (saisir la valeur du fabricant) ; « Arrêter en cas d'erreur » est présélectionné.</li>\n</ul>\n\n<h2>Déroulement</h2>\n<ol>\n<li><b>Serveur DHCP</b> : la carte réseau reliée au switch de staging séparé doit avoir une\n    adresse fixe sans passerelle. Démarrer DHCP ; les appareils obtiennent une adresse et apparaissent\n    dans la liste, puis « Reprendre dans la liste des serveurs ». Avec la case « Ajouter automatiquement » (cochée par défaut), l'outil\n    inscrit lui-même les nouveaux appareils dans la liste ; décochée, seul le bouton le fait. Sous Linux, dnsmasq est utilisé.</li>\n<li><b>Matériel neuf</b> : saisir nouvelle IP, masque, passerelle et nom d'hôte. Ce qui\n    manque encore est marqué en <b>jaune</b>, ce qui est erroné en <b>rouge</b>, ce qui est terminé en\n    <b>vert</b>. Une ligne au-dessus du bouton Démarrer indique ce qu'il reste à remplir ; l'infobulle de\n    chaque champ donne la raison.</li>\n<li><b>Simulation</b> : le journal montre ce qui serait envoyé.</li>\n<li><b>Exécution réelle</b> : décocher « Simulation ». Le bouton devient rouge et s'intitule « Lancer\n    l'exécution réelle ». Cliquer puis confirmer.</li>\n<li><b>Contrôle</b> : à la fin, l'outil vérifie que chaque nouvelle adresse répond avec le nouvel\n    utilisateur. Cela ne fonctionne que si cet ordinateur atteint le nouveau réseau ; sinon « ABSENT »\n    s'affiche, même si la modification a pu réussir.</li>\n</ol>\n\n<h2>Configurer les serveurs l'un après l'autre</h2>\n<ul>\n<li>On peut configurer un serveur, cliquer sur Démarrer, brancher le suivant et recommencer, autant de\n    fois que nécessaire. Le serveur DHCP continue de tourner.</li>\n<li>Les lignes reconfigurées avec succès passent en <b>vert</b>, restent dans la liste et sont ignorées\n    au démarrage suivant. Celles en échec sont retentées.</li>\n<li>Pour retraiter un appareil vert : sélectionner la ligne, cliquer sur « Traiter à nouveau » et\n    mettre son adresse actuelle dans « IP actuelle ».</li>\n<li>La simulation ne marque jamais rien comme terminé.</li>\n<li>« Enregistrer la liste » écrit aussi la marque verte dans le fichier (colonne « fertig ») ;\n    après « Charger la liste », les lignes sont de nouveau vertes. Un déploiement peut ainsi se\n    poursuivre un autre jour.</li>\n</ul>\n\n<h2>Scanner mobile (mot de passe par caméra)</h2>\n<ul>\n<li>Dans « Matériel neuf », « Scanner mobile … » ouvre une fenêtre. Choisir l'adresse, <b>Démarrer</b>, scanner le code QR avec le téléphone (téléphone et PC sur le même réseau). Confirmer l'avertissement de certificat une fois et autoriser la caméra.</li>\n<li>Sur le téléphone, basculer entre <b>Code-barres</b> et <b>Texte (OCR)</b>, toucher <b>Capturer</b>, vérifier la valeur reconnue et l'envoyer. Elle arrive dans le champ « Mot de passe » de la ligne sélectionnée (sinon la première sans mot de passe) ; la sélection avance ensuite d'une ligne.</li>\n<li>Aucune photo n'est enregistrée sur le téléphone : la page n'affiche que l'image de la caméra, le PC lit le texte et supprime l'image aussitôt. Le lien est secret et valable seulement tant que le scanner tourne.</li>\n<li>Nécessaire sur le PC : <code>openssl</code>, <code>zbar</code> pour les codes-barres, <code>tesseract</code> pour le texte, <code>qrencode</code> pour le code QR. CachyOS : <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Pare-feu actif : ouvrir le port (ufw : <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>La reconnaissance de texte confond souvent 0/O et 1/l/I. Vérifier la valeur sur le téléphone avant l'envoi ; elle peut y être corrigée.</li>\n<li><b>Mode de connexion :</b> Dans la fenêtre, tu choisis comment le téléphone atteint le PC. <i>Réseau existant</i> : les deux sur le même Wi-Fi/LAN. <i>Partage USB</i> : brancher le téléphone par câble et y activer « Partage de connexion USB » ; l'adresse apparaît alors dans la liste (↻ relit). <i>Point d'accès Wi-Fi propre</i> (Linux avec NetworkManager uniquement) : le PC ouvre un Wi-Fi avec un nom et un mot de passe aléatoires, deux codes QR guident la connexion. L'adaptateur Wi-Fi est occupé et une connexion Wi-Fi existante du PC est coupée. À l'arrêt, le point d'accès et son mot de passe sont supprimés.</li>\n<li><b>Export du journal :</b> faire quelques prises de vue au téléphone, puis cliquer sur <b>Exporter le journal …</b> dans la fenêtre du scanner. Le ZIP contient <code>log.txt</code> (version, système, tesseract/zbar, informations du téléphone, chaque étape de reconnaissance). <b>Les mots de passe ne figurent jamais dans le journal</b>, seulement longueur et forme (A majuscule, a minuscule, 9 chiffre, # autre). Avec la case <i>Conserver les images intermédiaires</i>, les images de reconnaissance sont ajoutées au ZIP ; elles montrent le mot de passe lisiblement, à n'utiliser que pour le dépannage, puis supprimer le ZIP.</li>\n</ul>\n<h2>Profils</h2>\n<ul>\n<li>Un profil mémorise les réglages du formulaire : constructeur, utilisateur d'usine, nouvel\n    administrateur, emplacement utilisateur, valeurs par défaut et réglages DHCP. Les mots de passe et\n    la liste des serveurs n'en font jamais partie.</li>\n<li>Les profils sont dans <code>bmc-profile.json</code> à côté de l'outil ; au démarrage, le dernier\n    profil utilisé et la dernière langue choisie sont chargés.</li>\n</ul>\n\n<h2>Serveurs existants</h2>\n<p>Pour les BMC déjà configurés. Saisissez adresse, port (443 par défaut), utilisateur et mot de passe par ligne, puis <b>Tester la connexion</b> : l'outil vérifie en lecture seule le port, le chiffrement, le fabricant, la connexion, le modèle, le firmware et les droits d'administrateur. Chaque serveur n'a qu'une seule tentative de connexion pour qu'un mauvais mot de passe ne verrouille pas un compte. <b>Reprendre dans Matériel neuf, UEFI, Services</b> copie les serveurs réussis dans la liste, où vous réglez réseau, UEFI et services. « Matériel neuf », « Réglages UEFI » et « Services » ne connaissent qu'un utilisateur pour tous les serveurs ; les autres en deuxième passe. Cet onglet n'enregistre rien.</p>\n<h2>Réglages UEFI</h2>\n<ul>\n<li>Les attributs UEFI diffèrent selon le modèle. L'outil lit donc ceux qui existent réellement sur un\n    <b>appareil de référence</b> au lieu de les deviner. La lecture ne modifie rien.</li>\n<li><b>Modifier :</b> remplir « Nouvelle valeur » dans les lignes voulues ; la recherche filtre la\n    liste. Les champs vides restent inchangés. Les lignes grises (mots de passe, TPM, effacement) sont\n    verrouillées.</li>\n<li><b>Appliquer :</b> « Appliquer à tous les serveurs de la liste » utilise la liste de « Matériel neuf » ;\n    les lignes vertes sont jointes à leur nouvelle IP. Chaque appareil ne reçoit que les attributs\n    qu'il possède. Les valeurs déjà correctes sont ignorées.</li>\n<li><b>Redémarrage :</b> les valeurs UEFI ne prennent effet qu'après un redémarrage. Avec « Puis\n    redémarrage forcé », un serveur en marche est redémarré de force (comme avec Reset) et un serveur\n    éteint est allumé. À réserver aux serveurs sans système d'exploitation en cours d'exécution.</li>\n<li><b>Les modèles UEFI</b> mémorisent le constructeur et les champs « Nouvelle valeur » et sont\n    enregistrés à part dans <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Services : NTP, syslog, LDAP, certificat</h2>\n<p>« Services » configure des services de gestion communs sur tous les serveurs de la liste. Seules les\nsections cochées sont appliquées ; les serveurs verts (terminés) sont joints à leur nouvelle adresse.\nLa connexion utilise l'utilisateur d'usine et l'administrateur d'usine reste en place. La simulation\nest activée par défaut et montre seulement ce qui serait envoyé ; les mots de passe et le contenu du\ncertificat n'apparaissent pas dans le journal.</p>\n<ul>\n<li><b>NTP :</b> un ou deux serveurs de temps. Le fuseau horaire n'est défini que sur Dell ; sur HPE,\n    Supermicro et Lenovo, le choisir dans l'interface.</li>\n<li><b>Syslog :</b> Dell et HPE uniquement. Il n'existe pas de voie uniforme sur Supermicro et Lenovo,\n    la section y est ignorée.</li>\n<li><b>LDAP / Active Directory :</b> serveur, base DN, un compte de bind facultatif, attribut\n    utilisateur et de groupe. Sous « Groupes → rôle », les groupes LDAP sont associés aux rôles\n    Administrator, Operator ou ReadOnly. Fonctionne sur les quatre constructeurs via la voie Redfish\n    standard.</li>\n<li><b>Durcissement :</b> désactive IPMI sur LAN, SSDP et sur demande SNMP, et règle le verrouillage de compte et le délai de session via Redfish standard. Ce qu'un BMC ne connaît pas est ignoré. Sans IPMI, la console texte (SOL) sur Supermicro ne fonctionne plus.</li>\n<li><b>Certificat HTTPS :</b> importe un certificat PEM signé par une CA. C'est expérimental et propre\n    au constructeur. Sur HPE, la clé correspondante doit provenir d'une CSR générée sur l'iLO, sinon\n    l'import échoue. Le BMC peut redémarrer pendant l'import.</li>\n</ul>\n<p>Pour chaque service, un constructeur qui ne le connaît pas est ignoré, rien n'est deviné. iLO 3/4\n(via RIBCL) ne sont pas gérés ici. Les procédures n'ont jusqu'ici été testées que contre des\néquipements simulés ; toujours configurer un seul appareil d'abord avant une grande série.</p>\n<h2>Console UEFI</h2>\n<p>Affiche l'UEFI/BIOS d'un serveur via le BMC. Trois voies : <b>Image</b> (console HTML5 intégrée du BMC, souris et clavier comme sur l'original, connexion automatique), <b>Texte</b> (console série via IPMI-SOL ou SSH, fonctionne sous Linux, nécessite <code>pyte</code>, <code>paramiko</code> et <code>pyghmi</code>) et <b>navigateur par défaut</b>. « Démarrer dans la configuration UEFI » prépare via Redfish le prochain démarrage dans la configuration et redémarre le serveur de force. Cet onglet n'enregistre rien. Les anciens BMC avec TLS 1.0/1.1 seulement ne fonctionnent qu'en console texte. En haut à gauche de la fenêtre, le <b>moniteur</b> affiche un bruit discret tant que rien n'est connecté ; toutes les huit secondes, le logo à la sphère s'y construit puis s'efface ; avec la coche, il brille brièvement en vert. Une fois connecté, la console y apparaît en miniature ; un clic l'ouvre en taille réelle. Le commutateur sous le moniteur choisit le mode (HTML5, Texte ou Browser). Tant que la vue web est masquée, le moniteur garde la dernière image figée. Le bouton <b>Plein écran</b> fait remplir tout l'écran par la console ; la console texte agrandit sa police en conséquence. On quitte avec « Quitter le plein écran » dans la barre du haut, car Échap et F11 appartiennent au serveur.</p>\n<h2>Laboratoire de test</h2>\n<p>Serveurs virtuels Dell/HPE/Lenovo/Supermicro pour s'entraîner sans matériel. Chaque ligne du cluster est un serveur avec sa propre génération de firmware, son identifiant d'usine, son modèle/numéro de série et, pour Dell, éventuellement un slot utilisateur occupé. <b>Enregistrer/charger un scénario</b> restaure le même montage (même numéro de série = même MAC = même adresse DHCP) ; des exemples se trouvent dans <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback :</b> sans root, uniquement ce PC. Adresses sous la forme <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Salle de configuration :</b> un switch de staging virtuel <code>bmclab0</code> auquel ce PC est relié avec une adresse fixe. Les serveurs obtiennent leur adresse via l'onglet DHCP (carte bmclab0) ou ont une IP d'usine fixe, p. ex. Dell 192.168.0.120 - deux d'entre eux entrent en conflit comme en vrai. « Débrancher/brancher le câble » les connecte l'un après l'autre.</li>\n<li><b>Domicile/routeur :</b> les serveurs sont reliés à la carte réseau filaire, obtiennent leur adresse du routeur et y apparaissent comme appareils à part entière ; le passage à une adresse fixe du LAN fonctionne réellement. Le Wi-Fi ne fonctionne pas.</li>\n</ul>\n<p>Salle de configuration et routeur nécessitent une fois les droits root au démarrage (pkexec) ; à l'arrêt, les adresses sont libérées et tous les périphériques réseau du laboratoire supprimés. Les serveurs y répondent sur 443/22/623, donc sans <code>:port</code>.</p>\n<h2>Comparaison des constructeurs</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Utilisateur d'usine</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Mot de passe d'usine</b></td><td>calvin ou individuel (fiche Service Tag)</td><td>individuel,\n    étiquette sur l'appareil</td><td>individuel sur l'autocollant, anciennes cartes ADMIN</td>\n    <td>individuel, étiquette sur l'appareil</td></tr>\n<tr><td><b>Nouvel utilisateur</b></td><td>dans l'emplacement, seulement s'il est libre</td><td>créé</td>\n    <td>créé</td><td>créé</td></tr>\n<tr><td><b>Changement d'adresse</b></td><td>immédiat</td><td>après redémarrage de l'iLO (lancé par\n    l'outil)</td><td>immédiat</td><td>immédiat</td></tr>\n<tr><td><b>Délai d'accès</b></td><td>secondes</td><td>1 à 3 minutes</td><td>secondes</td>\n    <td>secondes</td></tr>\n</table>\n<p>Si « Utilisateur » reste vide dans la connexion actuelle, l'utilisateur d'usine du constructeur est\nutilisé ; les listes mixtes fonctionnent donc. « Détecter automatiquement » identifie le constructeur de\nchaque appareil ; un choix fixe vaut pour toutes les lignes.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>Emplacement utilisateur :</b> 3 par défaut (le 2 est root). S'il est occupé par un autre\n    utilisateur, l'outil s'arrête pour cet appareil et ne modifie rien.</li>\n<li><b>Nom d'hôte :</b> c'est le nom DNS de l'iDRAC qui est défini, pas celui du système.</li>\n<li><b>À la livraison :</b> DHCP ou adresse fixe 192.168.0.120 selon la commande. Avec une adresse fixe,\n    l'iDRAC n'apparaît pas dans la liste DHCP ; plusieurs appareils de ce type sur le même switch\n    entrent en conflit, les brancher un par un.</li>\n<li><b>Générations :</b> iDRAC9 (14e à 16e génération) et iDRAC7/8 (12e et 13e génération). iDRAC7/8\n    exigent au moins le firmware 2.50.50.50 ; l'outil détecte un firmware plus ancien, le signale et ne\n    modifie rien. Tester d'abord iDRAC10 sur un seul appareil. iDRAC6 n'est pas pris en charge.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne dans « Mot de\n    passe ».</li>\n<li><b>Identification :</b> dans la liste DHCP, un iLO s'annonce en général « ILO » plus numéro de\n    série.</li>\n<li><b>Redémarrage :</b> nom d'hôte et adresse ne sont actifs qu'après le redémarrage de l'iLO ; le\n    serveur lui-même continue de tourner.</li>\n<li><b>Port :</b> c'est le port iLO dédié qui est configuré. Les nouveaux mots de passe exigent au moins\n    8 caractères.</li>\n<li><b>Générations :</b> iLO 5 et 6 (Gen10 à Gen11) via Redfish. iLO 7 n'est pas testé. Pour iLO 3 et 4,\n    voir la section suivante.</li>\n</ul>\n\n<h2>HPE iLO 3 et iLO 4 (serveurs plus anciens)</h2>\n<ul>\n<li><b>Appareils :</b> iLO 3 équipe les serveurs G7, iLO 4 les Gen8 et Gen9. L'outil les reconnaît de\n    lui-même ; si le constructeur est choisi à la main, prendre « HPE iLO 3/4 ».</li>\n<li><b>Autre voie :</b> iLO 3 ne connaît pas Redfish. Pour iLO 3 et iLO 4, l'outil utilise donc\n    l'interface XML RIBCL, présente d'origine sur les deux. En simulation, les commandes XML figurent\n    dans le journal, les mots de passe y sont remplacés par ***.</li>\n<li><b>Redémarrage :</b> une fois l'adresse et le nom d'hôte définis, l'iLO redémarre de lui-même ; le\n    serveur continue de tourner. Il faut 1 à 3 minutes avant qu'il réponde à la nouvelle adresse.</li>\n<li><b>Chiffrement ancien :</b> iLO 3 ne gère que TLS 1.0/1.1. L'outil bascule de lui-même, appareil par\n    appareil, sur l'ancien chiffrement et l'indique dans le journal. Ces appareils ont leur place dans\n    un réseau d'administration isolé.</li>\n<li><b>Limites :</b> nom d'hôte de 49 caractères au plus. Les réglages UEFI (« Réglages UEFI ») ne fonctionnent pas\n    avec iLO 3. iLO 2 et versions antérieures ne sont pas pris en charge.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'autocollant ; le saisir ligne par ligne.</li>\n<li><b>Types d'accès :</b> l'outil accorde aussi web, IPMI et console. Si le journal indique « créé sans\n    types d'accès », vérifier une fois la connexion web.</li>\n<li><b>Licence :</b> sur les cartes plus anciennes, certaines fonctions Redfish peuvent exiger une\n    licence.</li>\n<li><b>Nutanix NX</b> est reconnu comme Supermicro.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Mot de passe par appareil :</b> sur l'étiquette ; le saisir ligne par ligne.</li>\n<li><b>Utilisateur d'usine :</b> USERID en majuscules.</li>\n<li><b>Port :</b> c'est l'interface « NIC », le port XCC dédié, qui est configurée.</li>\n<li><b>Générations :</b> XCC2/XCC3. Tester d'abord XCC1 sur un seul appareil.</li>\n</ul>\n\n<h2>Nœuds Nutanix (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>L'outil ne définit que l'adresse et l'utilisateur du BMC, ni l'hyperviseur ni la CVM.</li>\n<li>Ne faire ce changement qu'<b>avant</b> la création du cluster. Sur un cluster en service, utiliser la\n    procédure Nutanix, car le cluster utilise lui-même les données du BMC.</li>\n</ul>\n\n<h2>En cas de problème</h2>\n<ul>\n<li><b>DHCP ne démarre pas :</b> le message indique la raison. Le plus souvent, la carte a une\n    passerelle ou a obtenu son adresse par DHCP. Sous Linux par exemple :\n    <code>nmcli con add type ethernet ifname &lt;carte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Aucun appareil dans la liste DHCP :</b> pare-feu (Linux avec ufw : autoriser UDP 67) ou le BMC n'est pas en DHCP.</li>\n<li><b>HTTP 401 :</b> utilisateur ou mot de passe erroné. Vider « Utilisateur », vérifier le mot de\n    passe de la ligne.</li>\n<li><b>Constructeur non reconnu :</b> l'appareil ne répond ni en Redfish ni comme iLO 3/4. iDRAC6, iLO 2\n    et les firmwares très anciens ne sont pas pris en charge. Un iLO 3/4 dont les informations\n    d'appareil ont été désactivées reste accessible en choisissant « HPE iLO 3/4 » à la main.</li>\n<li><b>Utilisateur refusé :</b> le plus souvent les règles de mot de passe. Le message du BMC figure\n    sous la ligne d'erreur.</li>\n<li><b>« la nouvelle IP est déjà prise » :</b> un appareil répond déjà à cette adresse. En choisir une\n    autre.</li>\n<li><b>Liste issue d'Excel ou d'un autre outil :</b> sans colonne « fertig », toutes les lignes sont\n    ouvertes. Les appareils déjà reconfigurés ne sont plus joignables à leur ancienne adresse ; retirer\n    ou corriger ces lignes.</li>\n</ul>\n\n<h2>Données et limites</h2>\n<ul>\n<li>L'outil n'enregistre rien de lui-même. « Enregistrer la liste » demande si les mots de passe doivent\n    figurer dans le fichier (alors en clair). Supprimer un tel fichier après le déploiement.</li>\n<li>Les procédures HPE (iLO 3/4 compris), iDRAC7/8 anciens, Supermicro, Lenovo et UEFI n'ont été testés jusqu'ici que contre des équipements simulés. Toujours configurer d'abord un seul appareil avant\n    une grande série.</li>\n<li>« Enregistrer le journal » écrit le journal de la dernière exécution dans un fichier texte, p. ex.\n    pour la documentation. Il ne contient aucun mot de passe.</li>\n<li>La langue se change en bas à gauche, sous le menu, tant qu'aucune exécution n'est en cours et que le serveur DHCP\n    est arrêté.</li>\n</ul>\n\n",
+"gsw": "<h2>BMC-Steward</h2>\n<p>Grüezi! De BMC-Steward bedient jede Server schön de Reihe naa, und das ganz ohni Trinkgäld: Er leit de neu Administrator aa, setzt de Hostname\nund stellt de BMC uf e feschti Adrässe um. Mer mues nöd alli Server ufs Mal iiträge, sie chönd eis\nnach em andere dezuechoo.</p>\n\n<h2>Schutz gäge Fählbedienig</h2>\n<p>S Tool isch so baut, dass en Fählgriff möglichscht nüt kaputt macht:</p>\n<ul>\n<li><b>De Trocheluuf isch voriigstellt.</b> Solang s Häägli gsetzt isch, wird nüt gänderet.</li>\n<li><b>Jede scharfe Luuf wird vorher zeigt</b> (alti IP → neui IP, Hostname). I allne Abfrage isch\n    „Abbräche“ voruusgwählt, Enter bricht also ab.</li>\n<li><b>Bi ungwöhnliche Fäll mues mer d Aazahl Server iitippe</b>, z. B. wenn es Grät nöd im eigete\n    Staging-Netz liit, und immer bi UEFI-Änderige.</li>\n<li><b>D Adrässe wärded prüeft:</b> doppleti IPs oder Hostnäme, es Gateway usserhalb vom Netz, e\n    Adrässe vo dem Rächner, e Adrässe us em laufende DHCP-Beriich und di aktuell IP vo eme andere Grät\n    wärded abglehnt. Vor em Umstelle prüeft s Tool zuesätzlich, öb under de neue IP scho es Grät\n    antwortet, und laht s Grät dänn wie's isch.</li>\n<li><b>Dell:</b> En bsetzte User-Slot wird nie überschribe.</li>\n<li><b>S neu Passwort wird zweimal iitippt.</b> Stimmed d Iigabe nöd überii, startet kein Luuf.</li>\n<li><b>De Adrässwächsel wird prüeft:</b> Riisst bim Umstelle nur d Verbindig ab, gilt es Grät erscht als\n    fertig, wenn's under de alte Adrässe würkli nüme antwortet.</li>\n<li><b>DHCP-Server:</b> startet nöd uf ere Charte mit öffentlicher Adrässe, mit de Standardroute\n    (Internet/Firmenetz), mit ere per DHCP übercho Adrässe oder wenn det scho en DHCP-Server antwortet.\n    Er stoppt vo sälber, wenn d Charte spöter zur Standardroute wird. Grät, wo ihri Adrässe vo eme\n    andere Server händ, wärded nie abgwise. En DHCP-Server, wo nach eme Absturz no lauft, wird bim\n    nächschte Start beändet.</li>\n<li><b>UEFI:</b> Passwort-, TPM- und Lösch-Attribut sind gsperrt. Wärt, wo nöd zum Typ passed, wärded\n    nöd gsetzt. En Neustart isch nöd voruusgwählt.</li>\n<li><b>Passwörter</b> bliibed im Arbeitsspeicher und landed nur uf usdrückliche Wunsch i ere\n    Datei.</li>\n<li><b>Eigeschutz:</b> UEFI-Änderige, Firmware und „Is UEFI-Setup boote“ prüefed vorher d Identität vom Server. Dä Rächner, wo BMC-Steward druf lauft, und alli Server vo de Schutzlischte (Chnopf „Eigeschutz“ links une) wärded nie aagrüehrt. Lauft BMC-Steward innere VM (z. B. VMware), det alli Hosts iitrage, wo d VM druf laufe chan – d VM kennt ihre Host nöd. Isch d Identität im schaarfe Lauf nöd läsbar, wird dä Server übersprunge.</li>\n<li><b>Zertifikat:</b> Bim erschte Kontakt merkt sich s Tool s Zertifikat vo jedem BMC (je Grät, nöd je Adrässe). Zeigt s gliiche Grät spöter es anders, wird es gsperrt, bevor es Passwort gschickt wird – Schutz gäge Mitläse im Netz. Gwollti Wächsel under „Zertifikat …“ links une freigäh.</li>\n<li><b>Aamäldig per Session:</b> S Passwort gaht je Grät eimal über d Leitig; am Schluss mäldet sich s Tool ab. E abglehnti Aamäldig wird nie widerholt.</li>\n<li><b>Sicherig und Revisionsprotokoll:</b> Vor jeder Änderig wärded di wichtigschte Iistellige vom Grät als JSON gsicheret, jede ändernde Ufruef vomene schaarfe Lauf wird protokolliert (ohni Passwörter). Beides under „Sicherige/Protokoll“.</li>\n<li><b>Firmware:</b> D Datei wird eimal gläse und per SHA-256 prüeft (Sollwärt vom Herställer iitrage); „Bi Fehler aahalte“ isch voriigstellt.</li>\n</ul>\n\n<h2>Ablauf</h2>\n<ol>\n<li><b>DHCP-Server</b>: D Netzwerkcharte am trännte Staging-Switch bruucht e feschti Adrässe\n    ohni Gateway. DHCP starte, d Grät holed sich e Adrässe und tauched i de Lischte uf, vo det „I d\n    Serverlischte übernäh“. Mit em Häägli „Automatisch übernäh“ (voriigstellt) träit s Tool\n    neui Grät vo sälber i d Serverlischte ii; ohni Häägli gaht s nume per Chnopf. Under Linux lauft defür dnsmasq.</li>\n<li><b>Neuware</b>: neui IP, Subnetzmaske, Gateway und Hostname iiträge. Was no fählt, isch\n    <b>gäl</b> markiert, Fählerhafts <b>rot</b>, Fertigs <b>grüen</b>. Über em Start-Chnopf staht i einere\n    Ziile, was vor em Luuf no uuszfülle isch; de Grund zu jedem Fäld staht im Tooltip.</li>\n<li><b>Trocheluuf</b>: zeiget im Protokoll, was gschickt würd.</li>\n<li><b>Scharfe Luuf</b>: Häägli bi „Trocheluuf“ ewägnäh. De Start-Chnopf wird rot und heisst dänn\n    „Scharf starte“. Klicke und d Abfrag bestätige.</li>\n<li><b>Kontrolle</b>: Am Schluss prüeft s Tool, öb jedi neui Adrässe mit em neue Benutzer antwortet. Das\n    gaht nur, wenn dä Rächner s neu Netz erreicht; susch staht det „FÄHLT“, obwohl d Umstellig\n    cha klappt ha.</li>\n</ol>\n\n<h2>Server eis nach em andere konfiguriere</h2>\n<ul>\n<li>Mer cha en Server konfiguriere, Start drücke, de nächscht aaschliesse und wider Start drücke, so\n    oft wie mer will. De DHCP-Server lauft debii wiiter.</li>\n<li>Erfolgriich umgstellti Ziile wärded <b>grüen</b> markiert, bliibed i de Lischte stah und wärded bim\n    nächschte Start überspronge. Fählgschlageni wärded nomal probiert.</li>\n<li>Söll es grüens Grät nomal bearbeitet wärde: Ziile markiere, „Nomal bearbeite“ und d „Aktuelli IP“\n    uf sini jetzigi Adrässe setze.</li>\n<li>De Trocheluuf markiert nie öppis als fertig.</li>\n<li>„Lischte speichere“ schriibt d grüen Markierig mit i d Datei (Spalte „fertig“), nach „Lischte\n    lade“ sind d Ziile wider grüen. So cha mer en Rollout au amene andere Tag wiitermache.</li>\n</ul>\n\n<h2>Handy-Scanner (Passwort per Kamera)</h2>\n<ul>\n<li>In „Neuware“ öffnet „Handy-Scanner …“ es Fänschter. Adrässe wähle, <b>Starte</b>, mit em Handy de QR-Code scanne (Handy und PC im gliiche Netz). D Zertifikatswarnig eimal bestätige und d Kamera erlaube.</li>\n<li>Am Handy zwüsche <b>Barcode</b> und <b>Text (OCR)</b> umschalte, <b>Ufnäh</b> tippe, de erchännt Wärt prüefe und übernäh. Er landet im Fäld „Passwort“ vo de markierte Ziile (susch vo de erschte ohni Passwort), dänn rückt d Markierig e Ziile wiiter.</li>\n<li>S wird keis Foti uf em Handy gspeicheret: D Siite zeigt nume s Kamerabild, de PC liest de Text und verwirft s Bild sofort. De Link isch gheim und gilt nume, solang de Scanner lauft.</li>\n<li>Am PC nötig: <code>openssl</code>, für Barcodes <code>zbar</code>, für Text <code>tesseract</code>, für de QR-Code <code>qrencode</code>. CachyOS: <code>sudo pacman -S zbar tesseract tesseract-data-eng qrencode</code>. Bi aktiver Firewall de Port freigäh (ufw: <code>sudo ufw allow 8443/tcp</code>).</li>\n<li>D Texterkennig verwächslet gärn 0/O und 1/l/I. De Wärt am Handy vor em Übernäh kontrolliere; er cha det korrigiert wärde.</li>\n<li><b>Verbindigswäg:</b> Im Fänschter wählsch, wie s Handy de PC erreicht. <i>Vorhandes Netz</i>: beidi im gliiche WLAN/LAN. <i>USB-Tethering</i>: Handy per Chabel aastecke und det „USB-Tethering“ iischalte, dänn erschiint d Adrässe i de Lischte (↻ liest neu ii). <i>Eigete WLAN-Hotspot</i> (nur Linux mit NetworkManager): De PC macht es WLAN mit zuefällige Name und Passwort uuf, zwei QR-Code füehred dur d Verbindig. De WLAN-Adapter isch debii bsetzt, e bestehendi WLAN-Verbindig vom PC wird trännt. Bim Beände wird de Hotspot samt Passwort wider entfernt.</li>\n<li><b>Log-Export:</b> Am Handy es paar Ufnahme mache, denn im Scanner-Fänschter <b>Log exportiere …</b>. D ZIP-Datei het <code>log.txt</code> (Version, System, Tesseract/zbar, Handy-Aagabe, jede Erkennigsschritt). <b>Passwörter staht nie im Log</b>, nume Läng und Form (A gross, a chli, 9 Ziffer, # Rest). Mit em Haag <i>Zwüschebilder mitspeichere</i> chömed zuesätzlich d Bilder i d ZIP; die zeiged s Passwort läsbar, drum nume zur Fehlersuech bruuche und d ZIP nachhär lösche.</li>\n</ul>\n<h2>Profil</h2>\n<ul>\n<li>Es Profil merkt sich d Iistellige vo de Maske: Hersteller, Werksbenutzer, neue Administrator,\n    User-Slot, Vorgabe für neui Ziile und d DHCP-Iistellige. Passwörter und d Serverlischte ghöred nie\n    dezue.</li>\n<li>D Profil ligged i <code>bmc-profile.json</code> näbem Tool; bim Start wärded s zletscht bruuchte\n    Profil und di zletscht gwählti Sproch glade.</li>\n</ul>\n\n<h2>Bestehendi Server</h2>\n<p>Für BMCs, wo scho konfiguriert sind. Pro Zile Adrässe, Port (Standard 443), Benutzer und Passwort iitrage, dänn <b>Verbindig teste</b>: S Tool prüeft nume läsend Port, Verschlüsselig, Hersteller, Aamäldig, Modell, Firmware und Administratorrächt. Jede Server überchunnt gnau en Aamäldversuech, dass es falsches Passwort kei Konto sperrt. <b>Übernäh i Neuware, UEFI, Dienscht</b> kopiert d erfolgriichä Server i d Serverlischte; det stellsch Netzwärk, UEFI und Dienscht i. D „Neuware“, „UEFI-Iistellige“ und „Dienscht“ kännd eimal Benutzer für alli Server, anderi i emene zweite Durchgang. De Reiter speicheret nüt.</p>\n<h2>UEFI-Iistellige</h2>\n<ul>\n<li>UEFI-Attribut sind je nach Modäll andersch. S Tool liest drum die, wo's würkli git, vo eme\n    <b>Referänzgrät</b>, statt sie z errate. Läse änderet nüt.</li>\n<li><b>Ändere:</b> bi de gwünschte Ziile „Neue Wärt“ uusfülle, d Suechi grenzt d Lischte ii. Lääri\n    Fälder bliibed wie sie sind. Graui Ziile (Passwörter, TPM, Löschfunktione) sind gsperrt.</li>\n<li><b>Aawände:</b> „Uf allne Server vo de Lischte setze“ nimmt d Serverlischte us „Neuware“; grüeni\n    Ziile wärded under ihrer neue IP aagsproche. Jedes Grät überchunnt nur Attribut, wo's au hät.\n    Wärt, wo scho stimmed, wärded überspronge.</li>\n<li><b>Neustart:</b> UEFI-Wärt würked erscht nach eme Neustart. Mit em Häägli „Dänn hert neu starte“\n    wird en laufende Server hert neu gstartet (wie mit de Reset-Taschte), en abgstellte iigschaltet.\n    Nur bi Server ohni laufends Betriebssystem bruuche.</li>\n<li><b>UEFI-Vorlage</b> merked sich Hersteller und „Neue Wärt“-Fälder und ligged trännt i\n    <code>bmc-bios-profile.json</code>.</li>\n</ul>\n\n<h2>Dienscht: NTP, Syslog, LDAP, Zertifikat</h2>\n<p>„Dienscht“ richtet uf allne Server vo de Lischte gmeinsami Verwaltigsdienscht ii. Nur aaghaaggti\nAbschnitt wärded aagwändet; grüeni (fertigi) Server wärded under ihrer neue Adrässe aagsproche.\nAagmäldet wird mit em Wärksbenutzer, de Wärks-Administrator bliibt bestah. De Trocheluuf isch\nvoriigstellt und zeigt nur, was gschickt wür; Passwörter und de Zertifikatsinhalt stönd debii nöd im\nProtokoll.</p>\n<ul>\n<li><b>NTP:</b> ein bis zwee Ziitserver. D Ziitzone wird nur bi Dell gsetzt; bi HPE, Supermicro und\n    Lenovo bitte i de Oberflächi wähle.</li>\n<li><b>Syslog:</b> nur Dell und HPE. Bi Supermicro und Lenovo gits kei einheitliche Wäg, de Abschnitt\n    wird dört übersprunge.</li>\n<li><b>LDAP / Active Directory:</b> Server, Base-DN, optional es Bind-Konto, Benutzer- und\n    Gruppe-Attribut. Under „Gruppe → Rolle“ wärded LDAP-Gruppe de Rolle Administrator, Operator oder\n    ReadOnly zuegordnet. Gaht bi allne vier Hersteller über de Standard-Redfish-Wäg.</li>\n<li><b>Härtig:</b> schaltet IPMI über LAN, SSDP und uf Wunsch SNMP ab und setzt Kontosperri und Session-Zitlimit über Standard-Redfish. Was en BMC nöd kennt, wird übersprunge. Ohni IPMI gaht d Textkonsole (SOL) bi Supermicro nümm.</li>\n<li><b>HTTPS-Zertifikat:</b> importiert es vonere CA signiets PEM-Zertifikat. Das isch experimentell und\n    je Hersteller andersch. Bi HPE mues de passend Schlüssel us ere uf em iLO erzüügte CSR cho, susch\n    schiitert de Import. Bim Import cha de BMC neu starte.</li>\n</ul>\n<p>Für jede Dienscht gilt: En Hersteller, wo ne nöd kännt, wird übersprunge, nöd grate. iLO 3/4 (über\nRIBCL) wärded da nöd bedient. D Abläuf sind bis jetz nur gäge simulierti Gägestelle prüeft; vor eme\ngrosse Luuf immer zerscht eis einzelns Grät.</p>\n<h2>UEFI-Konsole</h2>\n<p>Zeigt s UEFI/BIOS vomene Server über de BMC aa. Drü Wääg: <b>Bild</b> (iibettet HTML5-Konsole vom BMC, Muus und Tastatur wie am Original, Aamäldig automatisch), <b>Text</b> (serielli Konsole über IPMI-SOL oder SSH, lauft under Linux, bruucht <code>pyte</code>, <code>paramiko</code> und <code>pyghmi</code>) und <b>Standardbrowser</b>. „Is UEFI-Setup boote“ merkt per Redfish de Start is Setup vor und startet de Server hert neu. De Reiter speicheret nüt. Alti BMCs mit nume TLS 1.0/1.1 gönd nume über d Textkonsole. Obe links im Fenschter zeigt de <b>Monitor</b> dezents Rusche, solang nüt verbunde isch; drin boued sich alli acht Sekunde s Logo mit de Kugle uf und wider ab; zum Häägli lüüchtets churz grüen. Mit Verbindig erschiint det d Konsole als Miniatur, mit emene Klick druf gaht si i voller Grössi uf. De Schalter under em Monitor wählt de Wäg (HTML5, Text oder Browser). Isch d Web-Aasicht grad verdeckt, blibt im Monitor s letschte Bild als Standbild stah. De Chnopf <b>Vollbild</b> lat d Konsole de ganz Bildschirm fülle; d Textkonsole macht derfür d Schrift grösser. Beände tuet mer mit „Vollbild beände“ i de Leischte obe, wil Esc und F11 em Server ghöred.</p>\n<h2>Testlabor</h2>\n<p>Virtuelli Dell/HPE/Lenovo/Supermicro-Server zum Üebe ohni Hardware. Jedi Ziile vom Cluster isch en Server mit eigener Firmware-Generation, eigenem Wärks-Login, Modell/Seriennummere und bi Dell optional emne bsetzte User-Slot. <b>Szenario spichere/lade</b> stellt dä gliich Ufbau wieder her (gliichi Seriennummere = gliichi MAC = gliichi DHCP-Adrässe); Biispil liged i <code>tools/vbmc/szenarien</code>.</p>\n<ul>\n<li><b>Loopback:</b> ohni Root, nume dä PC. Adrässe als <code>IP:PORT</code> (127.x:8443).</li>\n<li><b>Konfigruum:</b> en virtuelle Staging-Switch <code>bmclab0</code>, wo dä PC mit fixer Adrässe dra hängt. D Server holed sich d Adrässe über de DHCP-Reiter (Charte bmclab0) oder händ e fixi Wärks-IP, z. B. Dell 192.168.0.120 - zwei devo störed sich wie in echt. „Kabel zieh/stecke“ schliesst si eis nach em andere a.</li>\n<li><b>Dihei/Router:</b> d Server hänged a de Kabel-Netzwerkcharte, überchömed d Adrässe vom Router und erschiined det als eigeni Grät; en Umzug uf e fixi Adrässe im LAN lauft würkli dure. WLAN gaht nöd.</li>\n</ul>\n<p>Konfigruum und Router bruuched bim Start eimal Root (pkexec); bim Stoppe wärded d Adrässe freigä und alli Labor-Netzwerkgrät wieder entfernt. D Server antwortet det uf 443/22/623, also ohni <code>:Port</code>.</p>\n<h2>Hersteller im Vergliich</h2>\n<table border=\"1\" cellspacing=\"0\" cellpadding=\"6\">\n<tr><th></th><th>Dell iDRAC</th><th>HPE iLO</th><th>Supermicro</th><th>Lenovo XCC</th></tr>\n<tr><td><b>Werksbenutzer</b></td><td>root</td><td>Administrator</td><td>ADMIN</td><td>USERID</td></tr>\n<tr><td><b>Werkspasswort</b></td><td>calvin oder individuell (Service-Tag-Uuszug)</td><td>individuell,\n    Aahänger am Grät</td><td>individuell uf em Chläber, alti Boards ADMIN</td><td>individuell,\n    Aahänger am Grät</td></tr>\n<tr><td><b>Neue Benutzer</b></td><td>in User-Slot, nur wenn frei</td><td>neu aagleit</td>\n    <td>neu aagleit</td><td>neu aagleit</td></tr>\n<tr><td><b>Adrässwächsel</b></td><td>sofort</td><td>nach em iLO-Neustart (löst s Tool uus)</td>\n    <td>sofort</td><td>sofort</td></tr>\n<tr><td><b>Bis erreichbar</b></td><td>Sekunde</td><td>1 bis 3 Minute</td><td>Sekunde</td>\n    <td>Sekunde</td></tr>\n</table>\n<p>Bliibt „Benutzer“ bim aktuelle Login läär, wird je nach Hersteller de Werksbenutzer gnoh; so gönd au\ngmischti Lischte. „Automatisch erchänne“ findet de Hersteller pro Grät use, e feschti Wahl gilt für alli\nZiile.</p>\n\n<h2>Dell iDRAC</h2>\n<ul>\n<li><b>User-Slot:</b> Standard 3 (Slot 2 isch root). Isch de Slot vo eme andere Benutzer bsetzt, bricht\n    s Tool für das Grät ab und änderet nüt.</li>\n<li><b>Hostname:</b> gsetzt wird de DNS-Name vom iDRAC, nöd dä vom Betriebssystem.</li>\n<li><b>Uuslieferig:</b> je nach Bstellig DHCP oder feschti Adrässe 192.168.0.120. Mit feschter Adrässe\n    chunnt de iDRAC nöd i d DHCP-Lischte; mehreri settigi Grät am gliiche Switch chömed sich i d Quere,\n    dänn eis nach em andere aaschliesse.</li>\n<li><b>Generatione:</b> iDRAC9 (14. bis 16. Generation) und iDRAC7/8 (12. und 13. Generation). iDRAC7/8\n    bruuched mindeschtens Firmware 2.50.50.50; älteri erchännt s Tool, mäldet's und änderet nüt.\n    iDRAC10 zerscht a eim Grät teste. iDRAC6 wird nöd understützt.</li>\n</ul>\n\n<h2>HPE iLO</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile i d Spalte „Passwort“ iiträge.</li>\n<li><b>Zueordnig:</b> i de DHCP-Lischte mäldet sich en iLO meischtens als „ILO“ plus Serienummere.</li>\n<li><b>Neustart:</b> Hostname und Adrässe wärded erscht nach em iLO-Neustart aktiv; de Server sälber\n    lauft wiiter.</li>\n<li><b>Port:</b> konfiguriert wird de dediziert iLO-Port. Neui Passwörter bruuched mindeschtens 8\n    Zeiche.</li>\n<li><b>Generatione:</b> iLO 5 und 6 (Gen10 bis Gen11) über Redfish. iLO 7 isch nöd prüeft. Für iLO 3 und\n    4 lueg im nächschte Abschnitt.</li>\n</ul>\n\n<h2>HPE iLO 3 und iLO 4 (di ältere Semeschter)</h2>\n<ul>\n<li><b>Grät:</b> iLO 3 steckt i G7-Server, iLO 4 i Gen8 und Gen9. S Tool erchännt si vo sälber; wär de\n    Hersteller fescht wählt, nimmt „HPE iLO 3/4“.</li>\n<li><b>En andere Wäg:</b> iLO 3 kännt kei Redfish. S Tool bruucht drum für iLO 3 und iLO 4 d\n    XML-Schnittstell RIBCL, wo beidi ab Wärk debii händ. Im Trocheluuf stönd d XML-Befähl im Protokoll,\n    Passwörter sind dört dur *** ersetzt.</li>\n<li><b>Neustart:</b> Nach em Setze vo Adrässe und Hostname startet s iLO vo sälber neu; de Server lauft\n    wiiter. Bis es under de neue Adrässe antwortet, gaht's 1 bis 3 Minute.</li>\n<li><b>Alti Verschlüsselig:</b> iLO 3 cha nume TLS 1.0/1.1. S Tool schaltet defür pro Grät vo sälber uf\n    di alt Verschlüsselig um und schriibt en Hiiwiis is Protokoll. Söttigi Grät ghöred in es\n    abgschottets Verwaltigsnetz.</li>\n<li><b>Gränze:</b> Hostname höchschtens 49 Zeiche. UEFI-Iistellige („UEFI-Iistellige“) gönd bi iLO 3 nöd. iLO 2\n    und älter wärded nöd understützt.</li>\n</ul>\n\n<h2>Supermicro</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Chläber, pro Ziile iiträge.</li>\n<li><b>Zuegriffsarte:</b> s Tool git Web, IPMI und Konsole mit. Staht im Protokoll „ohni Zuegriffsarte\n    aagleit“, d Web-Aamäldig eimal prüefe.</li>\n<li><b>Lizänz:</b> bi ältere Boards chönd Redfish-Funktione e Lizänz bruuche.</li>\n<li><b>Nutanix NX</b> wird als Supermicro erchännt.</li>\n</ul>\n\n<h2>Lenovo XCC</h2>\n<ul>\n<li><b>Passwort pro Grät:</b> staht uf em Aahänger, pro Ziile iiträge.</li>\n<li><b>Werksbenutzer:</b> USERID i Grossbuechstabe.</li>\n<li><b>Port:</b> konfiguriert wird d Schnittstell „NIC“, de dediziert XCC-Port.</li>\n<li><b>Generatione:</b> XCC2/XCC3. XCC1 zerscht a eim Grät teste.</li>\n</ul>\n\n<h2>Nutanix-Nodes (Dell XC, HPE DX, NX)</h2>\n<ul>\n<li>S Tool setzt nur BMC-Adrässe und BMC-Benutzer, nöd Hypervisor oder CVM.</li>\n<li>Nur <b>vor</b> em Erstelle vom Cluster so umstelle. Bi eme laufende Cluster s Nutanix-Verfahre\n    bruuche, will de Cluster d BMC-Date sälber bruucht.</li>\n</ul>\n\n<h2>Wenn öppis nöd klappt</h2>\n<ul>\n<li><b>DHCP startet nöd:</b> D Mäldig seit de Grund. Meischtens hät d Charte es Gateway oder ihri\n    Adrässe per DHCP. Under Linux z. B.:\n    <code>nmcli con add type ethernet ifname &lt;charte&gt; con-name staging ipv4.method manual\n    ipv4.addresses 192.168.0.1/24</code></li>\n<li><b>Kei Grät i de DHCP-Lischte:</b> Firewall (Linux mit ufw: UDP 67 freigäh) oder de BMC staht nöd uf DHCP.</li>\n<li><b>HTTP 401:</b> Benutzer oder Passwort falsch. Fäld „Benutzer“ lääre, Passwort vo de Ziile\n    prüefe.</li>\n<li><b>Hersteller nöd erchännt:</b> S Grät antwortet weder per Redfish no als iLO 3/4. iDRAC6, iLO 2 und\n    uralti Firmware wärded nöd understützt. Es iLO 3/4, wo d Grätuuskunft abgschaltet isch, laat sich\n    über di feschti Wahl „HPE iLO 3/4“ glich aaspräche.</li>\n<li><b>Benutzer abglehnt:</b> meischtens Passwortregle. D Mäldig vom BMC staht under de\n    Fählerziile.</li>\n<li><b>„neui IP isch scho vergäh“:</b> Under dere Adrässe antwortet scho es Grät. E anderi wähle.</li>\n<li><b>Lischte us em Excel oder eme andere Tool:</b> Ohni Spalte „fertig“ sind alli Ziile offe. Scho\n    umgstellti Grät sind under de alte Adrässe nöd erreichbar, die Ziile ewägnäh oder aapasse.</li>\n</ul>\n\n<h2>Date und Gränze</h2>\n<ul>\n<li>S Tool speicheret nüt vo sälber. „Lischte speichere“ fröget, öb Passwörter mit i d Datei sölled\n    (dänn im Klartext). E söttigi Datei nach em Rollout lösche.</li>\n<li>D Abläuf für HPE (au iLO 3/4), älteri iDRAC7/8, Supermicro, Lenovo und UEFI sind bis jetzt nur gäge simulierti Gägestelle prüeft. Vor eme grosse Luuf immer zerscht eis einzelns Grät\n    konfiguriere.</li>\n<li>„Protokoll speichere“ schriibt s Protokoll vom letschte Luuf i e Textdatei, z. B. für d\n    Dokumentation. Passwörter stönd keini dine.</li>\n<li>D Sproch cha mer links une under em Menü umstelle, solang kein Luuf aktiv isch und de DHCP-Server gstoppt\n    isch.</li>\n</ul>\n\n"
 }

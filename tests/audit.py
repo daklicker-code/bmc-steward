@@ -32,7 +32,7 @@ FAIL_PATTERNS = [
 
 # Bewusste Ausnahmen (nur Meldung, kein Fehler)
 INFO_PATTERNS = [
-    (r"verify_mode\s*=\s*ssl\.CERT_NONE", "Zertifikatsprüfung aus – ab Werk haben BMCs selbstsignierte Zertifikate"),
+    (r"verify_mode\s*=\s*ssl\.CERT_NONE", "CA-Prüfung aus – ab Werk selbstsignierte Zertifikate; stattdessen Fingerabdruck je Gerät (trust.py)"),
     (r"check_hostname\s*=\s*False", "Hostnamen-Prüfung aus – BMC-Zertifikate tragen keinen passenden Namen"),
     (r"SECLEVEL=0", "niedrige OpenSSL-Sicherheitsstufe – nur für iLO 3/4 mit alten Chiffren"),
     (r"TLSVersion\.TLSv1\b", "TLS 1.0 erlaubt – nur für sehr alte iLO-Firmware"),
@@ -44,6 +44,9 @@ GOOD_PATTERNS = [
     (r"secrets\.compare_digest", "Token-Vergleich zeitkonstant (gegen Timing-Angriffe)"),
     (r"\bmask\s*\(", "Passwort-Maskierung im Protokoll verwendet"),
     (r"secrets\.token_", "Scanner-Token kryptografisch zufällig"),
+    (r"self\.pin_check", "Zertifikats-Fingerabdruck wird bei jeder BMC-Verbindung geprüft"),
+    (r"PinnedConnection\(", "auch RIBCL (iLO 3/4) läuft über die geprüfte Verbindung"),
+    (r"self\.audit\(", "ändernde Aufrufe landen im Revisionsprotokoll"),
 ]
 
 
