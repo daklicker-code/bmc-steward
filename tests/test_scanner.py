@@ -97,6 +97,56 @@ class TestScanServerAuth(unittest.TestCase):
         self.assertGreaterEqual(len(self.token), 8)
 
 
+def label_image(text, px, w=1771, h=323, y=20):
+    """Erfundenes Etikett: dunkle Schrift auf grauem Grund, Zeichenhöhe px (Grauwert-Bild)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor, QFont, QImage, QPainter
+    img = QImage(w, h, QImage.Format.Format_RGB32)
+    img.fill(QColor(120, 120, 120))
+    pt = QPainter(img)
+    f = QFont("DejaVu Sans")
+    f.setPixelSize(px)
+    f.setBold(True)
+    pt.setFont(f)
+    pt.setPen(QColor(25, 25, 25))
+    pt.drawText(60, y, w - 100, h - y, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), text)
+    pt.end()
+    return img.convertToFormat(QImage.Format.Format_Grayscale8)
+
+
+class TestLocateLine(unittest.TestCase):
+    """Textzeilen-Erkennung: die Zeile darf nie in die Zeichen hineinschneiden, auch nicht bei großer Schrift."""
+
+    @staticmethod
+    def dark_rows(img):
+        ptr = img.constBits()
+        ptr.setsize(img.bytesPerLine() * img.height())
+        raw, bpl = bytes(ptr), img.bytesPerLine()
+        return [y for y in range(img.height()) if any(b < 60 for b in raw[y * bpl:y * bpl + img.width()])]
+
+    def test_large_text_filling_the_crop_is_not_cut(self):
+        qapp()
+        from bmc_steward.scanner import locate_line
+        for px in (170, 200, 230):                      # Schrift füllt mehr als die Hälfte des Ausschnitts
+            with self.subTest(px=px):
+                img = label_image("AL-142535", px, y=0)
+                rows = self.dark_rows(img)
+                line = locate_line(img)
+                if line is None:                        # keine Erkennung: Aufrufer nimmt das ganze Bild, nichts wird abgeschnitten
+                    continue
+                dark_in_line = self.dark_rows(line)
+                self.assertEqual(len(dark_in_line), len(rows), "dunkle Zeilen gingen beim Ausschneiden verloren")
+
+    def test_small_text_is_still_cut_out(self):
+        qapp()
+        from bmc_steward.scanner import locate_line
+        img = label_image("AL-1425359052", 40, y=120)
+        line = locate_line(img)
+        self.assertIsNotNone(line)
+        self.assertLess(line.height(), img.height() * 0.75, "kleine Schrift: Rand wird weiterhin entfernt")
+        self.assertEqual(len(self.dark_rows(line)), len(self.dark_rows(img)))
+
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:

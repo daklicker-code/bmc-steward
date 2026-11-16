@@ -283,8 +283,12 @@ def locate_line(gray):
         return [raw[y * im.bytesPerLine():y * im.bytesPerLine() + sw] for y in range(im.height())]
     a, c = rows_of(sm), rows_of(bg)
     counts = [sum(1 for x in range(sw) if a[y][x] < c[y][x] - 30) for y in range(sh)]
-    med = sorted(counts)[len(counts) // 2]
-    thr = max(med * 1.5, 8)
+    # Maßstab ist der Spitzenwert und der ruhige Rand, nicht der Median: Füllt die Schrift mehr als die Hälfte
+    # des Ausschnitts (großes Etikett, starker Zoom), wäre der Median selbst „Schrift“, die Schwelle läge viel
+    # zu hoch und nur die dichteste Mitte der Zeichen bliebe übrig (oben und unten abgeschnitten).
+    peak = max(counts) if counts else 0
+    low = sorted(counts)[len(counts) // 4]
+    thr = max(8, low * 2, peak * 0.10)
     best, y = (0, 0, 0), 0
     while y < sh:
         if counts[y] > thr:
@@ -299,7 +303,13 @@ def locate_line(gray):
     n, y0, y1 = best
     if n < 3 or n > sh * 0.6:
         return None
-    pad = max(2, int(n * 0.6))
+    edge = max(3, peak * 0.04)                  # Zeichenränder (runde Oberkanten, Unterlängen) mit wenigen dunklen Punkten
+    while y0 > 0 and counts[y0 - 1] > edge:
+        y0 -= 1
+    while y1 < sh and counts[y1] > edge:
+        y1 += 1
+    n = y1 - y0
+    pad = max(2, int(n * 0.5))
     top, bottom = max(0, y0 - pad) * h // sh, min(sh, y1 + pad) * h // sh
     return gray.copy(0, top, w, max(1, bottom - top))
 
