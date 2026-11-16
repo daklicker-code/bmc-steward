@@ -53,11 +53,23 @@ class PwDelegate(QStyledItemDelegate):
 
 
 class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
+    DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
+
+    @classmethod
+    def default_size(cls):
+        """Standardgröße, aber nie größer als der verfügbare Bildschirm."""
+        w, h = cls.DEFAULT_SIZE
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w, h = min(w, avail.width()), min(h, avail.height())
+        return w, h
+
     def __init__(self, state=None):
         super().__init__()
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
         self.setWindowIcon(app_icon())
-        self.resize(1200, 800)
+        self.resize(*self.default_size())
         self.worker = None
         self.bios_worker = None
 
