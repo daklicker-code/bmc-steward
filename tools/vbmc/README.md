@@ -144,6 +144,23 @@ Jeder virtuelle Server verhält sich wie ein laufendes Gerät, nicht nur wie ein
 * Zeitverhalten über `VBMC_TIME_SCALE` (Standard 1; 0.2 = fünfmal schneller, 0 = sofort).
 * Alle Seiten tragen den Hinweis „Simulierter Server“; es werden keine Hersteller-Logos nachgebaut.
 
+Ab 1.7: **herstellernahe Oberflächen.** Jeder Skin folgt dem Bedienkonzept des Originals:
+
+| Profil | Rahmen | Startseite | Konsole |
+|---|---|---|---|
+| Dell (iDRAC9-Stil) | dunkle Kopfleiste, Menü oben mit Aufklappern, große Seitentitel mit Reitern | Dashboard: Systemzustand je Komponente, Systeminformationen, Konsolenvorschau, letzte Protokolleinträge, Power-Aufklapper, „Identify System“ | Menü Boot/Power/Keyboard/… (Boot setzt den einmaligen Start) |
+| HPE (iLO-5/6-Stil) | helle Navigation links mit Symbolen und Konsolen-Miniatur, Titel „Gruppe - Seite“, Reiter | Information/Status in zwei Spalten, Symbole für Power/Zustand/UID oben rechts | Power Switch/Virtual Drives/Keyboard |
+| Lenovo (XCC2-Stil) | dunkle Kopfleiste, dunkle Navigation links mit Untermenüs | Zustandskacheln + aktive Ereignisse, Systeminformationen, Schnellaktionen, Konsolenvorschau, Leistungsbalken | Screen Capture/Keyboard/Power/… |
+| Supermicro (klassisch) | Banner, blaue Menüleiste, graue Untermenü-Spalte, blaue Titel mit Beschreibung | Summary, Konsolenvorschau, „Power Control via IPMI“ | Virtual Media/Macro/Options/Power Control/Exit |
+
+Rechtliche Leitplanken (in `vbsim/webui/engine.py` dokumentiert, beim Weiterbauen beibehalten): kein Logo,
+keine Wortmarke, keine Hersteller-Schrift, -Grafik oder -Icons (alle Symbole sind eigene SVG-Formen); kein
+Code/CSS aus Hersteller-Firmware; Seitentitel sind Gattungsbegriffe („Remote Access Controller“,
+„Lights-Out Management“, „Systems Management Controller“, „Baseboard Management Controller“); Markennamen
+erscheinen nur beschreibend im Simulationshinweis („Dell iDRAC9-Profil“); Farben angelehnt, nicht die exakten
+Markenfarben; jede Seite inklusive Anmeldung und Konsole zeigt „SIMULATION“. Die Redfish-Daten (Modell,
+Manager-Modell, Lizenzname) bleiben wie gehabt, weil BMC-Steward sie zur Erkennung braucht.
+
 Ab 1.5 zusätzlich:
 
 * **Virtual Media** (Redfish `VirtualMedia`, `InsertMedia`/`EjectMedia`, bei iLO auch PATCH mit
