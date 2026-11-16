@@ -171,9 +171,11 @@ class DhcpServer:
             send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             try:
                 send_sock.bind((str(self.ip), 0))
-            except OSError:
+                self.log(T("Send-Socket gebunden an {0}").format(self.ip))
+            except OSError as e:
                 # IP noch nicht konfiguriert: Fallback auf 0.0.0.0 (Antworten könnten falsches
                 # Interface nehmen, aber wenigstens kein Absturz)
+                self.log(T("Send-Socket Fallback auf 0.0.0.0: {0}").format(e))
                 send_sock.bind(("", 0))
 
             self.log(T('DHCP-Server läuft auf {0}, Bereich {1} bis {2}').format(self.ip, self.lo, self.hi))
