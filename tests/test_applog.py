@@ -77,7 +77,10 @@ class TestViews(unittest.TestCase):
         self.assertEqual(v.toPlainText().split("\n"), ["vorher", "nachher"])
 
     def test_empty_log_is_still_a_visible_widget(self):
-        v = LogView()
+        from PyQt6.QtWidgets import QVBoxLayout, QWidget
+        parent = QWidget()
+        QVBoxLayout(parent).addWidget(LogView())
+        v = parent.findChild(LogView)
         self.assertEqual(v.toPlainText(), "")
         self.assertFalse(v.isHidden())
 
@@ -202,6 +205,7 @@ class TestActionLogger(unittest.TestCase):
         LOG.set_level(INFO)
         self.w = Window()
         self.w.show()
+        LOG.clear()                                 # nur noch das, was die Prüfung selbst auslöst
         self.f = ActionLogger()
 
     def tearDown(self):
