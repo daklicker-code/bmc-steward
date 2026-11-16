@@ -305,6 +305,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
 
         # Linke Spalte: Monitor mit Varianten-Schalter, darunter das Menü, ganz unten die Sprache
         side = QWidget()
+        self.nav_side = side                       # wird im Vollbild der Konsole ausgeblendet
         side.setFixedWidth(272)
         sl = QVBoxLayout(side)
         sl.setContentsMargins(0, 0, 0, 0)

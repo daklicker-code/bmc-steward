@@ -209,6 +209,30 @@ class TermView(QWidget):
         self.setFixedSize(cols * self.cw + 2, rows * self.ch + 2)
         self.update()
 
+    def set_font_size(self, pt):
+        """Schriftgröße ändern, ohne den Bildschirminhalt zu verlieren (set_size würde ihn leeren)."""
+        font = QFont(self.font())
+        if font.pointSize() == pt:
+            return
+        font.setPointSize(pt)
+        self.setFont(font)
+        self.fm = QFontMetrics(font)
+        self.cw, self.ch = self.fm.horizontalAdvance("M"), self.fm.height()
+        self.setFixedSize(self.cols * self.cw + 2, self.rows * self.ch + 2)
+        self.update()
+
+    def fit_to(self, w, h):
+        """Größte Schrift (8 bis 48 pt), bei der das Raster in w × h Pixel passt; für den Vollbildmodus."""
+        best = 8
+        for pt in range(8, 49):
+            font = QFont(self.font())
+            font.setPointSize(pt)
+            fm = QFontMetrics(font)
+            if self.cols * fm.horizontalAdvance("M") + 2 > w or self.rows * fm.height() + 2 > h:
+                break
+            best = pt
+        self.set_font_size(best)
+
     def set_encoding(self, cp437):
         self.cp437 = cp437
         self.dec = codecs.getincrementaldecoder("cp437" if cp437 else "utf-8")("replace")
@@ -298,6 +322,31 @@ class TermView(QWidget):
             self.send.emit(text.encode("cp437", "replace") if self.cp437 else text.encode("utf-8"))
 
 
+
+
+class TermScroll(QScrollArea):
+    """Scroll-Bereich der Textkonsole. Mit auto_fit (Vollbild) passt er die Schrift an, damit das Raster den
+    Platz füllt; sonst gilt die Standardgröße von 11 pt."""
+    DEFAULT_PT = 11
+
+    def __init__(self, term):
+        super().__init__()
+        self.term, self.auto_fit = term, False
+        self.setWidget(term)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWidgetResizable(False)
+
+    def refit(self):
+        if self.auto_fit:
+            size = self.viewport().size()
+            self.term.fit_to(size.width(), size.height())
+        else:
+            self.term.set_font_size(self.DEFAULT_PT)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.auto_fit:
+            self.refit()
 
 
 class SerialSession(QObject):
@@ -527,6 +576,41 @@ class ConsoleMixin:
         self.con_panel.setVisible(show)
         self.con_fold.setText(T("▲ Einstellungen ausblenden") if show else T("▼ Einstellungen einblenden"))
 
+    def console_fullscreen_label(self):
+        self.con_full.setText(T("✕ Vollbild beenden") if self.con_is_full else T("⛶ Vollbild"))
+
+    def console_fullscreen(self, on):
+        """Vollbild: Das Fenster füllt den Bildschirm, es bleiben nur die Konsole und eine schmale Leiste
+        (Trennen, Vollbild beenden, bei der Textkonsole die Tastenleiste). Menü, Monitor, Statuszeile,
+        Verbindungsangaben und Hinweise sind so lange ausgeblendet; beim Beenden kommt alles so zurück,
+        wie es vorher sichtbar war. Ohne laufende Konsole geschieht nichts."""
+        if on == self.con_is_full or (on and self.console_source() is None):
+            return
+        hidden = [self.con_panel, self.con_warn, self.con_copy, self.con_connect, self.con_start,
+                  self.con_setup, self.con_fold, self.nav_side, self.status]
+        if on:
+            self.con_fs_saved = {w: not w.isHidden() for w in hidden}
+            self.tabs.setCurrentIndex(self.tabs.indexOf(self.con_page))
+            for w in hidden:
+                w.setVisible(False)
+            self.con_fs_max = self.isMaximized()
+            self.showFullScreen()
+        else:
+            if self.con_fs_max:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            for w, was_visible in self.con_fs_saved.items():
+                w.setVisible(was_visible)
+            self.con_fs_saved = {}
+        self.con_is_full = on
+        self.console_fullscreen_label()
+        self.term_scroll.auto_fit = on          # Textkonsole: Schrift an den Platz anpassen bzw. zurücksetzen
+        self.term_scroll.refit()
+        src = self.console_source()
+        if src is not None:
+            src[0].setFocus()
+
     def build_console(self):
         self.con_vendor = QComboBox()
         for text, key in i18n.VENDORS:
@@ -641,12 +725,22 @@ class ConsoleMixin:
         self.con_fold = QPushButton()
         self.con_fold.setToolTip(T("Blendet die Verbindungsangaben aus, damit die Konsole den ganzen Platz bekommt."))
         self.con_fold.clicked.connect(lambda: self.console_panel_show(self.con_panel.isHidden()))
+        self.con_is_full = False            # Vollbild aktiv (muss vor dem ersten console_busy stehen)
+        self.con_fs_saved = {}              # Sichtbarkeit der im Vollbild versteckten Teile, zum Wiederherstellen
+        self.con_fs_max = False
+        self.con_full = QPushButton()
+        self.con_full.setEnabled(False)
+        self.con_full.setToolTip(T("Die Konsole füllt den ganzen Bildschirm. Beenden mit dem Knopf oben „Vollbild beenden“,\n"
+                                   "denn Esc und F11 gehören dem Server."))
+        self.con_full.clicked.connect(lambda: self.console_fullscreen(not self.con_is_full))
+        self.console_fullscreen_label()
         btns = QHBoxLayout()
         btns.addWidget(self.con_connect)
         btns.addWidget(self.con_disconnect)
         btns.addWidget(self.con_start)
         btns.addStretch()
         btns.addWidget(self.con_setup)
+        btns.addWidget(self.con_full)
         btns.addWidget(self.con_fold)
 
         # Tastenleiste für die Textkonsole (F-Tasten fangen Desktop und Fenstermanager manchmal ab)
@@ -684,10 +778,7 @@ class ConsoleMixin:
                    "    pip install PyQt6-WebEngine                (sonst)")))
         self.term = TermView()
         self.term.send.connect(self.console_send)
-        self.term_scroll = QScrollArea()
-        self.term_scroll.setWidget(self.term)
-        self.term_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.term_scroll.setWidgetResizable(False)
+        self.term_scroll = TermScroll(self.term)
         self.con_stack.addWidget(self.term_scroll)
         self.con_stack.addWidget(self.console_note(T(
             "„Verbinden“ öffnet die Anmeldeseite des BMC im Standardbrowser. Die Anmeldung erfolgt dort von Hand;\n"
@@ -699,6 +790,7 @@ class ConsoleMixin:
                         "alles Weitere geschieht in der UEFI-Oberfläche selbst."))
         warn.setWordWrap(True)
         warn.setStyleSheet("color: #c9302c;")
+        self.con_warn = warn
         # Verbindungsangaben und Paketliste lassen sich einklappen; Knöpfe, Status und Warnung bleiben sichtbar
         self.con_panel = QWidget()
         pan = QVBoxLayout(self.con_panel)
@@ -805,6 +897,9 @@ class ConsoleMixin:
         for w in (self.con_vendor, self.con_ip, self.con_user, self.con_pass, self.con_mode, self.con_method,
                   self.con_term, self.con_size, self.con_setup, self.con_switch):
             w.setEnabled(not busy)
+        self.con_full.setEnabled(busy)          # Vollbild nur mit Verbindung
+        if not busy:
+            self.console_fullscreen(False)      # Trennen, Fehler oder Ende der Sitzung: raus aus dem Vollbild
 
     def console_creds(self):
         ip = self.con_ip.currentText().strip()
