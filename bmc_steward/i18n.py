@@ -268,15 +268,10 @@ TR = {
 "Charge une liste enregistrée ou un fichier CSV, p. ex. depuis Excel :\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer est facultatif, chargeable aussi sans cette colonne)",
 "Ladet e gspichereti Lischte oder e CSV-Datei, z. B. us Excel:\naktuelle_ip,passwort,neue_ip,subnetzmaske,gateway,hostname,seriennummer\n(seriennummer isch optional, au ganz ohni die Spalte ladbar)"
 ],
-"Protokoll öffnen …": [
-"Open log …",
-"Ouvrir le journal …",
-"Protokoll öffne …"
-],
-"Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\nErsetzt die aktuelle Anzeige, ändert aber nichts an den Servern.": [
-"Opens a previously saved log text file for viewing.\nReplaces the current display but changes nothing on the servers.",
-"Ouvre un fichier journal enregistré pour consultation.\nRemplace l'affichage actuel mais ne modifie rien sur les serveurs.",
-"Öffnet e früener gspichereti Protokoll-Textdatei zum Aaluege.\nErsetzt di aktuell Aazeig, änderet aber nüt a de Server."
+"Öffnet das Protokoll als Textdatei im Standard-Editor.\nPasswörter stehen nicht darin; geändert wird nichts.": [
+"Opens the log as a text file in the default editor.\nNo passwords are in it; nothing is changed.",
+"Ouvre le journal comme fichier texte dans l'éditeur par défaut.\nIl ne contient aucun mot de passe ; rien n'est modifié.",
+"Öffnet s Protokoll als Textdatei im Standard-Editor.\nPasswörter stönd keini dinn; es wird nüt gänderet."
 ],
 "Zertifikate …": [
 "Certificates …",
@@ -512,11 +507,6 @@ TR = {
 "Hardening: after IPMI is switched off, the text console (SOL) on Supermicro no longer works, nor does monitoring via IPMI.",
 "Durcissement : une fois IPMI désactivé, la console texte (SOL) sur Supermicro ne fonctionne plus, ni la supervision via IPMI.",
 "Härtig: Nach em Abschalte vo IPMI gaht d Textkonsole (SOL) bi Supermicro nümm, und au kei Überwachig per IPMI."
-],
-"Protokoll geladen aus {0}": [
-"Log loaded from {0}",
-"Journal chargé depuis {0}",
-"Protokoll glade us {0}"
 ],
 "{0} getestete Server blieben draußen: anderer Benutzer als „{1}“ oder Port ungleich 443. „Neuware“, „UEFI-Einstellungen“ und „Dienste“ kennen nur einen Benutzer für alle Server; diese Server in einem zweiten Durchgang übernehmen.": [
 "{0} tested servers were left out: user other than “{1}” or port other than 443. “New hardware”, “UEFI settings” and “Services” know only one user for all servers; add these servers in a second pass.",

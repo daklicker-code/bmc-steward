@@ -244,9 +244,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                                      "Nur lesend, ein Anmeldeversuch je Gerät mit dem Passwort der Zeile (iLO 3/4: ohne Anmeldung).\n"
                                      "Das geschieht auch automatisch beim Eintragen einer Aktuellen IP. Eingetragenes wird nie überschrieben."))
         self.serial_btn.clicked.connect(self.read_serials)
-        log_open = QPushButton(T("Protokoll öffnen …"))
-        log_open.setToolTip(T("Öffnet eine zuvor gespeicherte Protokoll-Textdatei zur Ansicht.\n"
-                              "Ersetzt die aktuelle Anzeige, ändert aber nichts an den Servern."))
+        log_open = QPushButton(T("Protokoll öffnen"))
+        log_open.setToolTip(T("Öffnet das Protokoll als Textdatei im Standard-Editor.\n"
+                              "Passwörter stehen nicht darin; geändert wird nichts."))
         log_open.clicked.connect(self.open_log)
         log_save = QPushButton(T("Protokoll speichern …"))
         log_save.setToolTip(T("Speichert das Protokoll als Textdatei, z. B. für die Dokumentation.\n"
@@ -3023,18 +3023,22 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_start.setStyleSheet("" if dry else LIVE_CSS)
 
     def open_log(self):
-        """Zeigt eine zuvor gespeicherte Protokoll-Textdatei an (nur Ansicht, ändert nichts an den Servern)."""
-        path, _ = QFileDialog.getOpenFileName(self, T("Protokoll öffnen"), str(HERE),
-                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
-        if not path:
+        """Öffnet das aktuelle Protokoll als Textdatei im Standard-Editor (Passwörter stehen nicht darin)."""
+        text = self.log.toPlainText()
+        if not text.strip():
+            self.status.setText(T("Das Protokoll ist noch leer."))
             return
+        path = Path(tempfile.gettempdir()) / ("bmc-steward-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
         try:
-            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            path.write_text(text + "\n", encoding="utf-8")
         except OSError as e:
-            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht lesbar:\n{0}').format(e))
+            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht schreibbar:\n{0}').format(e))
             return
-        self.log.setPlainText(text)
-        self.status.setText(T("Protokoll geladen aus {0}").format(path))
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            QMessageBox.warning(self, T("Protokoll öffnen"),
+                                T("Kein Standardprogramm für Textdateien gefunden.\nDatei liegt unter {0}").format(path))
+            return
+        self.status.setText(T("Protokoll geöffnet: {0}").format(path))
 
     def save_log(self):
         """Schreibt das Protokoll des letzten Laufs in eine Textdatei (enthält keine Passwörter)."""
