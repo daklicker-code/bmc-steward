@@ -37,7 +37,6 @@ def stop_leftover_dhcp():
 
 
 
-
 # ======================================================================
 # Kleiner DHCP-Server (für Windows; unter Linux wird dnsmasq verwendet)
 # ======================================================================
@@ -47,11 +46,14 @@ class DhcpServer:
     MAGIC = b"\x63\x82\x53\x63"
 
     def __init__(self, ip, mask, lo, hi, log=print, on_leases=lambda rows: None, stopped=lambda: False,
-                 port=67, client_port=68, reply_to=None, lease_time=3600):
+                 port=67, client_port=68, reply_to=None, lease_time=3600,
+                 own_mac=None, on_own_lease=lambda row: None):
         self.ip, self.mask = ipaddress.IPv4Address(ip), ipaddress.IPv4Address(mask)
         self.lo, self.hi = ipaddress.IPv4Address(lo), ipaddress.IPv4Address(hi)
         self.log, self.on_leases, self.stopped = log, on_leases, stopped
         self.port, self.client_port, self.reply_to, self.lease_time = port, client_port, reply_to, lease_time
+        self.own_mac = own_mac.lower() if own_mac else None
+        self.on_own_lease = on_own_lease
         self.assigned = {}      # MAC -> IP (angeboten oder bestätigt)
         self.acked = {}         # MAC -> (IP, Name)
 
@@ -131,15 +133,25 @@ class DhcpServer:
                 self.log(T('Abgelehnt {0}  von {1}').format(wanted, mac))
                 return self.reply(data, 6, None), dest
             self.acked[mac] = (ip, name or self.acked.get(mac, (None, ""))[1])
-            self.log(T('Vergeben  {0}  an {1} {2}').format(ip, mac, name))
-            self.on_leases(sorted((str(i), m, n) for m, (i, n) in self.acked.items()))
             if int(ciaddr) and not self.reply_to:        # Verlängerung: direkt antworten
                 dest = (str(ciaddr), self.client_port)
+            # Eigener Rechner: separat melden, nicht in der Lease-Liste
+            if self.own_mac and mac == self.own_mac:
+                self.on_own_lease((str(ip), mac, name))
+            else:
+                self.log(T('Vergeben  {0}  an {1} {2}').format(ip, mac, name))
+                self.on_leases(sorted(
+                    (str(i), m, n) for m, (i, n) in self.acked.items()
+                    if m != self.own_mac
+                ))
             return self.reply(data, 5, ip), dest
         if mtype in (4, 7):                              # DECLINE / RELEASE
             self.assigned.pop(mac, None)
             if self.acked.pop(mac, None):
-                self.on_leases(sorted((str(i), m, n) for m, (i, n) in self.acked.items()))
+                self.on_leases(sorted(
+                    (str(i), m, n) for m, (i, n) in self.acked.items()
+                    if m != self.own_mac
+                ))
         return None
 
     def run(self):
@@ -148,7 +160,10 @@ class DhcpServer:
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.bind((str(self.ip), self.port))
+            # Bind auf alle Interfaces (0.0.0.0): verhindert WinError 10049 auf Windows,
+            # wenn die DHCP-Server-IP noch nicht als lokale Adresse konfiguriert ist.
+            # Die eigene IP wird weiterhin als Server-Identifier (Option 54) ins Paket geschrieben.
+            sock.bind(("", self.port))
             sock.settimeout(0.5)
             self.log(T('DHCP-Server läuft auf {0}, Bereich {1} bis {2}').format(self.ip, self.lo, self.hi))
             while not self.stopped():
@@ -209,9 +224,17 @@ def probe_dhcp_servers(ip, timeout=1.5):
 
 
 
+def _own_mac():
+    """Ermittelt die MAC-Adresse des eigenen Rechners (erster verfügbarer Interface-Wert)."""
+    import uuid
+    n = uuid.getnode()
+    return ':'.join(f'{(n >> (i * 8)) & 0xff:02x}' for i in range(5, -1, -1))
+
+
 class DhcpThread(QThread):
     line = pyqtSignal(str)
     leases = pyqtSignal(list)
+    own_lease = pyqtSignal(tuple)   # (ip, mac, name) des eigenen Rechners
     result = pyqtSignal(int)
 
     def __init__(self, parent, **kw):
@@ -221,7 +244,9 @@ class DhcpThread(QThread):
     def run(self):
         try:
             DhcpServer(log=self.line.emit, on_leases=self.leases.emit,
-                       stopped=self.isInterruptionRequested, **self.kw).run()
+                       stopped=self.isInterruptionRequested,
+                       own_mac=_own_mac(), on_own_lease=self.own_lease.emit,
+                       **self.kw).run()
             self.result.emit(0)
         except OSError as e:
             self.line.emit("error: " + T('Port 67 lässt sich nicht öffnen: {0}').format(e))
