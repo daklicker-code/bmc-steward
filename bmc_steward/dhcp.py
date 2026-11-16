@@ -156,19 +156,30 @@ class DhcpServer:
 
     def run(self):
         """Läuft bis stopped() wahr wird. Wirft OSError, wenn der Port nicht geöffnet werden kann."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Empfangs-Socket: bind auf 0.0.0.0 verhindert WinError 10049, wenn die DHCP-IP noch
+        # nicht als lokales Interface konfiguriert ist (passiert kurz nach dem IP-Setzen).
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Send-Socket: explizit auf die Server-IP binden, damit Windows Broadcast-Pakete
+        # über das richtige Interface (Direktverbindung) schickt und nicht über WLAN/LAN.
+        send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            # Bind auf alle Interfaces (0.0.0.0): verhindert WinError 10049 auf Windows,
-            # wenn die DHCP-Server-IP noch nicht als lokale Adresse konfiguriert ist.
-            # Die eigene IP wird weiterhin als Server-Identifier (Option 54) ins Paket geschrieben.
-            sock.bind(("", self.port))
-            sock.settimeout(0.5)
+            recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            recv_sock.bind(("", self.port))
+            recv_sock.settimeout(0.5)
+
+            send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            try:
+                send_sock.bind((str(self.ip), 0))
+            except OSError:
+                # IP noch nicht konfiguriert: Fallback auf 0.0.0.0 (Antworten könnten falsches
+                # Interface nehmen, aber wenigstens kein Absturz)
+                send_sock.bind(("", 0))
+
             self.log(T('DHCP-Server läuft auf {0}, Bereich {1} bis {2}').format(self.ip, self.lo, self.hi))
             while not self.stopped():
                 try:
-                    data, _ = sock.recvfrom(4096)
+                    data, _ = recv_sock.recvfrom(4096)
                 except socket.timeout:
                     continue
                 except OSError:
@@ -176,11 +187,12 @@ class DhcpServer:
                 try:
                     answer = self.handle(data)
                     if answer:
-                        sock.sendto(*answer)
+                        send_sock.sendto(*answer)
                 except Exception as e:      # ein kaputtes Paket darf den Server nicht beenden
                     self.log(T('Paket verworfen: {0}').format(e))
         finally:
-            sock.close()
+            recv_sock.close()
+            send_sock.close()
         self.log(T("DHCP-Server gestoppt"))
 
 
