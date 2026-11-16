@@ -72,6 +72,10 @@ On top of that:
   a rejected login is never retried (the tool never locks an account)
 - **Backup before every change** (JSON per device) and an **audit log** of all changing calls of live runs
   (button “Backups/logs”)
+- **Factory account is locked:** after a successful check the tool logs in with the new administrator at the
+  new address and locks the factory account (root, Administrator, ADMIN, USERID). If a BMC cannot disable
+  accounts, it gets a random password that is stored nowhere. Can be switched off with “Lock factory account
+  afterwards”
 - **Firmware:** SHA-256 check against the vendor's value, the checked file is used for all servers; “Stop on
   error” is preselected
 - **Self-protection:** UEFI changes, firmware updates and “Boot into UEFI setup” check the server's identity

@@ -745,13 +745,95 @@ class Engine(RedfishClient):
     """Konfiguriert Benutzer/Netzwerk aller Server der Liste; Protokollzeilen gehen an log()."""
 
     def __init__(self, rows, cur_user, cur_pass, new_user, new_pass, slot=3, dry=True,
-                 log=print, stopped=lambda: False, verify_wait=240, vendor=None, on_done=lambda ip: None):
+                 log=print, stopped=lambda: False, verify_wait=240, vendor=None, on_done=lambda ip: None,
+                 lock_factory=True):
         super().__init__(dry, log, stopped)
         self.rows, self.cur_user_set, self.cur_pass = rows, cur_user, cur_pass
         self.new_user, self.new_pass, self.slot = new_user, new_pass, slot
         self.verify_wait, self.force_vendor = verify_wait, vendor
         self.on_done = on_done      # wird mit der bisherigen IP aufgerufen, sobald ein Server umgestellt ist
         self.verify_path = ""
+        self.lock_factory = lock_factory    # Werkskonto nach erfolgreicher Kontrolle sperren
+        self.factory = {}                   # neue IP -> (Hersteller, Werksbenutzer)
+
+    # ---------- Werkskonto sperren ----------
+    @staticmethod
+    def random_password(length=16):
+        """Zufallspasswort, das die Regeln aller vier Hersteller erfüllt (groß, klein, Ziffer, Sonderzeichen,
+        höchstens 20 Zeichen). Wird nirgends gespeichert."""
+        lower, upper, digits, special = "abcdefghijkmnopqrstuvwxyz", "ABCDEFGHJKLMNPQRSTUVWXYZ", "23456789", "-_!+"
+        chars = [secrets.choice(c) for c in (lower, upper, digits, special)]
+        chars += [secrets.choice(lower + upper + digits + special) for _ in range(length - 4)]
+        secrets.SystemRandom().shuffle(chars)
+        return "".join(chars)
+
+    def factory_user_of(self, vendor):
+        """Werksbenutzer, der nach dem Lauf gesperrt werden darf, oder None (mit Begründung im Protokoll)."""
+        user = self.cur_user
+        defaults = {u.lower() for u in self.DEFAULT_USER.values()}
+        if user.lower() == self.new_user.lower():
+            self.log(T("  Werkskonto: neuer Administrator ist dasselbe Konto, wird nicht gesperrt."))
+            return None
+        if user.lower() not in defaults:
+            self.log(T("  Werkskonto: Anmeldung lief nicht über ein Werkskonto ({0}), es wird nichts gesperrt.")
+                     .format(user))
+            return None
+        return user
+
+    def lock_factory_account(self, ip, vendor, factory):
+        """Sperrt das Werkskonto, angemeldet als NEUER Administrator unter der NEUEN Adresse – erst nachdem die
+        Kontrolle dort geklappt hat. Bevorzugt „Enabled: false“; kennt der BMC das nicht, bekommt das Konto ein
+        Zufallspasswort, das nirgends gespeichert wird (mit dem neuen Administrator jederzeit zurücksetzbar).
+        Gibt True zurück, wenn das Werkskonto danach nicht mehr mit dem Werkspasswort nutzbar ist."""
+        user, pw = self.new_user, self.new_pass
+        if vendor == "hpe_old":
+            code = self.ribcl(ip, user, pw, "write", "USER_INFO",
+                              f"<MOD_USER USER_LOGIN={xq(factory)}><PASSWORD value={xq(self.random_password())}/>"
+                              f"</MOD_USER>")
+            if self.ok(code):
+                self.log(T("  Werkskonto {0}: Passwort auf Zufallswert gesetzt (iLO 3/4 kann Konten nicht "
+                           "abschalten; Wert wird nicht gespeichert).").format(factory), "ok")
+                return True
+            self.fail(T("Werkskonto {0} sperren").format(factory), code)
+            return False
+        coll = "/redfish/v1/AccountService/Accounts"
+        code = self.api(ip, user, pw, "GET", coll)
+        if not self.ok(code) or not isinstance(self.body, dict):
+            self.fail(T("Konten lesen"), code)
+            return False
+        target, me = None, None
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if not path or not self.ok(self.api(ip, user, pw, "GET", path)) or not isinstance(self.body, dict):
+                continue
+            name = str(self.body.get("UserName") or "")
+            if name.lower() == factory.lower():
+                target = (path, dict(self.body))
+            elif name.lower() == user.lower():
+                me = dict(self.body)
+        if me is None or str(me.get("RoleId", "")).lower() not in ("administrator", "admin"):
+            self.log(T("  FEHLER: Neuer Administrator {0} ist nicht als Administrator eingetragen; Werkskonto bleibt "
+                       "zur Sicherheit aktiv.").format(user), "err")
+            return False
+        if target is None:
+            self.log(T("  Werkskonto {0}: nicht (mehr) vorhanden.").format(factory), "ok")
+            return True
+        path, doc = target
+        if doc.get("Enabled") is False:
+            self.log(T("  Werkskonto {0}: schon gesperrt.").format(factory), "ok")
+            return True
+        code = self.api(ip, user, pw, "PATCH", path, {"Enabled": False})
+        if self.ok(code) and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict) \
+                and self.body.get("Enabled") is False:
+            self.log(T("  Werkskonto {0}: gesperrt.").format(factory), "ok")
+            return True
+        code = self.api(ip, user, pw, "PATCH", path, {"Password": self.random_password()})
+        if self.ok(code):
+            self.log(T("  Werkskonto {0}: lässt sich hier nicht abschalten, Passwort auf Zufallswert gesetzt (wird "
+                       "nicht gespeichert; mit dem neuen Administrator jederzeit zurücksetzbar).").format(factory), "ok")
+            return True
+        self.fail(T("Werkskonto {0} sperren").format(factory), code)
+        return False
 
     def find_account(self, ip, pw, collection):
         """Pfad des Kontos mit UserName == neuer Benutzer oder None."""
@@ -1085,6 +1167,13 @@ class Engine(RedfishClient):
                 self.backup(cur_ip, self.cur_user, pw, v, "neuware")
             if getattr(self, "setup_" + v)(cur_ip, pw, new_ip, mask, gw, host):
                 done.append((new_ip, self.verify_path))
+                if self.lock_factory:
+                    factory = self.factory_user_of(v)
+                    if factory:
+                        self.factory[new_ip] = (v, factory)
+                        if self.dry:
+                            self.log(T("  Trockenlauf: würde nach erfolgreicher Kontrolle das Werkskonto {0} "
+                                       "sperren (angemeldet als {1}).").format(factory, self.new_user))
                 if not self.dry:
                     self.on_done(cur_ip)        # Zeile in der Maske als fertig markieren
             else:
@@ -1096,6 +1185,7 @@ class Engine(RedfishClient):
             self.log(T('Kontrolle der neuen Adressen (bis zu {0}s)... Die Liste bleibt bis dahin '
                       'gesperrt; „Abbrechen“ beendet die Kontrolle vorzeitig.').format(self.verify_wait))
             pending, start, end = list(done), time.monotonic(), time.monotonic() + self.verify_wait
+            unlocked = []
             self.pause(min(self.verify_wait, 20))
             while pending and not self.stopped():
                 still, out_of_time = [], False
@@ -1111,6 +1201,8 @@ class Engine(RedfishClient):
                         self.log(T('  OK      {0}').format(ip) + (f"   {info}" if info else ""), "ok")
                         if info:
                             inventory.append(f"{ip}   {info}")
+                        if ip in self.factory and not self.lock_factory_account(ip, *self.factory[ip]):
+                            unlocked.append(ip)
                     else:
                         still.append((ip, path))
                     if time.monotonic() >= end:
@@ -1123,6 +1215,9 @@ class Engine(RedfishClient):
                 self.pause(10)
             for ip, _ in pending:
                 self.log(T('  FEHLT   {0}').format(ip), "err")
+                failed.append(ip)
+            for ip in unlocked:
+                self.log(T("  WERKSKONTO AKTIV   {0}: bitte von Hand sperren oder Passwort ändern.").format(ip), "err")
                 failed.append(ip)
 
         if inventory:

@@ -73,6 +73,10 @@ Dazu kommt:
   eine abgelehnte Anmeldung wird nie wiederholt (keine Kontosperre durch das Tool)
 - **Sicherung vor jeder Änderung** (JSON je Gerät) und **Revisionsprotokoll** aller ändernden Aufrufe scharfer
   Läufe (Knopf „Sicherungen/Protokolle“)
+- **Werkskonto wird gesperrt:** Nach erfolgreicher Kontrolle meldet sich das Tool mit dem neuen Administrator
+  unter der neuen Adresse an und sperrt das Werkskonto (root, Administrator, ADMIN, USERID). Kann ein BMC Konten
+  nicht abschalten, bekommt es ein nirgends gespeichertes Zufallspasswort. Abschaltbar über den Haken
+  „Werkskonto danach sperren“
 - **Firmware:** SHA-256-Prüfung gegen den Sollwert des Herstellers, die geprüfte Datei wird für alle Server
   verwendet; „Bei Fehler anhalten“ ist voreingestellt
 - **Eigenschutz:** UEFI-Änderungen, Firmware-Updates und „Ins UEFI-Setup booten“ prüfen vorher die Identität
