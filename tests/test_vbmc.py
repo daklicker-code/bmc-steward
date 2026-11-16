@@ -1062,45 +1062,6 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual(len(set(seen.values())), 3)
         w.vbmc_mode.setCurrentIndex(w.vbmc_mode.findData("loopback"))
 
-    def test_save_log(self):
-        """„Protokoll speichern …“ (Testlabor) - z. B. um einen Fehlschlag wie „Gerät nicht
-        erreichbar“ weiterzugeben."""
-        w = self.w
-        w.vbmc_log.setPlainText("[12:00:00] Server CN123 gestartet")
-        with tempfile.TemporaryDirectory() as d:
-            p = os.path.join(d, "vbmc-test.log")
-            with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName", return_value=(p, "")):
-                w.vbmc_save_log()
-            self.assertIn("Server CN123 gestartet", open(p, encoding="utf-8").read())
-
-    def test_save_log_refuses_when_empty(self):
-        w = self.w
-        w.vbmc_log.clear()
-        with patch("bmc_steward.vbmc_tab.QFileDialog.getSaveFileName") as dlg:
-            w.vbmc_save_log()
-            dlg.assert_not_called()
-
-    def test_open_log_writes_tempfile_and_opens_it(self):
-        """„Protokoll anzeigen …“ fragt NICHT nach einer Datei (das war der gemeldete Fehler), sondern
-        schreibt das aktuell sichtbare Protokoll direkt in eine Datei und öffnet diese."""
-        w = self.w
-        w.vbmc_log.setPlainText("[12:00:00] Server CN123 gestartet")
-        with patch("bmc_steward.vbmc_tab.QFileDialog.getOpenFileName") as dlg, \
-             patch("bmc_steward.vbmc_tab.QDesktopServices.openUrl", return_value=True) as opener:
-            w.vbmc_open_log()
-            dlg.assert_not_called()
-            opener.assert_called_once()
-            path = opener.call_args[0][0].toLocalFile()
-        self.assertIn("Server CN123 gestartet", open(path, encoding="utf-8").read())
-        os.unlink(path)
-
-    def test_open_log_refuses_when_empty(self):
-        w = self.w
-        w.vbmc_log.clear()
-        with patch("bmc_steward.vbmc_tab.QDesktopServices.openUrl") as opener:
-            w.vbmc_open_log()
-            opener.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

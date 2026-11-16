@@ -177,6 +177,8 @@ python3 bmc-steward.py
 
 The built-in help (menu entry “Help”) explains every step and the differences between the vendors.
 
+The **log** below the server list is the same for the whole program, test lab included. It fills as soon as the program starts and records every action (buttons, ticks, selections, page changes) and the messages of the runs – never passwords. “Info” (default) shows actions and results, “Debug” adds technical details. The **Log** button opens it as a text file in your default editor.
+
 ## CSV format
 
 ```

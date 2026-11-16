@@ -178,6 +178,8 @@ python3 bmc-steward.py
 
 Die eingebaute Hilfe (Menüpunkt „Hilfe“) erklärt jeden Schritt und die Unterschiede zwischen den Herstellern.
 
+Das **Protokoll** unter der Serverliste ist für das ganze Programm dasselbe, auch im Testlabor. Es füllt sich schon beim Start und hält jede Aktion fest (Knöpfe, Haken, Auswahl, Seitenwechsel) sowie die Meldungen der Läufe – nie Passwörter. „Info“ (Standard) zeigt Aktionen und Ergebnisse, „Debug“ zusätzlich technische Einzelheiten. Der Knopf **Protokoll** öffnet es als Textdatei im Standard-Editor.
+
 ## CSV-Format
 
 ```
