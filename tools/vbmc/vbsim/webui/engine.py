@@ -478,8 +478,123 @@ body{font:12.5px/1.4 Arial,Helvetica,sans-serif;background:#fff;color:#1c1f23}
 }
 
 
+
+# ---------------------------------------------------------------- Varianten für ältere/neuere Generationen
+# Gleicher Hersteller, anderes Bedienkonzept im Original. Ausgewählt über die Generation (VARIANT).
+SKINS["dell8"] = dict(SKINS["dell"], shell="hpe", css="dell8", login="dell8", dash="dell", nav_sub=True,
+    menu=[G("Server", N("overview", "Properties"), N("events", "Logs"), N("power", "Power / Thermal"),
+            N("console", "Virtual Console"), N("vmedia", "Attached Media"), N("license", "Licenses"), icon="server"),
+          G("Controller Settings", N("network", "Network"), N("users", "User Authentication"),
+            N("certificate", "SSL"), N("firmware", "Update and Rollback"), icon="gear"),
+          G("Hardware", N("sysinfo", "Hardware Inventory"), N("thermal", "Fans & Temperatures"), N("bios", "BIOS"),
+            icon="chip"),
+          G("Storage", N("storage", "Physical Disks"), icon="disk")])
+SKINS["hpe4"] = dict(SKINS["hpe"], css="hpe4", login="hpe4", dash="hpe", nav_sub=True,
+    menu=[G("Information", N("overview", "Overview"), N("sysinfo", "System Information"), N("events", "Event Log"),
+            N("storage", "Storage"), icon="info"),
+          G("Remote Console", N("console", "Remote Console"), icon="screen"),
+          G("Virtual Media", N("vmedia", "Virtual Media"), icon="disk"),
+          G("Power Management", N("power", "Server Power"), N("thermal", "Fans & Temperatures"), icon="power"),
+          G("Network", N("network", "Dedicated Network Port"), icon="net"),
+          G("Administration", N("firmware", "Firmware"), N("license", "Licensing"), N("users", "User Administration"),
+            N("certificate", "Security"), N("bios", "BIOS"), icon="gear")])
+SKINS["lenovo1"] = dict(SKINS["lenovo"], css="lenovo1", login="lenovo1")
+SKINS["smc13"] = dict(SKINS["smc"], shell="lenovo", css="smc13", login="smc13", dash="smc",
+    menu=[G("Dashboard", N("overview", "Dashboard"), icon="home"),
+          G("System", N("sysinfo", "Component Info"), N("storage", "Storage Monitoring"), N("thermal", "Sensor Readings"),
+            N("events", "Health Event Log"), icon="server"),
+          G("Configuration", N("network", "Network"), N("users", "Account Services"), N("certificate", "Certificates"),
+            N("license", "License"), icon="gear"),
+          G("Remote Control", N("console", "Remote Console"), N("vmedia", "Virtual Media"), N("power", "Power Control"),
+            icon="screen"),
+          G("Maintenance", N("firmware", "Firmware Management"), N("bios", "BIOS Settings"), icon="chip")])
+VARIANT = {("dell", "idrac8"): "dell8", ("dell", "idrac8_alt"): "dell8", ("hpe", "ilo4"): "hpe4", ("hpe", "ilo3"): "hpe4",
+           ("lenovo", "xcc1"): "lenovo1", ("smc", "x13"): "smc13"}
+
+CSS["dell8"] = """
+:root{--acc:#2a6db5;--mut:#5c6269;--line:#c9ced6;--line2:#e6e9ed}
+body{font:12.5px/1.45 Arial,Helvetica,sans-serif;background:#fff;color:#1d2125}
+.lay{flex:1;display:flex;min-height:0}
+.nav{width:230px;flex-shrink:0;background:linear-gradient(90deg,#e9edf2,#f5f7f9);border-right:1px solid var(--line);display:flex;flex-direction:column}
+.brandblk{background:linear-gradient(#3d4f66,#25354a);color:#fff;padding:12px 14px}
+.brandblk .mk{display:none}.brandblk .p{font-size:15px;font-weight:700}.brandblk .m{font-size:11.5px;opacity:.8}
+.brandblk .sim{margin-top:6px;color:#ffd27a}
+.navg{display:flex;align-items:center;gap:7px;padding:6px 12px;color:#1d2125;text-decoration:none;font-weight:700}
+.navg:before{content:"\\229F";color:#6f7a87;font-weight:400}.navg .ico{width:14px;height:14px;color:#47607e}
+.navg.on{background:#d6e3f3}.navsub{display:block;padding:4px 12px 4px 46px;color:#1f4f86;text-decoration:none}
+.navsub.on{background:#2a6db5;color:#fff}
+.navthumb{margin-top:auto;padding:10px 12px;border-top:1px solid var(--line)}.navthumb .lnk{font-size:11px;margin-top:5px}.navthumb a{color:#1f4f86;margin-right:6px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.top{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:42px;background:linear-gradient(#f7f9fb,#e4e9ef);border-bottom:1px solid var(--line)}
+.top h1{font-size:15px;font-weight:400;margin:0}.top h1 b{font-weight:700}
+.icons{display:flex;gap:14px;align-items:center;font-size:12px}.icons span{display:inline-flex;gap:4px;align-items:center}
+.tabs{display:flex;gap:3px;padding:6px 16px 0;background:#f2f4f7;border-bottom:1px solid var(--line)}
+.tabs a{padding:6px 12px;color:#1f4f86;text-decoration:none;border:1px solid var(--line);border-bottom:0;background:#e3e8ef;border-radius:3px 3px 0 0}
+.tabs a.on{background:#fff;color:#000;font-weight:700;margin-bottom:-1px}
+main{padding:14px 16px;flex:1;min-width:0}
+.dashbar{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.dgrid{display:grid;grid-template-columns:1fr 1.3fr 1.1fr;gap:12px}@media(max-width:1150px){.dgrid{grid-template-columns:1fr 1fr}}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:1000px){.cols{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);margin-bottom:12px}
+.card h3{margin:0;padding:6px 10px;font-size:12.5px;font-weight:700;background:linear-gradient(#f4f6f9,#dde3ea);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.card>div{padding:8px 10px;overflow:auto}
+.bighealth{display:flex;align-items:center;gap:10px;font-size:16px;margin:2px 0 8px}.bighealth .st{width:28px;height:28px}
+.grid th{background:#eef1f5;border:1px solid var(--line);font-size:12px}.grid td{border:1px solid var(--line2)}
+.kv tr:nth-child(odd){background:#f5f7fa}.kv th,.kv td{padding:4px 8px}
+.btn{background:linear-gradient(#fff,#e5e9ee);border:1px solid #8d98a6;border-radius:3px;padding:4px 11px;font-size:12px}
+.btn.pri{background:linear-gradient(#4b86c9,#2a6db5);border-color:#215a96;color:#fff}
+"""
+CSS["hpe4"] = """
+:root{--acc:#3a78b6;--mut:#5c6269;--line:#c7cdd4;--line2:#e5e8ec}
+body{font:12.5px/1.45 Arial,Helvetica,sans-serif;background:#fff;color:#1d2125}
+.lay{flex:1;display:flex;min-height:0}
+.nav{width:220px;flex-shrink:0;background:#e8ebee;border-right:1px solid var(--line);display:flex;flex-direction:column}
+.brandblk{background:linear-gradient(#56606b,#353c44);color:#fff;padding:12px 14px}
+.brandblk .mk{width:36px;height:5px;background:#7dbf3f;margin-bottom:7px}
+.brandblk .p{font-size:15px;font-weight:700}.brandblk .m{font-size:11.5px;opacity:.8}.brandblk .sim{margin-top:6px;color:#cfe9b2}
+.navg{display:flex;align-items:center;gap:7px;padding:7px 12px;color:#fff;text-decoration:none;font-weight:700;background:linear-gradient(#7d8790,#626b74);border-bottom:1px solid #4f575f}
+.navg .ico{width:14px;height:14px}.navg.on{background:linear-gradient(#4f8cc9,#3a78b6)}
+.navsub{display:block;padding:5px 12px 5px 26px;color:#1d2125;text-decoration:none;border-bottom:1px solid #d7dce1}
+.navsub.on{background:#fff;font-weight:700;color:#2a5f96}
+.navthumb{margin-top:auto;padding:10px 12px;border-top:1px solid var(--line)}.navthumb .lnk{font-size:11px;margin-top:5px}.navthumb a{color:#2a5f96;margin-right:6px}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.top{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:44px;background:linear-gradient(#5c666f,#3d444c);color:#fff}
+.top h1{font-size:15px;font-weight:400;margin:0}.top h1 b{font-weight:700}
+.icons{display:flex;gap:14px;align-items:center;font-size:12px}.icons span{display:inline-flex;gap:4px;align-items:center}.icons .btn.flat{color:#fff}
+.tabs{display:flex;gap:2px;padding:6px 14px 0;border-bottom:2px solid var(--acc)}
+.tabs a{padding:6px 12px;color:#1d2125;text-decoration:none;background:#e3e7eb;border:1px solid var(--line);border-bottom:0}
+.tabs a.on{background:var(--acc);color:#fff;font-weight:700}
+main{padding:14px 16px;flex:1;min-width:0}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:1100px){.cols{grid-template-columns:1fr}}
+.card{margin-bottom:16px}.card h3{margin:0 0 6px;padding:5px 8px;font-size:13px;font-weight:700;background:#e3e7eb;border-left:4px solid var(--acc);display:flex;justify-content:space-between;align-items:center}
+.kv tr:nth-child(odd){background:#f5f6f8}.kv th,.kv td{padding:4px 8px}
+.grid th{background:#d9dee3;border:1px solid var(--line);font-size:12px}.grid td{border:1px solid var(--line2)}
+.btn{background:linear-gradient(#fff,#e3e6ea);border:1px solid #8b939c;border-radius:2px;padding:4px 11px;font-size:12px}
+.btn.pri{background:linear-gradient(#5b95cf,#3a78b6);border-color:#2c5f92;color:#fff}
+"""
+CSS["lenovo1"] = CSS["lenovo"] + """
+:root{--acc:#3b78c3}
+.top{background:#2a3138;border-bottom:3px solid #5b6570}
+.nav{background:#f4f5f7;color:#1e2226;border-right:1px solid var(--line)}
+.navg{color:#1e2226}.navg:hover{background:#e6e9ed}.navg.on{background:#dfe8f5;color:#000;border-left-color:var(--acc)}
+.navsub{color:#3d4650}.navsub.on{color:#000}
+body{background:#fff}.card{border:1px solid var(--line);border-top:1px solid var(--line);box-shadow:none}
+.card h3{background:#f4f5f7;border-bottom:1px solid var(--line)}
+"""
+CSS["smc13"] = CSS["lenovo"] + """
+:root{--acc:#2f6fe0;--mut:#5d6573;--line:#dde2ea;--line2:#eef1f5}
+body{font:13.5px/1.45 "Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f4f6fa}
+.top{background:#fff;color:#1b2333;border-bottom:1px solid var(--line)}.topr button{color:#1b2333}
+.brand .mk{border-color:#2f6fe0;color:#2f6fe0}.brand .sys{color:#5d6573;border-color:var(--line)}.topr .sim{color:#c26a00}
+.nav{background:#16203a;color:#c7cee0}.navg{color:#c7cee0}.navg:hover{background:#1f2b4b}
+.navg.on{background:#24345c;color:#fff;border-left-color:#4d8bff}.navsub{color:#9ea9c4}.navsub.on{color:#fff}
+.card{border-top:0;border-radius:8px;box-shadow:0 1px 3px rgba(20,30,60,.12)}
+.card h3{font-size:14px}.btn{border-radius:6px}.btn.pri{background:#2f6fe0;border-color:#2f6fe0}
+"""
+
+
 def css(sk):
-    return BASE_CSS + CSS[sk["shell"]]
+    return BASE_CSS + CSS[sk.get("css", sk["shell"])]
 
 
 def page(title, head, body, sk):
@@ -488,7 +603,9 @@ def page(title, head, body, sk):
 
 
 def skin_of(h):
-    return SKINS[h.bmc.family if h.bmc.family in SKINS else "hpe"]
+    b = h.bmc
+    fam = b.family if b.family in SKINS else "hpe"
+    return SKINS[VARIANT.get((fam, b.gen), fam)]
 
 
 def cfg(h, sk):
@@ -501,7 +618,7 @@ def cfg(h, sk):
         items = [i for i in g["items"] if i["k"] in PAGES]
         if items:
             menu.append(dict(g, items=items))
-    return {"vendor": b.vendor, "family": b.family, "shell": sk["shell"], "product": product(sk, b),
+    return {"vendor": b.vendor, "family": b.family, "shell": sk["shell"], "dash": sk.get("dash", sk["shell"]), "navSub": bool(sk.get("nav_sub")), "product": product(sk, b),
             "profile": profile(b), "model": b.model, "serial": b.serial, "gen": b.gen_label,
             "hostLabel": b.hostname or b.dhcp_hostname() or b.model,
             "sys": f"/redfish/v1/Systems/{sysid}", "mgr": f"/redfish/v1/Managers/{mgrid}",
@@ -562,6 +679,14 @@ body{background:#fff}.lg{min-height:100vh;display:flex;flex-direction:column}
 }
 
 
+LOGIN_EXTRA = {
+    "dell8": "body{background:linear-gradient(#5a6c82,#25354a)}.box{border-radius:6px;background:linear-gradient(#fff,#eef2f6)}",
+    "hpe4": "body{background:linear-gradient(#59636d,#2b3137)}.lg .mk{background:#7dbf3f}.lg .btn{background:#3a78b6;border-color:#3a78b6}",
+    "lenovo1": ".box .hd{background:#2a3138;border-bottom:3px solid #5b6570}",
+    "smc13": "body{background:linear-gradient(135deg,#16203a,#2a3f73)}.box{border-radius:10px;overflow:hidden}.box .hd{background:#fff;color:#16203a;border-bottom:1px solid #dde2ea}.box .hd .mk{border-color:#2f6fe0;color:#2f6fe0}.btn.pri{background:#2f6fe0;border-color:#2f6fe0;border-radius:6px}",
+}
+
+
 def login_html(h, error="", expired=False):
     sk = skin_of(h)
     b, t = h.bmc, texts(h, sk)
@@ -571,7 +696,8 @@ def login_html(h, error="", expired=False):
     pw = ("<input id=password name=password type=password autocomplete=current-password>")
     lang = ("<select><option>English</option><option>Deutsch</option></select>")
     btn = f"<button id=login-btn type=submit class='btn pri'>{sk['login_btn']}</button>"
-    s = sk["shell"]
+    s = sk.get("login", sk["shell"])
+    s = {"dell8": "dell", "hpe4": "hpe", "lenovo1": "lenovo", "smc13": "lenovo"}.get(s, s)
     if s == "hpe":
         body = f"""<div class=lg><div class=who><div class=mk></div><h1>{prod}</h1>
 <div class=m>{b.model}</div><div class=m>{b.hostname or b.dhcp_hostname() or ''}</div></div>
@@ -595,7 +721,7 @@ def login_html(h, error="", expired=False):
 <div class=row><label>Username</label><input id=username name=username type=text autocomplete=username autofocus></div>
 <div class=row><label>Password</label>{pw}</div><div class=row><label>Language</label>{lang}</div>{btn}{sim}</form></div></div></div>"""
     body += "<script>" + LOGIN_JS % (json.dumps(sk["home"]), json.dumps(t["wrong"])) + "</script>"
-    return page(f"{prod} – Login", LOGIN_CSS[s], body, sk)
+    return page(f"{prod} – Login", LOGIN_CSS[s] + LOGIN_EXTRA.get(sk.get("login", ""), ""), body, sk)
 
 
 def app_html(h):
@@ -638,7 +764,7 @@ html,body{background:#0b0d10;color:#cfd6df;overflow:hidden}
 #scr pre{margin:0;font:15px/17px 'DejaVu Sans Mono',Consolas,monospace;color:#d8dde6;white-space:pre;outline:0;min-width:80ch;min-height:425px}
 #scr.dark pre{color:#444}.cur{background:#d8dde6;color:#000}
 .sbar{position:fixed;left:0;right:0;bottom:0;padding:4px 12px;font-size:11.5px;display:flex;gap:18px}
-""" + CON_CSS[sk["shell"]]
+""" + CON_CSS[{"dell8": "dell", "hpe4": "hpe", "lenovo1": "lenovo", "smc13": "lenovo"}.get(sk.get("css", ""), sk["shell"])]
 
     def item(lbl, act):
         return f"<button class=mi data-a='{act}'>{lbl}</button>" if isinstance(act, str) else (
@@ -688,7 +814,7 @@ def handle(h, method, p):
     b = h.bmc
     if b.family not in SKINS:
         return False
-    sk = SKINS[b.family]
+    sk = skin_of(h)
     home = urlsplit(sk["home"]).path
     qs = parse_qs(urlsplit(h.path).query)
     if method == "GET":

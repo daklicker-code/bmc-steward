@@ -526,7 +526,10 @@ class ServerSim:
 
     @property
     def lic_name(self):
-        return TIERS[_fam(self.bmc)][self.lic["tier"]]
+        name = TIERS[_fam(self.bmc)][self.lic["tier"]]
+        if _fam(self.bmc) == "dell":          # iDRAC8/iDRAC10 heißen in der Lizenz wie ihre Generation
+            name = name.replace("iDRAC9", (self.bmc.gen_label or "iDRAC9").split()[0])
+        return name
 
     def lic_masked(self):
         k = self.lic["key"]

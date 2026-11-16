@@ -107,7 +107,8 @@
       h = '<div class="lay"><aside class="nav"><div class="brandblk"><div class="mk"></div><div class="p">' + esc(C.product) +
         '</div><div class="m">' + esc(C.hostLabel) + '</div><div class="m">' + esc(C.model) + "</div>" + simTag + "</div>" +
         C.menu.map(function (g, gi) { return '<a class="navg" data-g="' + gi + '" href="' + href(g.items[0].k) + '">' + ico(g.icon) +
-          esc(g.label) + "</a>"; }).join("") +
+          esc(g.label) + "</a>" + (C.navSub ? g.items.map(function (i) {
+            return '<a class="navsub" data-k="' + i.k + '" data-sub="' + gi + '" href="' + href(i.k) + '">' + esc(i.label) + "</a>"; }).join("") : ""); }).join("") +
         '<div class="navthumb"><div class="thumb" id="navthumb"><pre></pre></div><div class="lnk"><a href="#" id="nav-h5">HTML5</a>' +
         '<a href="#/console">' + esc(C.t.remoteConsole) + "</a></div></div></aside>" +
         '<div class="main"><header class="top"><h1 id="ptitle"></h1><div class="icons">' +
@@ -169,7 +170,8 @@
     if (side) side.innerHTML = it.g.items.map(function (i) {
       return '<a class="' + (i.k === k ? "on" : "") + '" href="' + href(i.k) + '">' + esc(i.label) + "</a>"; }).join("");
     var pt = document.getElementById("ptitle");
-    if (S === "hpe") pt.innerHTML = esc(it.g.label) + " - <b>" + esc(it.label) + "</b>";
+    if (S === "hpe" && C.dash === "dell") pt.innerHTML = esc(it.g.label) + " &rsaquo; <b>" + esc(it.label) + "</b>";
+    else if (S === "hpe") pt.innerHTML = esc(it.g.label) + " - <b>" + esc(it.label) + "</b>";
     else if (S === "dell") pt.textContent = it.g.label;
     else pt.textContent = it.label;
     var pd = document.getElementById("pdesc");
@@ -358,7 +360,7 @@
 
   /* ---------- weitere Seiten ---------- */
   var P = {};
-  P.overview = function (el) { return DASH[S](el); };
+  P.overview = function (el) { return DASH[C.dash || S](el); };
   P.sysinfo = function (el) {
     return Promise.all([members(C.sys + "/Processors"), members(C.sys + "/Memory"),
       members(C.sys + "/EthernetInterfaces")]).then(function (r) {

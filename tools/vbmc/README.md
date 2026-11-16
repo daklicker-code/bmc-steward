@@ -153,6 +153,17 @@ Ab 1.7: **herstellernahe Oberflächen.** Jeder Skin folgt dem Bedienkonzept des 
 | Lenovo (XCC2-Stil) | dunkle Kopfleiste, dunkle Navigation links mit Untermenüs | Zustandskacheln + aktive Ereignisse, Systeminformationen, Schnellaktionen, Konsolenvorschau, Leistungsbalken | Screen Capture/Keyboard/Power/… |
 | Supermicro (klassisch) | Banner, blaue Menüleiste, graue Untermenü-Spalte, blaue Titel mit Beschreibung | Summary, Konsolenvorschau, „Power Control via IPMI“ | Virtual Media/Macro/Options/Power Control/Exit |
 
+Ab 1.8 je Generation eigene Varianten (Auswahl automatisch über die Generation des Servers):
+
+| Generation | Rahmen |
+|---|---|
+| Dell iDRAC8 | Baum-Navigation links (Server / Controller Settings / Hardware / Storage), Reiter als Karteikarten, graublaue Verläufe |
+| HPE iLO 4 (auch iLO 3) | graue Abschnittsbalken links mit Unterpunkten, dunkle Titelleiste, blaue Reiter |
+| Lenovo XCC1 | wie XCC2, aber helle Navigation und flache Kästen |
+| Supermicro X13/H13 | neue Oberfläche: dunkelblaue Navigation links, weiße Kopfleiste, abgerundete Kacheln |
+
+iLO 3 hat im Simulator kein Redfish; die Anmeldeseite erscheint, die Verwaltungsoberfläche bleibt dort leer.
+
 Rechtliche Leitplanken (in `vbsim/webui/engine.py` dokumentiert, beim Weiterbauen beibehalten): kein Logo,
 keine Wortmarke, keine Hersteller-Schrift, -Grafik oder -Icons (alle Symbole sind eigene SVG-Formen); kein
 Code/CSS aus Hersteller-Firmware; Seitentitel sind Gattungsbegriffe („Remote Access Controller“,

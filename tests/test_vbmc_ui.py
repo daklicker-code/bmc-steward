@@ -68,6 +68,17 @@ class TestBrowserUi(unittest.TestCase):
                     self.assertIsNone(err, f"{v}/{k}: Fehler auf der Seite: {err.inner_text() if err else ''}")
                 self.assertEqual(self.errors, [], f"{v}: JavaScript-Fehler")
 
+    def test_generation_skins_render_without_script_errors(self):
+        """Ältere/neuere Generationen haben eigene Skins (iDRAC8, iLO 4, XCC1, Supermicro X13)."""
+        for v, gen in (("dell", "idrac8"), ("hpe", "ilo4"), ("lenovo", "xcc1"), ("smc", "x13")):
+            with self.subTest(f"{v}/{gen}"):
+                b, page, base = self._open(v, gen=gen)
+                for k in ("overview", "sysinfo", "storage", "power", "thermal", "events", "console", "vmedia", "license"):
+                    page.goto(f"{base}/#/{k}")
+                    page.wait_for_selector("#main .card, #main .err", timeout=8000)
+                    self.assertIsNone(page.query_selector("#main .err"), f"{v}/{gen}/{k}")
+                self.assertEqual(self.errors, [], f"{v}/{gen}: JavaScript-Fehler")
+
     def test_power_button_changes_server_state(self):
         b, page, base = self._open("hpe")
         page.goto(f"{base}/#/power")
