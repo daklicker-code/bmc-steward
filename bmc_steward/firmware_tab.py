@@ -17,6 +17,7 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt
 
 from . import i18n
+from .applog import LOG
 from .i18n import HERE, T
 from .redfish import FirmwareEngineThread, FirmwareReadThread
 
@@ -325,6 +326,7 @@ class FirmwareTabMixin:
         if bold:
             style += "font-weight:bold;"
         self.fw_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info(T("Firmware") + ": " + text, color, bold)
 
     def fw_show_line(self, line, kind=""):
         self.fw_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")

@@ -26,6 +26,7 @@ from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 
+from .applog import LOG, LevelCombo, LogView, open_in_editor
 from .i18n import HERE, T
 from .core import WINDOWS, local_network
 
@@ -129,6 +130,7 @@ class VbmcTabMixin:
         self.vbmc_proc = None
         self.vbmc_servers = []           # letzter Zustand der laufenden Server (aus @@STATE)
         self.vbmc_buf = ""
+        self.vbmc_last = ""
         self.vbmc_cfgfile = None
         self.vbmc_run_mode = None
 
@@ -326,25 +328,18 @@ class VbmcTabMixin:
         arow.addStretch()
         rl.addLayout(arow)
 
-        self.vbmc_log = QPlainTextEdit()
-        self.vbmc_log.setReadOnly(True)
-        self.vbmc_log.setFont(QFont("monospace"))
-        self.vbmc_log.setPlaceholderText(T("Ausgabe des Clusters (DHCP, Umzüge, Hinweise) …"))
+        self.vbmc_log = LogView()                   # dasselbe Protokoll wie im Hauptfenster
 
         lbox = QGroupBox(T("Protokoll"))
         ll = QVBoxLayout(lbox)
         lrow = QHBoxLayout()
-        self.vbmc_log_open_btn = QPushButton(T("Protokoll anzeigen …"))
-        self.vbmc_log_open_btn.setToolTip(T("Schreibt die aktuelle Ausgabe des Clusters in eine Textdatei und "
-                                            "öffnet sie im Standardprogramm für Textdateien (z. B. zum Suchen "
-                                            "in einem langen Protokoll)."))
+        self.vbmc_log_open_btn = QPushButton(T("Protokoll"))
+        self.vbmc_log_open_btn.setToolTip(T("Öffnet das Protokoll als Textdatei im Standard-Editor.\n"
+                                            "Passwörter stehen nicht darin; geändert wird nichts."))
         self.vbmc_log_open_btn.clicked.connect(self.vbmc_open_log)
-        self.vbmc_log_save_btn = QPushButton(T("Protokoll speichern …"))
-        self.vbmc_log_save_btn.setToolTip(T("Speichert die Ausgabe des Clusters als Textdatei, z. B. um einen "
-                                            "Fehler wie „Gerät nicht erreichbar“ weiterzugeben."))
-        self.vbmc_log_save_btn.clicked.connect(self.vbmc_save_log)
+        self.vbmc_log_level = LevelCombo()
         lrow.addWidget(self.vbmc_log_open_btn)
-        lrow.addWidget(self.vbmc_log_save_btn)
+        lrow.addWidget(self.vbmc_log_level)
         lrow.addStretch()
         ll.addLayout(lrow)
         ll.addWidget(self.vbmc_log)
@@ -636,44 +631,11 @@ class VbmcTabMixin:
     def vbmc_set_status(self, text, err=False):
         self.vbmc_status.setText(text)
         self.vbmc_status.setStyleSheet("color: #c9302c;" if err else "color: #2e9e4f;")
+        LOG.info(T("Testlabor") + ": " + text, "#c9302c" if err else None)
 
     def vbmc_open_log(self):
-        """Schreibt die aktuelle Ausgabe des Clusters in eine Textdatei und öffnet sie im Standardprogramm
-        für Textdateien - zum Durchsuchen/Vergrößern, ohne die eingebettete Anzeige zu verlassen."""
-        text = self.vbmc_log.toPlainText()
-        if not text.strip():
-            self.vbmc_set_status(T("Das Protokoll ist noch leer."), True)
-            return
-        path = Path(tempfile.gettempdir()) / ("vbmc-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
-        try:
-            path.write_text(text + "\n", encoding="utf-8")
-        except OSError as e:
-            QMessageBox.warning(self, T("Protokoll anzeigen"), T('Datei nicht schreibbar:\n{0}').format(e))
-            return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(self, T("Protokoll anzeigen"),
-                                T("Kein Standardprogramm für Textdateien gefunden.\nDatei liegt unter {0}")
-                                .format(path))
-            return
-        self.vbmc_set_status(T("Protokoll geöffnet: {0}").format(path))
-
-    def vbmc_save_log(self):
-        """Schreibt die Ausgabe des Clusters in eine Textdatei, z. B. um einen Fehlschlag weiterzugeben."""
-        text = self.vbmc_log.toPlainText()
-        if not text.strip():
-            self.vbmc_set_status(T("Das Protokoll ist noch leer."), True)
-            return
-        name = "vbmc-" + time.strftime("%Y%m%d-%H%M%S") + ".log"
-        path, _ = QFileDialog.getSaveFileName(self, T("Protokoll speichern"), str(HERE / name),
-                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
-        if not path:
-            return
-        try:
-            Path(path).write_text(text + "\n", encoding="utf-8")
-        except OSError as e:
-            QMessageBox.warning(self, T("Protokoll speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
-            return
-        self.vbmc_set_status(T("Protokoll gespeichert in {0}").format(path))
+        """Öffnet das gemeinsame Protokoll als Textdatei im Standard-Editor."""
+        open_in_editor(self)
 
     def vbmc_running(self):
         return self.vbmc_proc is not None and self.vbmc_proc.state() != QProcess.ProcessState.NotRunning
@@ -728,7 +690,8 @@ class VbmcTabMixin:
         else:
             program, pre = sys.executable, ["-u"]                 # -u: Ausgabe sofort
 
-        self.vbmc_log.clear()
+        LOG.info(T("— Testlabor wird gestartet —"), "gray")
+        self.vbmc_last = ""
         self.vbmc_buf = ""
         self.vbmc_servers = []
         self.vbmc_run_mode = mode
@@ -783,8 +746,10 @@ class VbmcTabMixin:
                 self._vbmc_drop_cfg()       # der Cluster hat das Szenario gelesen
             else:
                 out.append(line.rstrip("\r"))
-        if out:
-            self.vbmc_log.appendPlainText("\n".join(out).rstrip("\n"))
+        for line in out:
+            if line.strip():
+                self.vbmc_last = line
+                LOG.info(T("Testlabor") + ": " + line)
 
     def _vbmc_drop_cfg(self):
         if self.vbmc_cfgfile:
@@ -801,7 +766,8 @@ class VbmcTabMixin:
     def vbmc_finished(self, code=0, *_):
         self._vbmc_drop_cfg()
         if self.vbmc_buf.strip():
-            self.vbmc_log.appendPlainText(self.vbmc_buf.rstrip())
+            self.vbmc_last = self.vbmc_buf.rstrip()
+            LOG.info(T("Testlabor") + ": " + self.vbmc_last)
             self.vbmc_buf = ""
         self._vbmc_lock(False)
         self.vbmc_adopt_ready(False)
@@ -810,8 +776,7 @@ class VbmcTabMixin:
         if code in (126, 127) and self.vbmc_proc and self.vbmc_proc.program() == "pkexec":
             self.vbmc_set_status(T("Rechteabfrage abgebrochen, der Cluster wurde nicht gestartet."), True)
         elif code:
-            last = [l for l in self.vbmc_log.toPlainText().splitlines() if l.strip()]
-            self.vbmc_set_status(T("Cluster beendet mit Fehler: {0}").format(last[-1] if last else code), True)
+            self.vbmc_set_status(T("Cluster beendet mit Fehler: {0}").format(self.vbmc_last or code), True)
         else:
             self.vbmc_set_status(T("Cluster gestoppt."))
 

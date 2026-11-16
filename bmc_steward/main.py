@@ -5,6 +5,7 @@ from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QProcess, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
 import html
+import platform
 import ipaddress
 import json
 import os
@@ -27,7 +28,8 @@ from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
-from . import selfguard, trust
+from . import applog, selfguard, trust
+from .applog import LOG, LevelCombo, LogLabel, LogView
 
 
 DHCP_YELLOW = "#c9a100"      # Menüpunkt „DHCP-Server“ als dunkelgelber Knopf
@@ -244,20 +246,17 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                                      "Nur lesend, ein Anmeldeversuch je Gerät mit dem Passwort der Zeile (iLO 3/4: ohne Anmeldung).\n"
                                      "Das geschieht auch automatisch beim Eintragen einer Aktuellen IP. Eingetragenes wird nie überschrieben."))
         self.serial_btn.clicked.connect(self.read_serials)
-        log_open = QPushButton(T("Protokoll öffnen"))
+        log_open = QPushButton(T("Protokoll"))
         log_open.setToolTip(T("Öffnet das Protokoll als Textdatei im Standard-Editor.\n"
                               "Passwörter stehen nicht darin; geändert wird nichts."))
         log_open.clicked.connect(self.open_log)
-        log_save = QPushButton(T("Protokoll speichern …"))
-        log_save.setToolTip(T("Speichert das Protokoll als Textdatei, z. B. für die Dokumentation.\n"
-                              "Passwörter stehen nicht darin."))
-        log_save.clicked.connect(self.save_log)
+        self.log_level = LevelCombo()
         actions = QHBoxLayout()
         actions.addWidget(self.dry)
         actions.addStretch()
         actions.addWidget(self.serial_btn)
         actions.addWidget(log_open)
-        actions.addWidget(log_save)
+        actions.addWidget(self.log_level)
         actions.addWidget(self.stop)
         actions.addWidget(self.start)
 
@@ -276,10 +275,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         hints.addWidget(legend)
 
         # --- Protokoll ---
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self.status = QLabel(T("Bereit"))
+        self.log = LogView()                       # gemeinsames Protokoll, auch im Testlabor
+        self.status = LogLabel(T("Bereit"))
 
         upper = QWidget()
         u = QVBoxLayout(upper)
@@ -387,6 +384,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.mode_changed()
         self.bios_mode_changed()
         self.svc_mode_changed()
+        self.tabs.currentChanged.connect(self.page_logged)
+        applog.watch(self)
+        w, h = self.width(), self.height()
+        LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
+
+    def page_logged(self, i):
+        item = self.tabs.menu.item(i)
+        if item is not None:
+            LOG.info(T("Seite: {0}").format(item.text()))
 
     # ---------- Hilfen ----------
     @staticmethod
@@ -602,10 +608,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         return w
 
     def say(self, text, color=None, bold=False):
-        style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
-        if bold:
-            style += "font-weight:bold;"
-        self.log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info(text, color, bold)
 
     # ---------- Serverliste ----------
     def add_row(self, values=None, vendor_text=""):
@@ -1005,6 +1008,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             self.stop_scanner()
             event.accept()
             return
+        LOG.debug(T("Fenster wird geschlossen"))
         if self.running():
             QMessageBox.information(self, T("Lauf aktiv"), T("Es läuft noch eine Konfiguration. "
                                     "Bitte warten oder erst abbrechen."))
@@ -1433,6 +1437,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if bold:
             style += "font-weight:bold;"
         self.bios_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info(T("UEFI-Einstellungen") + ": " + text, color, bold)
 
     def bios_show_line(self, line, kind=""):
         self.bios_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
@@ -1627,6 +1632,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
     def dlog(self, text, color=None):
         style = "white-space:pre-wrap;" + (f"color:{color};" if color else "")
         self.dhcp_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info("DHCP: " + text, color)
 
     def dhcp_running(self):
         return (bool(self.dhcp) and self.dhcp.state() != QProcess.ProcessState.NotRunning) \
@@ -1950,7 +1956,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                                 info, n if far else None):
                 return
 
-        self.log.clear()
         skipped = len(self.rows()) - n
         mode = T("Trockenlauf") if dry else T("Scharfer Lauf")
         self.say(T('— {0}, {1} Server').format(mode, n) + (T(', {0} fertige übersprungen').format(skipped) if skipped else "") + " —", "gray")
@@ -2148,6 +2153,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
     def ex_say(self, text, color=None, bold=False):
         style = "white-space:pre-wrap;" + (f"color:{color};" if color else "") + ("font-weight:bold;" if bold else "")
         self.ex_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info(T("Bestandsserver") + ": " + text, color, bold)
 
     def ex_show_line(self, line, kind=""):
         self.ex_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
@@ -2582,6 +2588,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if bold:
             style += "font-weight:bold;"
         self.svc_log.append(f'<span style="{style}">{html.escape(text)}</span>')
+        LOG.info(T("Dienste") + ": " + text, color, bold)
 
     def svc_show_line(self, line, kind=""):
         self.svc_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
@@ -3023,42 +3030,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.bios_start.setStyleSheet("" if dry else LIVE_CSS)
 
     def open_log(self):
-        """Öffnet das aktuelle Protokoll als Textdatei im Standard-Editor (Passwörter stehen nicht darin)."""
-        text = self.log.toPlainText()
-        if not text.strip():
-            self.status.setText(T("Das Protokoll ist noch leer."))
-            return
-        path = Path(tempfile.gettempdir()) / ("bmc-steward-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
-        try:
-            path.write_text(text + "\n", encoding="utf-8")
-        except OSError as e:
-            QMessageBox.warning(self, T("Protokoll öffnen"), T('Datei nicht schreibbar:\n{0}').format(e))
-            return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(self, T("Protokoll öffnen"),
-                                T("Kein Standardprogramm für Textdateien gefunden.\nDatei liegt unter {0}").format(path))
-            return
-        self.status.setText(T("Protokoll geöffnet: {0}").format(path))
-
-    def save_log(self):
-        """Schreibt das Protokoll des letzten Laufs in eine Textdatei (enthält keine Passwörter)."""
-        text = self.log.toPlainText()
-        if not text.strip():
-            self.status.setText(T("Das Protokoll ist noch leer."))
-            return
-        name = "bmc-steward-" + time.strftime("%Y%m%d-%H%M%S") + ".log"
-        path, _ = QFileDialog.getSaveFileName(self, T("Protokoll speichern"), str(HERE / name),
-                                              T("Text (*.log *.txt);;Alle Dateien (*)"))
-        if not path:
-            return
-        try:
-            Path(path).write_text(text + "\n", encoding="utf-8")
-        except OSError as e:
-            QMessageBox.warning(self, T("Protokoll speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
-            return
-        self.status.setText(T("Protokoll gespeichert in {0}").format(path))
-
-
+        """Öffnet das gemeinsame Protokoll als Textdatei im Standard-Editor."""
+        applog.open_in_editor(self)
 
 
 def _excepthook(kind, err, tb):
@@ -3082,6 +3055,13 @@ def run():
     if selfguard.get().virt and "QT_QUICK_BACKEND" not in os.environ:
         os.environ["QT_QUICK_BACKEND"] = "software"
     app = QApplication(sys.argv)
+    applog.install(app)                       # jede Bedienung ins Protokoll
+    LOG.info(T("BMC-Steward {0} gestartet").format(__version__), bold=True)
+    LOG.info(T("Sprache: {0}").format(i18n.LANG))
+    LOG.info(T("Trockenlauf ist voreingestellt: Es wird erst etwas geändert, wenn „Scharf starten“ gedrückt wird."))
+    LOG.debug(T("System: {0} · Python {1} · Qt {2}").format(platform.platform(), platform.python_version(), QT_VERSION_STR))
+    LOG.debug(T("Datenordner: {0}").format(i18n.DATA))
+    LOG.debug(T("Eigener Rechner: {0}").format(selfguard.get().virt or T("echte Hardware")))
     app.setApplicationName("bmc-steward")
     app.setApplicationDisplayName("BMC-Steward")
     app.setDesktopFileName("bmc-steward")
@@ -3092,6 +3072,7 @@ def run():
     app.aboutToQuit.connect(lambda: MAIN.stop_scanner())
     code = app.exec()
     MAIN.stop_scanner()
+    LOG.info(T("BMC-Steward beendet"))
     return code
 
 
