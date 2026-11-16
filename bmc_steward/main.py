@@ -122,6 +122,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.new_pass2_chk.toggled.connect(self.touch)
         self.new_pass2_chk.toggled.connect(self.update_missing)
         f.addRow(self.new_pass2_chk, self.new_pass2_box)
+        self.lock_factory = QCheckBox(T("Werkskonto danach sperren (empfohlen)"))
+        self.lock_factory.setChecked(True)
+        self.lock_factory.setToolTip(T(
+            "Nach der Kontrolle meldet sich das Tool mit dem neuen Administrator unter der neuen Adresse an und\n"
+            "sperrt das Werkskonto (root, Administrator, ADMIN, USERID), dessen Passwort auf dem Aufkleber steht.\n"
+            "Nur wenn der neue Administrator dort nachweislich funktioniert und Administratorrechte hat.\n"
+            "Kann ein BMC Konten nicht abschalten, bekommt das Werkskonto ein Zufallspasswort, das nirgends\n"
+            "gespeichert wird; mit dem neuen Administrator lässt es sich jederzeit zurücksetzen."))
+        f.addRow(self.lock_factory)
         self.tip_row(f, T("User-Slot (nur Dell)"), self.slot,
                      T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
                      "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
@@ -415,7 +424,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 "mask": self.def_mask.text().strip(), "gateway": self.def_gw.text().strip(),
                 "dhcp_if": (self.iface.currentData() or [""])[0],
                 "dhcp_from": self.dhcp_from.text().strip(), "dhcp_to": self.dhcp_to.text().strip(),
-                "dhcp_auto": self.auto_take.isChecked()}
+                "dhcp_auto": self.auto_take.isChecked(), "lock_factory": self.lock_factory.isChecked()}
 
     def apply_profile(self, p):
         dirty = self.dirty                      # ein Profilwechsel ändert die Serverliste nicht
@@ -433,6 +442,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             self.dhcp_from.setText(str(p["dhcp_from"]))
             self.dhcp_to.setText(str(p["dhcp_to"]))
         self.auto_take.setChecked(bool(p.get("dhcp_auto", True)))      # ältere Profile ohne Angabe: an
+        self.lock_factory.setChecked(bool(p.get("lock_factory", True)))
         self.validate_defaults()
         self.validate_range()
         self.dirty = dirty
@@ -1920,6 +1930,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             if far:
                 info += "\n\n" + (T("⚠ Die aktuelle IP liegt in keinem Netz, an dem dieser Rechner direkt hängt. "
                                   "Für ein Staging-Gerät ist das ungewöhnlich. Ist es wirklich das richtige Gerät?"))
+            if self.lock_factory.isChecked():
+                info += "\n\n" + T("Nach erfolgreicher Kontrolle wird auf jedem Server das Werkskonto gesperrt. Danach "
+                                    "gilt nur noch der neue Administrator – Passwort vorher sicher ablegen.")
             if not self.confirm(T("Scharf ausführen?"),
                                 T('{0} Server werden jetzt wirklich umgestellt (Benutzer, Hostname, feste IP).').format(n),
                                 info, n if far else None):
@@ -1932,7 +1945,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.worker = EngineThread(
             self, rows=todo, cur_user=self.cur_user.text().strip(), cur_pass=self.cur_pass.text(),
             new_user=self.new_user.text(), new_pass=self.new_pass.text(), slot=self.slot.value(), dry=dry,
-            vendor=self.vendor.currentData() or None)
+            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked())
         self.worker.line.connect(self.show_line)
         self.worker.row_done.connect(self.mark_done)
         self.worker.result.connect(self.done)
@@ -2875,6 +2888,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             "slot": self.slot.value(), "iface": (self.iface.currentData() or [None])[0],
             "texts": {k: getattr(self, k).text() for k in self.STATE_FIELDS},
             "new_pass2_chk": self.new_pass2_chk.isChecked(),
+            "lock_factory": self.lock_factory.isChecked(),
             "auto_take": self.auto_take.isChecked(), "lease_taken": sorted(self.lease_taken),
             "rows": [([self.cell(r, c) for c in range(len(i18n.COLS))], self.is_done(r))
                      for r in range(self.table.rowCount())],
@@ -2895,6 +2909,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         for key, text in s["texts"].items():
             getattr(self, key).setText(text)
         self.new_pass2_chk.setChecked(s.get("new_pass2_chk", False))
+        self.lock_factory.setChecked(s.get("lock_factory", True))
         self.auto_take.setChecked(s.get("auto_take", True))
         self.lease_taken = set(s.get("lease_taken", []))
         self.table.blockSignals(True)

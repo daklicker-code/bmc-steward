@@ -1265,3 +1265,55 @@ class TestHardeningLive(_WebBase):
             self.assertEqual(b.extra["lockout"]["AccountLockoutThreshold"], 5)
             self.assertEqual(b.extra["lockout"]["AccountLockoutDuration"], 900)
             self.assertEqual(b.extra["session_timeout"], 1200)
+
+
+class TestFactoryLockLive(_WebBase):
+    """Werkskonto sperren: angemeldet als neuer Administrator, gegen echte Redfish-/RIBCL-Antworten."""
+
+    def _engine(self, lines):
+        qapp()
+        from bmc_steward.redfish import Engine
+        return Engine(rows=[], cur_user="", cur_pass="", new_user="ops", new_pass="Sicher-Passw0rt!", dry=False,
+                      log=lambda line, kind="": lines.append(line))
+
+    def test_disables_factory_account_on_all_redfish_vendors(self):
+        for vendor in ("dell", "hpe", "lenovo", "smc"):
+            b, port = self._start(vendor)
+            factory, pw = FACTORY_LOGIN[vendor]
+            b.add_account("ops", "Sicher-Passw0rt!", "Administrator", True)
+            lines = []
+            eng = self._engine(lines)
+            self.assertTrue(eng.lock_factory_account(f"127.0.0.1:{port}", vendor, factory), "\n".join(lines))
+            eng.close_sessions()
+            self.assertFalse(b.accounts[factory]["enabled"], vendor)
+            self.assertFalse(b.check_auth(factory, pw), vendor)
+            self.assertTrue(b.check_auth("ops", "Sicher-Passw0rt!"), vendor)
+
+    def test_keeps_factory_account_if_new_user_not_admin(self):
+        b, port = self._start("dell")
+        b.add_account("ops", "Sicher-Passw0rt!", "ReadOnly", True)
+        lines = []
+        eng = self._engine(lines)
+        self.assertFalse(eng.lock_factory_account(f"127.0.0.1:{port}", "dell", "root"))
+        eng.close_sessions()
+        self.assertTrue(b.accounts["root"]["enabled"])
+        self.assertIn("bleibt", "\n".join(lines))
+
+    def test_wrong_new_password_never_locks(self):
+        b, port = self._start("dell")
+        b.add_account("ops", "anderes-Passw0rt!", "Administrator", True)
+        lines = []
+        eng = self._engine(lines)
+        self.assertFalse(eng.lock_factory_account(f"127.0.0.1:{port}", "dell", "root"))
+        self.assertTrue(b.accounts["root"]["enabled"])
+
+    def test_ilo4_gets_random_password(self):
+        b, port = self._start("hpe_old")
+        factory = "Administrator"
+        old = b.accounts[factory]["password"]
+        b.add_account("ops", "Sicher-Passw0rt!", "Administrator", True)
+        lines = []
+        eng = self._engine(lines)
+        self.assertTrue(eng.lock_factory_account(f"127.0.0.1:{port}", "hpe_old", factory), "\n".join(lines))
+        self.assertNotEqual(b.accounts[factory]["password"], old)
+        self.assertNotIn(b.accounts[factory]["password"], "\n".join(lines))

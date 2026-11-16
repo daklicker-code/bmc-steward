@@ -163,3 +163,109 @@ class TestSecretScrub(unittest.TestCase):
         for leak in ("geheim", "public", '"x"', '"t"'):
             self.assertNotIn(leak, out)
         self.assertIn("admin", out)
+
+
+class TestFactoryLock(unittest.TestCase):
+    def _eng(self, cur_user, new_user="ops"):
+        lines = []
+        e = Engine(rows=[], cur_user=cur_user, cur_pass="", new_user=new_user, new_pass="x", dry=True,
+                   log=lambda line, kind="": lines.append(line))
+        e.cur_user = cur_user
+        return e, lines
+
+    def test_only_factory_accounts_are_locked(self):
+        for user in ("root", "Administrator", "ADMIN", "USERID", "admin"):
+            self.assertEqual(self._eng(user)[0].factory_user_of("dell"), user)
+        self.assertIsNone(self._eng("max.mustermann")[0].factory_user_of("dell"))
+        self.assertIsNone(self._eng("root", new_user="ROOT")[0].factory_user_of("dell"))
+
+    def test_random_password_meets_rules(self):
+        for _ in range(200):
+            pw = Engine.random_password()
+            self.assertEqual(len(pw), 16)
+            self.assertRegex(pw, r"[a-z]")
+            self.assertRegex(pw, r"[A-Z]")
+            self.assertRegex(pw, r"[0-9]")
+            self.assertRegex(pw, r"[-_!+]")
+
+    def test_fallback_to_random_password_when_disable_unsupported(self):
+        calls = []
+        e, lines = self._eng("root")
+        e.dry = False
+        docs = {"/redfish/v1/AccountService/Accounts": {"Members": [{"@odata.id": "/a/2"}, {"@odata.id": "/a/3"}]},
+                "/a/2": {"UserName": "root", "Enabled": True}, "/a/3": {"UserName": "ops", "RoleId": "Administrator"}}
+
+        def api(ip, user, pw, method, path, data=None, timeout=30):
+            calls.append((method, path, data))
+            e.body = docs.get(path)
+            if method == "PATCH" and "Enabled" in data:
+                e.body = {"error": {"@Message.ExtendedInfo": [{"MessageId": "Base.1.8.PropertyNotWritable"}]}}
+                return 400
+            return 200
+        e.api = api
+        self.assertTrue(e.lock_factory_account("10.0.0.9", "hpe", "root"))
+        pw_calls = [c for c in calls if c[0] == "PATCH" and "Password" in (c[2] or {})]
+        self.assertEqual(len(pw_calls), 1)
+        self.assertEqual(pw_calls[0][1], "/a/2")
+        self.assertNotIn(pw_calls[0][2]["Password"], "\n".join(lines))
+
+
+class TestFactoryLockFlow(unittest.TestCase):
+    """Reihenfolge im Lauf: Werkskonto erst nach erfolgreicher Kontrolle unter der neuen Adresse sperren."""
+
+    def _run(self, verify_ok, lock_ok=True, lock_factory=True):
+        events = []
+
+        class E(Engine):
+            def vendor(self, ip):
+                return "dell"
+
+            def in_use(self, ip):
+                return False
+
+            def tls_mode(self, ip, timeout=10):
+                return "modern"
+
+            def backup(self, *a, **k):
+                return None
+
+            def setup_dell(self, ip, pw, new_ip, mask, gw, host):
+                events.append("setup")
+                self.verify_path = "/m"
+                return True
+
+            def check_login(self, ip, path):
+                events.append(("verify", ip))
+                return verify_ok
+
+            def identity(self, ip):
+                return ""
+
+            def lock_factory_account(self, ip, vendor, factory):
+                events.append(("lock", ip, vendor, factory))
+                return lock_ok
+
+        e = E(rows=[("10.0.0.5", "calvin", "10.0.0.50", "255.255.255.0", "10.0.0.1", "h")], cur_user="",
+              cur_pass="calvin", new_user="ops", new_pass="x", dry=False, verify_wait=1, vendor="dell",
+              log=lambda *a, **k: None, lock_factory=lock_factory)
+        e.pause = lambda s: None
+        return e.run(), events
+
+    def test_lock_after_successful_verify(self):
+        ok, ev = self._run(True)
+        self.assertTrue(ok)
+        self.assertEqual(ev, ["setup", ("verify", "10.0.0.50"), ("lock", "10.0.0.50", "dell", "root")])
+
+    def test_no_lock_when_verify_fails(self):
+        ok, ev = self._run(False)
+        self.assertFalse(ok)
+        self.assertNotIn("lock", [e[0] for e in ev if isinstance(e, tuple)])
+
+    def test_failed_lock_marks_run_failed(self):
+        ok, _ = self._run(True, lock_ok=False)
+        self.assertFalse(ok)
+
+    def test_option_off(self):
+        ok, ev = self._run(True, lock_factory=False)
+        self.assertTrue(ok)
+        self.assertNotIn("lock", [e[0] for e in ev if isinstance(e, tuple)])
