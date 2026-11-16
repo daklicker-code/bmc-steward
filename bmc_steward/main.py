@@ -1502,8 +1502,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         lb.addStretch()
         lb.addWidget(self.auto_take)
         lb.addWidget(take)
+        self.own_laptop_label = QLabel()
+        self.own_laptop_label.setVisible(False)
+        self.own_laptop_label.setStyleSheet("color: gray; font-style: italic;")
+        self.own_laptop_label.setToolTip(T("Dieser Rechner selbst hat eine Adresse vom DHCP-Server erhalten.\nEr erscheint nicht in der Geräteliste unten."))
+
         box2 = QGroupBox(T("Gefundene Geräte"))
         v = QVBoxLayout(box2)
+        v.addWidget(self.own_laptop_label)
         v.addWidget(self.leases)
         v.addLayout(lb)
 
@@ -1694,6 +1700,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             self.dhcp_thread = DhcpThread(self, ip=data[1], mask=str(me.netmask), lo=str(lo), hi=str(hi))
             self.dhcp_thread.line.connect(lambda t: self.dlog(t, "#d9534f" if t.startswith("error") else None))
             self.dhcp_thread.leases.connect(self.show_leases)
+            self.dhcp_thread.own_lease.connect(self.show_own_lease)
             self.dhcp_thread.result.connect(self.dhcp_done)
             self.dhcp_thread.start()
             return
@@ -1757,6 +1764,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.iface.setEnabled(True)
         self.dhcp_from.setEnabled(True)
         self.dhcp_to.setEnabled(True)
+        self.own_laptop_label.setVisible(False)
         hints = {126: T("Anmeldung abgebrochen"), 127: T("Start nicht möglich oder Anmeldung fehlgeschlagen"),
                  2: T("Port 67 belegt oder Karte nicht bereit, siehe Protokoll")}
         if code in (0, 15) or (self.dhcp and self.dhcp.exitStatus() == QProcess.ExitStatus.CrashExit):
@@ -1790,6 +1798,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 self.leases.setItem(r, c, QTableWidgetItem(val))
         self.lease_count.setText(T('{0} Geräte').format(len(rows)))
         self.auto_take_leases()
+
+    def show_own_lease(self, row):
+        """Eigenen Rechner über der Geräteliste anzeigen (nicht in der Liste selbst)."""
+        ip, mac, name = row
+        text = T("Dieser Rechner: {0}  –  {1}").format(ip, name or mac)
+        self.own_laptop_label.setText(text)
+        self.own_laptop_label.setVisible(True)
 
     def lease_pairs(self, rows=None):
         """(IP, MAC) der angezeigten Geräte; mit rows nur die dieser Tabellenzeilen."""
