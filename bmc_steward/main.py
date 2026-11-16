@@ -1697,6 +1697,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if WINDOWS:                                  # eingebauter Server, braucht kein Zusatzprogramm
             self.lease_file = None
             self.show_leases([])
+            # APIPA-Adresse (169.254.x.x automatisch vergeben): feste IP setzen damit
+            # der Send-Socket ans richtige Interface gebunden werden kann und die Lease
+            # beim nächsten Start noch gültig ist.
+            self._dhcp_set_ip(data[0], data[1], str(me.netmask))
             self.dhcp_thread = DhcpThread(self, ip=data[1], mask=str(me.netmask), lo=str(lo), hi=str(hi))
             self.dhcp_thread.line.connect(lambda t: self.dlog(t, "#d9534f" if t.startswith("error") else None))
             self.dhcp_thread.leases.connect(self.show_leases)
@@ -1738,12 +1742,43 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             bad = any(w in line.lower() for w in ("failed", "error", "cannot", "not authorized", "dismissed"))
             self.dlog(line, "#d9534f" if bad else None)
 
+    def _dhcp_set_ip(self, iface_name, ip, mask):
+        """Setzt auf Windows eine feste IP auf dem Interface, falls es gerade eine APIPA-Adresse hat.
+        Merkt sich ob die IP geändert wurde, damit stop_dhcp sie zurücksetzen kann."""
+        self._dhcp_restored_ip = False
+        if not WINDOWS:
+            return
+        addr = ipaddress.ip_address(ip)
+        if not addr.is_link_local:
+            return   # feste IP schon konfiguriert, nichts zu tun
+        try:
+            subprocess.run(
+                ["netsh", "interface", "ip", "set", "address",
+                 f"name={iface_name}", "static", ip, mask],
+                capture_output=True, timeout=10, creationflags=0x08000000)
+            self._dhcp_restored_ip = True
+            self.dlog(T("Interface {0}: feste IP {1}/{2} gesetzt (war APIPA)").format(iface_name, ip, mask), "gray")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.dlog(T("IP setzen fehlgeschlagen: {0}").format(e), "#d9534f")
+
     def stop_dhcp(self):
         if not self.dhcp_running():
             return
         if self.dhcp_thread and self.dhcp_thread.isRunning():
             self.dhcp_thread.requestInterruption()
             self.dhcp_thread.wait(3000)
+            # IP zurücksetzen wenn wir sie gesetzt haben
+            if getattr(self, "_dhcp_restored_ip", False):
+                data = self.iface.currentData()
+                if data:
+                    try:
+                        subprocess.run(
+                            ["netsh", "interface", "ip", "set", "address",
+                             f"name={data[0]}", "dhcp"],
+                            capture_output=True, timeout=10, creationflags=0x08000000)
+                        self._dhcp_restored_ip = False
+                    except (OSError, subprocess.SubprocessError):
+                        pass
             return
         pid = self.dhcp.processId()
         self.dhcp.terminate()
