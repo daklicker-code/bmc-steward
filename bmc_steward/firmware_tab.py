@@ -13,13 +13,31 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialo
                              QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
                              QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
                              QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
-from PyQt6.QtGui import QFontDatabase
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QDesktopServices, QFontDatabase
+from PyQt6.QtCore import Qt, QUrl
 
 from . import i18n
 from .applog import LOG
 from .i18n import HERE, T
 from .redfish import FirmwareEngineThread, FirmwareReadThread
+
+
+# Download-Seiten der Hersteller (Anzeigename, Adresse, Hinweis). Die Seiten öffnen im Standardbrowser; das Tool
+# lädt selbst nichts herunter. Hinweise stehen als deutsche Schlüssel, übersetzt wird erst beim Aufbau.
+FW_PORTALS = [
+    ("Dell", "https://www.dell.com/support/home?app=drivers",
+     "Dell Support, „Drivers & Downloads“: Service Tag eingeben, dann iDRAC- bzw. BIOS-Firmware wählen.\n"
+     "Für viele Server gibt es zusätzlich den Online-Katalog downloads.dell.com, den der iDRAC selbst abrufen kann."),
+    ("HPE", "https://support.hpe.com/",
+     "HPE Support Center: Seriennummer oder Produktname suchen, dann iLO-Firmware oder das Service Pack for ProLiant (SPP) wählen.\n"
+     "Das SPP und das System-ROM verlangen eine aktive Garantie oder einen Supportvertrag; iLO-Firmware ist ohne Prüfung ladbar."),
+    ("Lenovo", "https://datacentersupport.lenovo.com/us/en/",
+     "Lenovo Data Center Support: Seriennummer, Produktname oder Maschinentyp suchen, dann bei den Downloads die Firmware (XCC, UEFI) wählen.\n"
+     "Das Land lässt sich auf der Seite umstellen."),
+    ("Supermicro", "https://www.supermicro.com/en/support/resources/downloadcenter/firmware",
+     "Supermicro Download Center (BIOS/BMC): Mainboard-Modell suchen, z. B. X12SPED-F, dann die BMC-Datei laden.\n"
+     "Prüfsummen stehen auf der Seite. Nur flashen, wenn nötig, und den Hinweis des Herstellers zum Zurücksetzen der Einstellungen beachten."),
+]
 
 
 class FirmwareTabMixin:
@@ -79,6 +97,23 @@ class FirmwareTabMixin:
         self.fw_inv_status = QLabel()
         self.fw_inv_status.setWordWrap(True)
         iv.addWidget(self.fw_inv_status)
+
+        # --- Download-Portale der Hersteller ---
+        portal_box = QGroupBox(T("Firmware herunterladen (öffnet die Seite des Herstellers im Browser)"))
+        pr = QHBoxLayout(portal_box)
+        self.fw_portal_btns = {}
+        for name, url, tip in FW_PORTALS:
+            b = QPushButton(name)
+            b.setToolTip(T(tip) + "\n\n" + url)
+            b.clicked.connect(lambda _=False, n=name, u=url: self.fw_open_portal(n, u))
+            pr.addWidget(b)
+            self.fw_portal_btns[name] = b
+        pr.addSpacing(12)
+        portal_hint = QLabel(T("Danach die Datei unten wählen oder auf einem eigenen Webserver/NAS ablegen und per URL laden. "
+                               "Die Prüfsumme von der Download-Seite ins Feld „SHA-256“ eintragen."))
+        portal_hint.setWordWrap(True)
+        portal_hint.setStyleSheet("color:#6b7280;")
+        pr.addWidget(portal_hint, 1)
 
         # --- Quelle ---
         src_box = QGroupBox(T("Firmware-Quelle"))
@@ -166,7 +201,7 @@ class FirmwareTabMixin:
 
         settings = QWidget()
         sl = QVBoxLayout(settings)
-        for w in (box_login, inv_box, src_box, warn):
+        for w in (box_login, inv_box, portal_box, src_box, warn):
             sl.addWidget(w)
         sl.addStretch()
 
@@ -190,6 +225,13 @@ class FirmwareTabMixin:
         return page
 
     # ---------- Bedienung ----------
+    def fw_open_portal(self, name, url):
+        """Download-Seite des Herstellers im Standardbrowser öffnen (das Tool lädt selbst nichts herunter)."""
+        if QDesktopServices.openUrl(QUrl(url)):
+            LOG.info(T("Firmware-Portal {0} geöffnet: {1}").format(name, url))
+        else:
+            LOG.info(T("Firmware-Portal {0} konnte nicht geöffnet werden. Adresse: {1}").format(name, url), "#c9302c")
+
     def fw_src_changed(self, *_):
         file_mode = self.fw_src_file.isChecked()
         self.fw_file_row.setVisible(file_mode)

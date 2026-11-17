@@ -1643,6 +1643,46 @@ TR = {
 "Arrêter",
 "Stoppe"
 ],
+"Dell Support, „Drivers & Downloads“: Service Tag eingeben, dann iDRAC- bzw. BIOS-Firmware wählen.\nFür viele Server gibt es zusätzlich den Online-Katalog downloads.dell.com, den der iDRAC selbst abrufen kann.": [
+"Dell Support, “Drivers & Downloads”: enter the Service Tag, then choose the iDRAC or BIOS firmware.\nFor many servers there is also the online catalog downloads.dell.com, which the iDRAC can fetch by itself.",
+"Support Dell, « Drivers & Downloads » : saisir le Service Tag, puis choisir le firmware iDRAC ou BIOS.\nPour beaucoup de serveurs, il existe aussi le catalogue en ligne downloads.dell.com, que l'iDRAC peut interroger lui-même.",
+"Dell Support, „Drivers & Downloads“: Service Tag iigäh, denn d iDRAC- bzw. BIOS-Firmware wähle.\nFür vili Server git es zuesätzlich dr Online-Katalog downloads.dell.com, wo dr iDRAC säuber cha abrüefe."
+],
+"HPE Support Center: Seriennummer oder Produktname suchen, dann iLO-Firmware oder das Service Pack for ProLiant (SPP) wählen.\nDas SPP und das System-ROM verlangen eine aktive Garantie oder einen Supportvertrag; iLO-Firmware ist ohne Prüfung ladbar.": [
+"HPE Support Center: search by serial number or product name, then choose iLO firmware or the Service Pack for ProLiant (SPP).\nThe SPP and the system ROM require an active warranty or support contract; iLO firmware can be downloaded without that check.",
+"HPE Support Center : rechercher par numéro de série ou nom de produit, puis choisir le firmware iLO ou le Service Pack for ProLiant (SPP).\nLe SPP et la ROM système exigent une garantie ou un contrat de support actif ; le firmware iLO se télécharge sans cette vérification.",
+"HPE Support Center: nach Seriennummer oder Produktname sueche, denn iLO-Firmware oder s Service Pack for ProLiant (SPP) wähle.\nS SPP und s System-ROM verlangid e aktivi Garantie oder en Supportvertrag; iLO-Firmware isch ohni Prüefig ladbar."
+],
+"Lenovo Data Center Support: Seriennummer, Produktname oder Maschinentyp suchen, dann bei den Downloads die Firmware (XCC, UEFI) wählen.\nDas Land lässt sich auf der Seite umstellen.": [
+"Lenovo Data Center Support: search by serial number, product name or machine type, then choose the firmware (XCC, UEFI) under downloads.\nThe country can be changed on the page.",
+"Lenovo Data Center Support : rechercher par numéro de série, nom de produit ou type de machine, puis choisir le firmware (XCC, UEFI) dans les téléchargements.\nLe pays peut être changé sur la page.",
+"Lenovo Data Center Support: nach Seriennummer, Produktname oder Maschinetyp sueche, denn bi de Downloads d Firmware (XCC, UEFI) wähle.\nS Land cha uf dr Siite umgstellt wärde."
+],
+"Supermicro Download Center (BIOS/BMC): Mainboard-Modell suchen, z. B. X12SPED-F, dann die BMC-Datei laden.\nPrüfsummen stehen auf der Seite. Nur flashen, wenn nötig, und den Hinweis des Herstellers zum Zurücksetzen der Einstellungen beachten.": [
+"Supermicro Download Center (BIOS/BMC): search for the mainboard model, e.g. X12SPED-F, then download the BMC file.\nChecksums are listed on the page. Only flash when necessary, and note the manufacturer's remark about settings being reset.",
+"Supermicro Download Center (BIOS/BMC) : rechercher le modèle de carte mère, p. ex. X12SPED-F, puis télécharger le fichier BMC.\nLes sommes de contrôle figurent sur la page. Ne flasher que si nécessaire et tenir compte de la remarque du fabricant sur la réinitialisation des réglages.",
+"Supermicro Download Center (BIOS/BMC): s Mainboard-Modell sueche, z. B. X12SPED-F, denn d BMC-Datei lade.\nPrüefsumme stöhnd uf dr Siite. Nur flashe, wenn nötig, und dr Hiiwis vom Hersteller zum Zrügsetze vo de Iistellige beachte."
+],
+"Firmware herunterladen (öffnet die Seite des Herstellers im Browser)": [
+"Download firmware (opens the manufacturer's page in the browser)",
+"Télécharger le firmware (ouvre la page du fabricant dans le navigateur)",
+"Firmware abelade (öffnet d Siite vom Hersteller im Browser)"
+],
+"Danach die Datei unten wählen oder auf einem eigenen Webserver/NAS ablegen und per URL laden. Die Prüfsumme von der Download-Seite ins Feld „SHA-256“ eintragen.": [
+"Then choose the file below, or put it on your own web server/NAS and load it by URL. Enter the checksum from the download page into the “SHA-256” field.",
+"Ensuite, choisir le fichier ci-dessous ou le placer sur votre propre serveur web/NAS et le charger par URL. Saisir la somme de contrôle de la page de téléchargement dans le champ « SHA-256 ».",
+"Denn d Datei unde wähle oder uf em eigete Webserver/NAS ablege und per URL lade. D Prüefsumme vo dr Download-Siite is Fäld „SHA-256“ iitrage."
+],
+"Firmware-Portal {0} geöffnet: {1}": [
+"Firmware portal {0} opened: {1}",
+"Portail de firmware {0} ouvert : {1}",
+"Firmware-Portal {0} göffnet: {1}"
+],
+"Firmware-Portal {0} konnte nicht geöffnet werden. Adresse: {1}": [
+"Firmware portal {0} could not be opened. Address: {1}",
+"Le portail de firmware {0} n'a pas pu être ouvert. Adresse : {1}",
+"S Firmware-Portal {0} het nöd chönne göffnet wärde. Adrässe: {1}"
+],
 "Auf Liste anwenden": [
 "Apply to list",
 "Appliquer à la liste",
