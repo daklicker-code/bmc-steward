@@ -229,7 +229,7 @@ def watch(root):
     for sp in root.findChildren(QAbstractSpinBox):
         sp.editingFinished.connect(lambda sp=sp: LOG.debug(T("Zahl geändert: {0}").format(sp.text())))
     for tw in root.findChildren(QTabWidget):
-        tw.currentChanged.connect(lambda i, tw=tw: LOG.info(T("Reiter: {0}").format(tw.tabText(i))))
+        tw.currentChanged.connect(lambda i, tw=tw: LOG.debug(T("Reiter: {0}").format(tw.tabText(i))))
 
 
 _logger = None

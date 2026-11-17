@@ -185,9 +185,11 @@ class TestMainWindow(unittest.TestCase):
         self.assertIn("Testlabor: [12:00:00] Server CN123 gestartet", texts())
         self.assertFalse([t for t in texts() if "@@STATE" in t])
 
-    def test_page_change_is_logged(self):
+    def test_page_change_is_logged_only_in_debug(self):
         self.w.tabs.setCurrentIndex(2)
         name = self.w.tabs.menu.item(2).text()
+        self.assertNotIn(f"Seite: {name}", texts())
+        LOG.set_level(DEBUG)
         self.assertIn(f"Seite: {name}", texts())
 
     def test_debug_window_line_only_in_debug(self):
