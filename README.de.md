@@ -157,6 +157,12 @@ unter Windows von Hand zu installieren. Die eingebettete UEFI-Konsole braucht Qt
 **Text**konsole (SOL/SSH) braucht `pyte`, `paramiko` und `pyghmi`; mit
 `pip install PyQt6-WebEngine pyte paramiko pyghmi` nachinstallieren.
 
+**Gepinnte Installation (optional, für den Produktivbetrieb empfohlen):** `requirements.lock` und
+`requirements-optional.lock` legen jede Abhängigkeit auf eine exakte Version mit SHA-256-Hashes fest.
+Installieren mit `pip install --require-hashes -r requirements.lock` (für die optionalen Teile zusätzlich
+`-r requirements-optional.lock`). Die CI nutzt dieselben Dateien; CodeQL, Dependabot und eine
+CycloneDX-SBOM je Versions-Tag (als Workflow-Artefakt) sind unter `.github/` eingerichtet.
+
 ### Debian / Ubuntu
 
 ```bash

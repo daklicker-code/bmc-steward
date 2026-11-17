@@ -156,6 +156,12 @@ installed by hand on Windows. The embedded UEFI console needs QtWebEngine and th
 (SOL/SSH) needs `pyte`, `paramiko` and `pyghmi`; install them with
 `pip install PyQt6-WebEngine pyte paramiko pyghmi`.
 
+**Pinned installation (optional, recommended for production):** `requirements.lock` and
+`requirements-optional.lock` pin every dependency to an exact version with SHA-256 hashes. Install with
+`pip install --require-hashes -r requirements.lock` (add `-r requirements-optional.lock` for the
+optional parts). The CI uses the same files; CodeQL, Dependabot and a CycloneDX SBOM per version tag
+(workflow artifact) are set up under `.github/`.
+
 ### Debian / Ubuntu
 
 ```bash
