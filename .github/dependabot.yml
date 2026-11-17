@@ -1,0 +1,13 @@
+# Haelt requirements.lock / requirements-optional.lock und die GitHub-Actions aktuell.
+# Dependabot schlaegt nur Pull Requests vor; nichts wird ohne Pruefung uebernommen (die Tests laufen je PR).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
