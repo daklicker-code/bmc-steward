@@ -324,6 +324,9 @@ TR = {
 "Sauvegardes/journaux",
 "Sicherige/Protokoll"
 ],
+"Sicherungen": ["Backups", "Sauvegardes", "Sicherige"],
+"Wiederherstellen": ["Restore", "Restaurer", "Wiederherstelle"],
+"⚠ Eigenschutz": ["⚠ Self-protection", "⚠ Auto-protection", "⚠ Eigeschutz"],
 "„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller.\nEine feste Wahl überspringt die Erkennung und gilt für alle Zeilen.": [
 "“Detect automatically” asks each device for its vendor.\nA fixed choice skips detection and applies to all rows.",
 "« Détection automatique » interroge chaque appareil sur son fabricant.\nUn choix fixe saute la détection et vaut pour toutes les lignes.",

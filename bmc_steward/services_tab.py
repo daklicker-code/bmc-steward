@@ -318,7 +318,7 @@ class ServicesTabMixin:
         """Sammelt die angehakten Dienste und prüft die Pflichtfelder. Gibt ein dict zurück, {} wenn
         nichts angehakt ist, oder None bei einem Eingabefehler (dann wird eine Meldung gezeigt)."""
         def bad(widget, msg):
-            self.tabs.setCurrentIndex(3)
+            self.tabs.setCurrentIndex(self.tabs.indexOf(self.services_page))
             QMessageBox.warning(self, T("Dienste"), msg)
             if widget:
                 widget.setFocus()
