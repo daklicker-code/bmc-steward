@@ -323,6 +323,7 @@ class VbmcTabMixin:
         self.vbmc_adopt_mode.setToolTip(T("Nur im Loopback-Modus. Echtes Netz: Gateway/Subnetz werden erkannt und "
                                           "die neue IP mit deinem Präfix vorgefüllt (nur Trockenlauf). Loopback: die "
                                           "neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft."))
+        self.vbmc_adopt_mode.setCurrentIndex(self.vbmc_adopt_mode.findData("loopback"))   # Standard: bleibt auf 127.x
         arow.addWidget(self.vbmc_adopt_btn)
         arow.addWidget(self.vbmc_adopt_mode)
         arow.addStretch()

@@ -967,6 +967,20 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual(w.cell(0, 6), "CN7K2", "Seriennummer geht mit in die Serverliste")
         w.vbmc_show_state([])
 
+    def test_adopt_in_loopback_mode_defaults_to_loopback_addresses(self):
+        """Im Loopback-Modus bleiben auch die neuen IPs auf 127.x:Port; das echte (Heim-)Netz wird nur auf Wunsch genutzt."""
+        w = self.w
+        self.assertEqual(w.vbmc_adopt_mode.currentData(), "loopback")
+        w.vbmc_run_mode = "loopback"
+        w.vbmc_base.setText("127.9.0")
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "127.9.0.11:8443", "ip": "127.9.0.11",
+                            "factory_user": "root", "factory_pass": "Dell4711", "serial": "CN7K2"}])
+        w.table.setRowCount(0)
+        w.vbmc_adopt()
+        self.assertEqual(w.cell(0, 0), "127.9.0.11:8443")
+        self.assertTrue(w.cell(0, 2).startswith("127.9.0.51"), w.cell(0, 2))
+        w.vbmc_show_state([])
+
     def _done_row(self):
         w = self.w
         w.table.setRowCount(0)
