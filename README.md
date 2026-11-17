@@ -55,6 +55,7 @@ On top of that:
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
 - **Virtual test cluster** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
+- **Capture and compare** (page "Aufnahme"): reads the Redfish tree of a real device strictly read-only (the only exception is the session login) and saves it in DMTF mockup format – with serial numbers, addresses, host names, certificates and keys redacted, a capability report and a self-check that refuses to save if anything is left over. Two captures of the same device (e.g. before and after a firmware update) can be compared: lost write permissions, paths, actions and allowed values are reported as critical. Also available on the command line: `python3 -m bmc_steward.capture --help`.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
 ## Built to forgive mistakes
