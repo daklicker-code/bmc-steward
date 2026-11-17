@@ -1643,6 +1643,36 @@ TR = {
 "Arrêter",
 "Stoppe"
 ],
+"Auf Liste anwenden": [
+"Apply to list",
+"Appliquer à la liste",
+"Uf Liste awände"
+],
+"Gelten für Zeilen, die danach neu entstehen („+ Server“, „Server suchen“, DHCP-Übernahme).\nSchon vorhandene Zeilen ändert erst der Knopf „Auf Liste anwenden“.": [
+"Apply to rows created afterwards (“+ Server”, “Find servers”, DHCP takeover).\nRows that already exist are only changed by the “Apply to list” button.",
+"S'appliquent aux lignes créées ensuite (« + Serveur », « Chercher des serveurs », reprise DHCP).\nLes lignes déjà présentes ne sont modifiées que par le bouton « Appliquer à la liste ».",
+"Gälte für Ziile, wo spöter neu entstönd („+ Server“, „Server sueche“, DHCP-Übernahm).\nSchon vorhandeni Ziile ändered erscht dr Chnopf „Uf Liste awände“."
+],
+"Trägt Subnetzmaske und Gateway in die markierten Zeilen ein (ohne Markierung: in alle Zeilen)\nund überschreibt dort vorhandene Werte. Ein leeres Feld lässt die Spalte unverändert.": [
+"Enters subnet mask and gateway into the selected rows (no selection: all rows)\nand overwrites existing values there. An empty field leaves its column unchanged.",
+"Inscrit le masque de sous-réseau et la passerelle dans les lignes sélectionnées (sans sélection : toutes)\net écrase les valeurs existantes. Un champ vide laisse la colonne inchangée.",
+"Treit Subnetzmaske und Gateway i d markierte Ziile ii (ohni Markierig: i alli Ziile)\nund überschrybt dört vorhandeni Wärt. Es leers Fäld loht d Spalte unverändert."
+],
+"Subnetzmaske oder Gateway ist ungültig.": [
+"Subnet mask or gateway is invalid.",
+"Le masque de sous-réseau ou la passerelle est invalide.",
+"Subnetzmaske oder Gateway isch ungültig."
+],
+"Bitte zuerst Subnetzmaske und/oder Gateway oben eintragen.": [
+"Please enter a subnet mask and/or gateway above first.",
+"Veuillez d'abord saisir un masque de sous-réseau et/ou une passerelle ci-dessus.",
+"Bitte zersch Subnetzmaske und/oder Gateway obe iitrage."
+],
+"Subnetzmaske/Gateway in {0} Zeilen eingetragen.": [
+"Subnet mask/gateway entered in {0} rows.",
+"Masque de sous-réseau/passerelle inscrits dans {0} lignes.",
+"Subnetzmaske/Gateway i {0} Ziile iitreit."
+],
 "Erklärung und Beispiel zum gewählten Modus ein-/ausblenden": [
 "Show/hide explanation and example for the selected mode",
 "Afficher/masquer l'explication et l'exemple du mode choisi",
