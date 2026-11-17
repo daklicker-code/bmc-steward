@@ -1,6 +1,6 @@
 """BMC-Steward: Hauptfenster (alle Reiter) und Programmstart."""
 from pathlib import Path
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
@@ -505,11 +505,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.tabs.addTab(self.build_dhcp(), T("DHCP-Server"), accent=DHCP_YELLOW)
         self.tabs.addTab(page, T("Neuware"))
         self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
+        self.tabs.addTab(self.build_console(), T("UEFI-Konsole"))
         self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
-        self.tabs.addTab(self.build_services(), T("Dienste"))
+        self.services_page = self.build_services()
+        self.tabs.addTab(self.services_page, T("Dienste"))
         self.tabs.addTab(self.build_users(), T("Benutzer"))
         self.tabs.addTab(self.build_firmware(), T("Firmware"))
-        self.tabs.addTab(self.build_console(), T("UEFI-Konsole"))
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
@@ -541,24 +542,25 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.guard_btn = QPushButton()
         self.guard_btn.clicked.connect(self.edit_selfguard)
         self.update_guard_btn()
-        sl.addWidget(self.guard_btn)
-        tools = QHBoxLayout()
-        pins_btn = QPushButton(T("Zertifikate …"))
+        pins_btn = QPushButton(T("Zertifikate"))
         pins_btn.setToolTip(T("Gemerkte Zertifikats-Fingerabdrücke der BMCs ansehen und einzelne entfernen "
                               "(nach gewolltem Zertifikatswechsel oder Mainboard-Tausch)."))
         pins_btn.clicked.connect(self.edit_pins)
-        data_btn = QPushButton(T("Sicherungen/Protokolle"))
+        data_btn = QPushButton(T("Sicherungen"))
         data_btn.setToolTip(T("Öffnet den Datenordner mit den automatischen Sicherungen vor jeder Änderung und dem "
                               "Revisionsprotokoll aller scharfen Läufe:\n{0}").format(i18n.DATA))
         data_btn.clicked.connect(self.open_data_dir)
-        restore_btn = QPushButton(T("Aus Sicherung wiederherstellen"))
+        restore_btn = QPushButton(T("Wiederherstellen"))
         restore_btn.setToolTip(T(
             "Zeigt alle automatischen Sicherungen und ermöglicht das Vorbefüllen\n"
             "der Neuware-Maske mit gesicherten Netzwerkeinstellungen."))
         restore_btn.clicked.connect(self.open_restore_dialog)
-        tools.addWidget(pins_btn)
-        tools.addWidget(data_btn)
-        tools.addWidget(restore_btn)
+        tools = QGridLayout()                      # 2 x 2 statt vier abgeschnittener Knöpfe in einer Reihe
+        tools.setContentsMargins(0, 0, 0, 0)
+        tools.setSpacing(6)
+        for n, btn in enumerate((self.guard_btn, pins_btn, data_btn, restore_btn)):
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)   # Breite kommt vom Raster
+            tools.addWidget(btn, n // 2, n % 2)
         sl.addLayout(tools)
         sl.addWidget(self.lang)
         body = QHBoxLayout()
@@ -1618,7 +1620,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
     def update_guard_btn(self):
         g = selfguard.get()
         if g.unprotected_vm:
-            self.guard_btn.setText(T("⚠ Eigenschutz: Schutzliste leer"))
+            self.guard_btn.setText(T("⚠ Eigenschutz"))
             self.guard_btn.setStyleSheet("color:#d9534f;font-weight:bold;")
             self.guard_btn.setToolTip(T("BMC-Steward läuft in einer VM ({0}). Den Host dieser VM in die "
                                         "Schutzliste eintragen, sonst kann er versehentlich neu gestartet "

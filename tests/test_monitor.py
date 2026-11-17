@@ -275,12 +275,13 @@ class TestWindowLayout(unittest.TestCase):
         cls.w = Window()
 
     def test_page_order_is_unchanged(self):
-        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = UEFI, 7 = Konsole
+        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = Konsole, 4 = UEFI-Einstellungen, 5 = Dienste
         self.assertEqual(self.w.tabs.count(), 10)
-        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 7)
+        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 3)
+        self.assertEqual(self.w.tabs.indexOf(self.w.services_page), 5)
         names = [self.w.tabs.menu.item(i).text() for i in range(10)]
-        self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
-                                 "Benutzer", "Firmware", "UEFI-Konsole", "Testlabor", "Hilfe"])      # ohne Nummern
+        self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Konsole", "UEFI-Einstellungen",
+                                 "Dienste", "Benutzer", "Firmware", "Testlabor", "Hilfe"])      # ohne Nummern
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
@@ -294,6 +295,34 @@ class TestWindowLayout(unittest.TestCase):
         self.assertTrue(all(not menu.item(i).data(ACCENT_ROLE) for i in range(1, menu.count())))
         pm = menu.grab()                            # Zeichnen mit Delegate wirft nichts
         self.assertFalse(pm.isNull())
+
+    def test_dhcp_button_lights_up_only_on_hover(self):
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+        menu = self.w.tabs.menu
+        delegate = menu.itemDelegate()
+        index = menu.model().index(0, 0)
+
+        def render(state):
+            img = QImage(200, 30, QImage.Format.Format_ARGB32)
+            img.fill(QColor("#ffffff"))
+            opt = QStyleOptionViewItem()
+            opt.rect = QRect(0, 0, 200, 30)
+            opt.state = state | QStyle.StateFlag.State_Enabled
+            opt.font = menu.font()
+            opt.palette = menu.palette()
+            p = QPainter(img)
+            delegate.paint(p, opt, index)
+            p.end()
+            return img.pixelColor(100, 3)           # Randbereich: Fläche ohne Text
+
+        yellow = QColor("#c9a100")
+        hover = render(QStyle.StateFlag.State_MouseOver)
+        self.assertLess(abs(hover.red() - yellow.lighter(115).red()), 6)
+        self.assertGreater(hover.red() - hover.blue(), 80)           # deutlich gelb
+        idle = render(QStyle.StateFlag.State_None)
+        self.assertLess(idle.red() - idle.blue(), 30)                # nicht gelb, wenn die Maus fehlt
 
     def test_switch_follows_mode_combo(self):
         for i in range(3):
@@ -321,7 +350,7 @@ class TestWindowLayout(unittest.TestCase):
         self.w.tabs.setCurrentIndex(0)
         self.w.console_panel_show(False)
         self.w.monitor.clicked.emit()
-        self.assertEqual(self.w.tabs.currentIndex(), 7)
+        self.assertEqual(self.w.tabs.currentIndex(), 3)
         self.assertFalse(self.w.con_panel.isHidden())
 
     def test_click_on_live_monitor_opens_full_console(self):
@@ -331,7 +360,7 @@ class TestWindowLayout(unittest.TestCase):
             self.w.tabs.setCurrentIndex(0)
             self.w.console_panel_show(True)
             self.w.console_enter()
-            self.assertEqual(self.w.tabs.currentIndex(), 7)
+            self.assertEqual(self.w.tabs.currentIndex(), 3)
             self.assertTrue(self.w.con_panel.isHidden())
         finally:
             del self.w.console_source               # zurück zur echten Methode

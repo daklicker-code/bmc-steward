@@ -21,17 +21,17 @@ ACCENT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class AccentDelegate(QStyledItemDelegate):
-    """Zeichnet Menüpunkte mit Akzentfarbe (Datenrolle ACCENT_ROLE) als abgerundeten Knopf in dieser Farbe;
-    alle anderen Punkte zeichnet unverändert das Stylesheet."""
+    """Zeichnet Menüpunkte mit Akzentfarbe (Datenrolle ACCENT_ROLE) nur dann als abgerundeten Knopf in dieser
+    Farbe, wenn die Maus darüber steht; sonst sehen sie aus wie alle anderen Punkte (Stylesheet)."""
 
     def paint(self, painter, option, index):
         accent = index.data(ACCENT_ROLE)
-        if not accent:
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if not accent or not hover:                 # Akzentfarbe leuchtet nur unter der Maus auf
             super().paint(painter, option, index)
             return
         base = QColor(accent)
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
         fill = base.darker(125) if selected else base.lighter(115) if hover else base
         rect = QRectF(option.rect).adjusted(1, 2, -1, -2)
         painter.save()
@@ -67,9 +67,9 @@ class SideNav(QObject):
 
     def addTab(self, widget, text, accent=None):
         """Neue Seite mit Menüpunkt `text` am Ende; gibt ihre Nummer zurück. Mit `accent` (z. B. "#c9a100")
-        erscheint der Menüpunkt als Knopf in dieser Farbe."""
+        leuchtet der Menüpunkt unter der Maus als Knopf in dieser Farbe auf."""
         item = QListWidgetItem(text)
-        item.setSizeHint(QSize(0, 34 if accent else 30))
+        item.setSizeHint(QSize(0, 30))
         if accent:
             item.setData(ACCENT_ROLE, accent)
         self.menu.addItem(item)
