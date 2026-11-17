@@ -10,3 +10,6 @@ servers.csv
 *.log
 __pycache__/
 *.pyc
+bmc-vault.json
+bmc-rotation.json
+bmc-console.json
