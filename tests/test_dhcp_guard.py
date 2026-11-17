@@ -1,4 +1,4 @@
-"""Laufzeit-Überwachung des DHCP-Servers (Window.dhcp_guard in bmc_steward.main).
+"""Laufzeit-Überwachung des DHCP-Servers (Window.dhcp_guard in bmc_steward.dhcp_tab).
 
 dhcp_guard() läuft alle paar Sekunden, solange der eigene DHCP-Server läuft, und muss ihn in zwei
 Fällen stoppen: wenn die Karte inzwischen die Standardroute trägt (kein getrenntes Staging-Netz
@@ -12,7 +12,7 @@ from tests._support import qapp
 qapp()
 import bmc_steward.i18n as i18n
 i18n.set_language("de")          # deterministische Texte, unabhängig vom gespeicherten Profil
-import bmc_steward.main as main_mod
+import bmc_steward.dhcp_tab as dhcp_tab_mod
 from bmc_steward.main import Window
 
 
@@ -28,21 +28,21 @@ class TestDhcpGuard(unittest.TestCase):
         self.calls = []
         self.w.stop_dhcp = lambda: self.calls.append("stop")
         self.w.dlog = lambda *a, **k: self.calls.append(a)
-        self._orig_probe = main_mod.probe_dhcp_servers
-        main_mod.probe_dhcp_servers = lambda ip, timeout=1.5: self._probe_result
+        self._orig_probe = dhcp_tab_mod.probe_dhcp_servers
+        dhcp_tab_mod.probe_dhcp_servers = lambda ip, timeout=1.5: self._probe_result
 
     def tearDown(self):
-        main_mod.probe_dhcp_servers = self._orig_probe
+        dhcp_tab_mod.probe_dhcp_servers = self._orig_probe
 
     def test_not_running_does_nothing(self):
         self.w.dhcp_running = lambda: False
-        main_mod.probe_dhcp_servers = lambda *a, **k: self.fail("probe_dhcp_servers sollte nicht aufgerufen werden")
+        dhcp_tab_mod.probe_dhcp_servers = lambda *a, **k: self.fail("probe_dhcp_servers sollte nicht aufgerufen werden")
         self.w.dhcp_guard()
         self.assertEqual(self.calls, [])
 
     def test_default_route_conflict_stops_without_probing(self):
         self.w.default_route_ip = lambda: self.w.dhcp_ip
-        main_mod.probe_dhcp_servers = lambda *a, **k: self.fail("Routen-Konflikt muss vor dem Probe greifen")
+        dhcp_tab_mod.probe_dhcp_servers = lambda *a, **k: self.fail("Routen-Konflikt muss vor dem Probe greifen")
         self.w.dhcp_guard()
         self.assertEqual(self.calls[0], "stop")
         self.assertIn("Standardroute", self.calls[1][0])
