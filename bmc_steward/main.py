@@ -27,6 +27,7 @@ from .console import ConsoleMixin
 from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
 from .users_tab import UsersTabMixin
+from .capture_tab import CaptureTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .bios_tab import BiosTabMixin
 from .dhcp_tab import DhcpTabMixin
@@ -194,7 +195,7 @@ class RestoreDialog(QDialog):
         self._apply_btn.setEnabled(bool(net["ip"]))
 
 
-class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTabMixin, DhcpTabMixin,
+class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, VbmcTabMixin, BiosTabMixin, DhcpTabMixin,
             ExistingTabMixin, ServicesTabMixin, QWidget):
     DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
 
@@ -511,6 +512,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.tabs.addTab(self.services_page, T("Dienste"))
         self.tabs.addTab(self.build_users(), T("Benutzer"))
         self.tabs.addTab(self.build_firmware(), T("Firmware"))
+        self.tabs.addTab(self.build_capture(), T("Aufnahme"))
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)

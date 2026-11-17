@@ -175,6 +175,7 @@ class RedfishClient:
         self.dry, self.log, self.stopped = dry, log, stopped
         self.cur_user = ""
         self.code, self.body = 0, None
+        self.resp_headers = {}  # Kopfzeilen der letzten Antwort (kleingeschrieben), z. B. "allow"
         self.tls = {}           # Adresse -> TLS-Stufe, gilt nur für diesen Lauf
         self.model = ""         # was vendor() über ein altes Gerät herausgefunden hat, z. B. "iLO 3"
         self.xml = ""           # letzte RIBCL-Antwort
@@ -518,6 +519,7 @@ class RedfishClient:
     def api(self, ip, user, pw, method, path, data=None, timeout=30, _retry=True):
         """Sendet eine Anfrage, gibt den HTTP-Code zurück (0 = keine Verbindung); Antwort in self.body."""
         self.body = None
+        self.resp_headers = {}
         if self.dry:
             self.log(f"  DRYRUN {method} https://{ip}{path} {scrub(data)}")
             return 200
@@ -534,8 +536,10 @@ class RedfishClient:
         try:
             with self.opener(mode).open(req, timeout=timeout) as r:
                 code, raw = r.status, r.read()
+                self.resp_headers = {k.lower(): v for k, v in r.headers.items()}
         except urllib.error.HTTPError as e:
             code, raw = e.code, e.read()
+            self.resp_headers = {k.lower(): v for k, v in e.headers.items()}
         except (urllib.error.URLError, OSError, http.client.HTTPException):
             code, raw = 0, b""
         if code == 401 and name == "X-Auth-Token" and _retry:

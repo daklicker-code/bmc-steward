@@ -55,6 +55,7 @@ Dazu kommt:
 - **CSV-Import/-Export** der Serverliste, auch direkt aus einem Excel-Export.
 - **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch (Auswahl links unten unter dem Menü).
 - **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus der Seite „Testlabor“ oder eigenständig über die Kommandozeile.
+- **Aufnahme und Vergleich** (Seite „Aufnahme“): liest den Redfish-Baum eines echten Geräts ausschließlich lesend (einzige Ausnahme: die Anmeldung per Session) und speichert ihn im DMTF-Mockup-Format – mit geschwärzten Seriennummern, Adressen, Hostnamen, Zertifikaten und Schlüsseln, einem Fähigkeitsbericht und einer Selbstprüfung, die das Speichern bei einem Rest verweigert. Zwei Aufnahmen desselben Geräts (z. B. vor und nach einem Firmware-Update) lassen sich vergleichen: weggefallene Schreibrechte, Pfade, Aktionen und erlaubte Werte werden als kritisch gemeldet. Auch per Kommandozeile: `python3 -m bmc_steward.capture --help`.
 - **Modular aufgebaut** (Paket `bmc_steward/`); entwickelt unter Linux, läuft aus dem Quellcode auch unter Windows (die fertige .exe ist archiviert und wird nicht mehr gepflegt).
 
 ## Schutz vor Fehlbedienung

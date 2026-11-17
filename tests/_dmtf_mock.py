@@ -54,6 +54,8 @@ class DmtfMockServer:
         if isinstance(root, dict):
             root["UUID"] = str(uuid.uuid4())
         self.lock = threading.Lock()
+        self.requests = []          # (Methode, Pfad) jeder Anfrage, damit Tests „nur GET“ belegen können
+        self.allow = {}             # Pfad -> Allow-Header; sonst GET, PATCH (Ressource) bzw. GET, POST (Collection)
         self.httpd = None
         self.port = None
 
@@ -83,16 +85,26 @@ class DmtfMockServer:
                 data = json.dumps(obj).encode("utf-8") if obj is not None else b"{}"
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")
+                if code == 200 and self.command == "GET":
+                    path = self.path.rstrip("/") or "/"
+                    allow = srv.allow.get(path)
+                    if allow is None:
+                        coll = isinstance(obj, dict) and isinstance(obj.get("Members"), list)
+                        allow = "GET, POST" if coll else "GET, PATCH"
+                    self.send_header("Allow", allow)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
 
             def do_GET(self):
                 with srv.lock:
+                    srv.requests.append(("GET", self.path))
                     doc = srv.tree.get(self.path.rstrip("/") or "/")
                 self._reply(200, doc) if doc is not None else self._reply(404, None)
 
             def do_PATCH(self):
+                with srv.lock:
+                    srv.requests.append(("PATCH", self.path))
                 size = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(size) if size else b"{}"
                 path = self.path.rstrip("/") or "/"
@@ -109,6 +121,8 @@ class DmtfMockServer:
                 self._reply(200, doc)
 
             def do_POST(self):
+                with srv.lock:
+                    srv.requests.append(("POST", self.path))
                 # Benutzerverwaltung (Item 3): POST auf eine Collection legt eine neue Unterressource an
                 # (AccountService/Accounts, oder Accounts/<id>/Keys für SSH-Keys). Alles andere (vor allem
                 # SessionService/Sessions) bleibt bewusst 404, damit der Client auf Basic Auth zurückfällt.
@@ -142,6 +156,8 @@ class DmtfMockServer:
                 self.wfile.write(data)
 
             def do_DELETE(self):
+                with srv.lock:
+                    srv.requests.append(("DELETE", self.path))
                 # Löscht eine einzelne Ressource (Konto oder SSH-Key) und entfernt sie aus der Collection,
                 # in der sie als Member stand.
                 path = self.path.rstrip("/") or "/"

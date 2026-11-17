@@ -276,16 +276,16 @@ class TestWindowLayout(unittest.TestCase):
 
     def test_page_order_is_unchanged(self):
         # Der übrige Code springt über Nummern: 1 = Neuware, 3 = Konsole, 4 = UEFI-Einstellungen, 5 = Dienste
-        self.assertEqual(self.w.tabs.count(), 10)
+        self.assertEqual(self.w.tabs.count(), 11)
         self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 3)
         self.assertEqual(self.w.tabs.indexOf(self.w.services_page), 5)
-        names = [self.w.tabs.menu.item(i).text() for i in range(10)]
+        names = [self.w.tabs.menu.item(i).text() for i in range(11)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Konsole", "UEFI-Einstellungen",
-                                 "Dienste", "Benutzer", "Firmware", "Testlabor", "Hilfe"])      # ohne Nummern
+                                 "Dienste", "Benutzer", "Firmware", "Aufnahme", "Testlabor", "Hilfe"])      # ohne Nummern
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
-        page = self.w.tabs.stack.widget(9)
+        page = self.w.tabs.stack.widget(10)
         self.assertIs(self.w.help_logo.parent(), page)
         self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 
