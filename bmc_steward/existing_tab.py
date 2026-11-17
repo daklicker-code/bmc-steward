@@ -3,7 +3,7 @@ erfolgreich getestete Server in „Neuware“, „UEFI-Einstellungen“ und „D
 import html
 import ipaddress
 
-from PyQt6.QtWidgets import (QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+from PyQt6.QtWidgets import (QComboBox, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                              QLineEdit, QMessageBox, QPushButton, QSplitter, QStyledItemDelegate,
                              QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 from PyQt6.QtGui import QBrush, QColor, QFontDatabase
@@ -49,18 +49,29 @@ class ExistingTabMixin:
         self.ex_to = QLineEdit()
         self.ex_to.setPlaceholderText(T("z. B. 10.20.0.30"))
 
+        # Zugangsdaten und Adressbereich kompakt in zwei Zeilen (mehr Platz für die Serverliste)
         box_all = QGroupBox(T("Zugangsdaten und Adressen schnell eintragen"))
-        f = QFormLayout(box_all)
-        self.tip_row(f, T("Hersteller"), self.ex_vendor, self.ex_vendor.toolTip())
-        self.tip_row(f, T("Benutzer"), self.ex_user_all,
-                     T("Benutzer, mit dem sich das Tool am BMC anmeldet. Leer lassen: Werksbenutzer je Hersteller."))
-        self.tip_row(f, T("Passwort"), self._with_eye(self.ex_pass_all),
-                     T("Gilt für alle Zeilen, wenn Sie unten auf „Für alle Zeilen übernehmen“ klicken.\n"
-                       "Abweichende Zugangsdaten tragen Sie direkt in der Tabelle je Zeile ein."))
+        g = QGridLayout(box_all)
+        g.setContentsMargins(8, 2, 8, 4)
+        g.setVerticalSpacing(3)
+        user_tip = T("Benutzer, mit dem sich das Tool am BMC anmeldet. Leer lassen: Werksbenutzer je Hersteller.")
+        pass_tip = T("Gilt für alle Zeilen, wenn Sie unten auf „Für alle Zeilen übernehmen“ klicken.\n"
+                     "Abweichende Zugangsdaten tragen Sie direkt in der Tabelle je Zeile ein.")
+        self.ex_user_all.setToolTip(user_tip)
+        self.ex_vendor.setMinimumWidth(150)
+        pw_all = self._with_eye(self.ex_pass_all)
+        pw_all.setToolTip(pass_tip)
         apply = QPushButton(T("Für alle Zeilen übernehmen"))
         apply.setToolTip(T("Trägt Benutzer und Passwort von oben in alle Zeilen ein und überschreibt vorhandene Werte."))
         apply.clicked.connect(self.ex_apply_all)
-        f.addRow("", apply)
+        for col, (label, w, tip) in enumerate(((T("Hersteller"), self.ex_vendor, self.ex_vendor.toolTip()),
+                                               (T("Benutzer"), self.ex_user_all, user_tip),
+                                               (T("Passwort"), pw_all, pass_tip))):
+            lab = QLabel(label)
+            lab.setToolTip(tip)
+            g.addWidget(lab, 0, col * 2)
+            g.addWidget(w, 0, col * 2 + 1)
+        g.addWidget(apply, 0, 6)
         rng = QHBoxLayout()
         rng.addWidget(self.ex_from)
         rng.addWidget(QLabel("–"))
@@ -68,8 +79,12 @@ class ExistingTabMixin:
         add_rng = QPushButton(T("Bereich einfügen"))
         add_rng.setToolTip(T("Fügt für jede Adresse von … bis … eine Zeile ein (höchstens 256 auf einmal)."))
         add_rng.clicked.connect(self.ex_add_range)
-        rng.addWidget(add_rng)
-        f.addRow(T("Adressbereich"), rng)
+        g.addWidget(QLabel(T("Adressbereich")), 1, 0)
+        g.addLayout(rng, 1, 1, 1, 5)
+        g.addWidget(add_rng, 1, 6)
+        g.setColumnStretch(1, 1)
+        g.setColumnStretch(3, 1)
+        g.setColumnStretch(5, 1)
 
         self.ex_table = QTableWidget(0, 5)
         self.ex_table.setHorizontalHeaderLabels([T("Adresse (BMC)"), T("Port"), T("Benutzer"), T("Passwort"), T("Status")])
@@ -125,9 +140,11 @@ class ExistingTabMixin:
         info = QLabel(T("Für Server, die schon konfiguriert sind: erst die Verbindung prüfen, dann die erfolgreichen "
                         "Server in „Neuware“, „UEFI-Einstellungen“ und „Dienste“ übernehmen. Das Tool speichert nichts."))
         info.setWordWrap(True)
+        box_all.setToolTip(info.text())              # Erklärung als Tooltip statt als eigene Textzeilen
         page = QWidget()
         pl = QVBoxLayout(page)
-        pl.addWidget(info)
+        pl.setContentsMargins(4, 4, 4, 4)
+        pl.setSpacing(4)
         pl.addWidget(box_all)
         split = QSplitter(Qt.Orientation.Vertical)
         upper = QWidget()
@@ -137,7 +154,10 @@ class ExistingTabMixin:
         u.addLayout(act)
         split.addWidget(upper)
         split.addWidget(self.ex_log)
-        split.setSizes([320, 240])
+        split.setStretchFactor(0, 5)
+        split.setStretchFactor(1, 1)
+        split.setSizes([620, 130])
+        split.setChildrenCollapsible(False)
         pl.addWidget(split, 1)
         self.ex_add_row()
         return page

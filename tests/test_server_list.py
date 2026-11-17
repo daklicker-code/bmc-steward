@@ -119,5 +119,47 @@ class TestListeLadenMitSeriennummer(unittest.TestCase):
         self.assertEqual(self.w.cell(0, 6), "SN-RT")
 
 
+class TestVorgabenAnwenden(unittest.TestCase):
+    """„Auf Liste anwenden“: Subnetzmaske/Gateway aus den Vorgaben in markierte (sonst alle) vorhandene Zeilen."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.w = Window()
+
+    def setUp(self):
+        w = self.w
+        w.table.setRowCount(0)
+        for ip in ("10.0.0.5", "10.0.0.6", "10.0.0.7"):
+            w.add_row([ip, "pw", "", "", "", "", ""])
+        w.add_row()                                   # leere Zeile bleibt unberührt
+        w.def_mask.setText("/24")
+        w.def_gw.setText("10.0.0.1")
+        w.table.clearSelection()
+
+    def test_all_rows_without_selection(self):
+        self.w.apply_defaults()
+        for r in range(3):
+            self.assertEqual((self.w.cell(r, 3), self.w.cell(r, 4)), ("255.255.255.0", "10.0.0.1"))
+
+    def test_only_selected_rows(self):
+        self.w.table.selectRow(1)
+        self.w.apply_defaults()
+        self.assertEqual(self.w.cell(0, 3), "")
+        self.assertEqual(self.w.cell(1, 3), "255.255.255.0")
+        self.assertEqual(self.w.cell(2, 4), "")
+
+    def test_empty_field_keeps_column(self):
+        self.w.def_gw.setText("")
+        self.w.add_row(["10.0.0.9", "pw", "", "255.255.0.0", "10.0.9.1", "", ""])
+        self.w.apply_defaults()
+        self.assertEqual(self.w.cell(4, 3), "255.255.255.0")
+        self.assertEqual(self.w.cell(4, 4), "10.0.9.1", "leeres Gateway-Feld überschreibt nichts")
+
+    def test_invalid_values_change_nothing(self):
+        self.w.def_gw.setText("kein-gateway")
+        self.w.apply_defaults()
+        self.assertEqual(self.w.cell(0, 3), "")
+
+
 if __name__ == "__main__":
     unittest.main()

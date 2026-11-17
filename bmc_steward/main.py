@@ -230,18 +230,18 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         apply_pw.clicked.connect(self.apply_password)
         box_cur = QGroupBox(T("Aktueller Login (Auslieferungszustand)"))
         box_cur.setToolTip(T("Mit diesen Daten meldet sich das Tool an den Geräten an, um sie umzustellen."))
-        f = QFormLayout(box_cur)
-        self.tip_row(f, T("Hersteller"), self.vendor,
-                     T("„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller, gemischte Listen sind möglich.\n"
-                     "Eine feste Wahl überspringt die Erkennung und gilt für alle Zeilen. Nützlich, wenn die\n"
-                     "Erkennung danebenliegt oder der Trockenlauf den richtigen Ablauf zeigen soll."))
+        f = self.compact_form(box_cur)
+        self.vendor_tip_base = T("„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller, gemischte Listen sind möglich.\n"
+                                 "Eine feste Wahl überspringt die Erkennung und gilt für alle Zeilen. Nützlich, wenn die\n"
+                                 "Erkennung danebenliegt oder der Trockenlauf den richtigen Ablauf zeigen soll.")
+        self.user_tip_base = T("Benutzer, mit dem sich das Tool jetzt am BMC anmeldet, also der Werksbenutzer.\n"
+                               "Leer lassen: Dann wird je Hersteller root, Administrator oder ADMIN verwendet.")
+        self.tip_row(f, T("Hersteller"), self.vendor, self.vendor_tip_base)
+        self.tip_row(f, T("Benutzer"), self.cur_user, self.user_tip_base)
+        # Die Hinweise (Generationen, Werksbenutzer) stehen als Tooltip an Hersteller/Benutzer statt als eigene Zeilen
         self.version_hint = QLabel()
-        self.version_hint.setWordWrap(True)
-        f.addRow("", self.version_hint)
-        self.tip_row(f, T("Benutzer"), self.cur_user,
-                     T("Benutzer, mit dem sich das Tool jetzt am BMC anmeldet, also der Werksbenutzer.\n"
-                     "Leer lassen: Dann wird je Hersteller root, Administrator oder ADMIN verwendet."))
-        f.addRow("", self.user_hint)
+        self.version_hint.setVisible(False)
+        self.user_hint.setVisible(False)
         self.tip_row(f, T("Passwort"), self._with_eye(self.cur_pass),
                      T("Passwort des Werksbenutzers. Es gilt für alle Zeilen, deren Spalte „Passwort“ leer ist,\n"
                      "und wird bei neuen Zeilen vorbelegt. Hat jedes Gerät ein eigenes Passwort\n"
@@ -257,10 +257,23 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.slot.setValue(3)
         box_new = QGroupBox(T("Neuer Administrator"))
         box_new.setToolTip(T("Dieses Konto wird auf jedem Gerät der Liste eingerichtet."))
-        f = QFormLayout(box_new)
-        self.tip_row(f, T("Benutzer"), self.new_user,
-                     T("Name des Administrator-Kontos, das auf allen Geräten angelegt wird.\n"
-                     "Existiert der Name bei HPE, Supermicro oder Lenovo schon, werden nur Passwort und Rolle gesetzt."))
+        f = self.compact_form(box_new)
+        user_tip = T("Name des Administrator-Kontos, das auf allen Geräten angelegt wird.\n"
+                     "Existiert der Name bei HPE, Supermicro oder Lenovo schon, werden nur Passwort und Rolle gesetzt.")
+        slot_tip = T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
+                     "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
+                     "von einem anderen Benutzer belegt, wird nichts überschrieben. Standard ist Platz 3.")
+        slot_lab = QLabel(T("User-Slot (nur Dell)"))
+        slot_lab.setToolTip(slot_tip)
+        self.slot.setToolTip(slot_tip)
+        urow = QWidget()
+        uh = QHBoxLayout(urow)
+        uh.setContentsMargins(0, 0, 0, 0)
+        uh.addWidget(self.new_user, 1)
+        uh.addWidget(slot_lab)
+        uh.addWidget(self.slot)
+        self.tip_row(f, T("Benutzer"), urow, user_tip)
+        self.new_user.setToolTip(user_tip)
         self.tip_row(f, T("Passwort"), self._with_eye(self.new_pass),
                      T("Passwort des neuen Administrators, auf allen Geräten gleich.\n"
                      "Die Geräte prüfen ihre eigenen Regeln, iLO verlangt z. B. mindestens 8 Zeichen.\n"
@@ -285,18 +298,17 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
             "Nur wenn der neue Administrator dort nachweislich funktioniert und Administratorrechte hat.\n"
             "Kann ein BMC Konten nicht abschalten, bekommt das Werkskonto ein Zufallspasswort, das nirgends\n"
             "gespeichert wird; mit dem neuen Administrator lässt es sich jederzeit zurücksetzen."))
-        f.addRow(self.lock_factory)
         self.clear_pass_after = QCheckBox(T("Passwörter nach scharfem Lauf löschen"))
         self.clear_pass_after.setChecked(True)
         self.clear_pass_after.setToolTip(T(
             "Leert nach jedem scharfen Lauf alle Passwortfelder (Werkskonto, neuer Administrator, je Zeile).\n"
             "Die Passwörter bleiben nur so lange im Arbeitsspeicher, wie nötig. Trockenlauf löscht nichts.\n"
             "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
-        f.addRow(self.clear_pass_after)
-        self.tip_row(f, T("User-Slot (nur Dell)"), self.slot,
-                     T("Nur Dell: Der iDRAC hat 16 feste Benutzerplätze, Platz 2 ist root.\n"
-                     "Der neue Administrator wird in diesen Platz geschrieben. Ist der Platz schon\n"
-                     "von einem anderen Benutzer belegt, wird nichts überschrieben. Standard ist Platz 3."))
+        crow = QHBoxLayout()
+        crow.addWidget(self.lock_factory)
+        crow.addWidget(self.clear_pass_after)
+        crow.addStretch()
+        f.addRow(crow)
 
         # --- Vorgaben für neue Zeilen ---
         self.def_mask = QLineEdit()
@@ -306,20 +318,26 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         for w in (self.def_mask, self.def_gw):
             w.editingFinished.connect(self.validate_defaults)
         box_def = QGroupBox(T("Vorgaben für neue Zeilen"))
-        f = QFormLayout(box_def)
+        box_def.setToolTip(T("Gelten für Zeilen, die danach neu entstehen („+ Server“, „Server suchen“, DHCP-Übernahme).\n"
+                             "Schon vorhandene Zeilen ändert erst der Knopf „Auf Liste anwenden“."))
+        f = self.compact_form(box_def)
         self.tip_row(f, T("Subnetzmaske"), self.def_mask,
                      T("Wird bei jeder neuen Zeile der Serverliste vorbelegt, auch bei Geräten aus der DHCP-Liste.\n"
                      "Leer lassen: Dann wird der Wert der vorherigen Zeile übernommen."))
         self.tip_row(f, T("Gateway"), self.def_gw,
                      T("Wird bei jeder neuen Zeile der Serverliste vorbelegt.\n"
                      "Leer lassen: Dann wird der Wert der vorherigen Zeile übernommen."))
+        apply_def = QPushButton(T("Auf Liste anwenden"))
+        apply_def.setToolTip(T("Trägt Subnetzmaske und Gateway in die markierten Zeilen ein (ohne Markierung: in alle Zeilen)\n"
+                               "und überschreibt dort vorhandene Werte. Ein leeres Feld lässt die Spalte unverändert."))
+        apply_def.clicked.connect(self.apply_defaults)
+        f.addRow("", apply_def)
 
-        right = QVBoxLayout()
-        right.addWidget(box_new)
-        right.addWidget(box_def)
         top = QHBoxLayout()
-        top.addWidget(box_cur)
-        top.addLayout(right)
+        top.setSpacing(6)
+        top.addWidget(box_cur, 4)
+        top.addWidget(box_new, 6)
+        top.addWidget(box_def, 3)
 
         # --- Serverliste ---
         self.vendor_col = len(i18n.COLS)     # zusätzliche, nur angezeigte Spalte, keine Daten-COLS-Spalte
@@ -470,10 +488,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(upper)
         split.addWidget(self.log)
-        split.setSizes([380, 260])
+        split.setStretchFactor(0, 5)
+        split.setStretchFactor(1, 1)
+        split.setSizes([640, 130])
+        split.setChildrenCollapsible(False)
 
         page = QWidget()
         pl = QVBoxLayout(page)
+        pl.setContentsMargins(4, 4, 4, 4)
+        pl.setSpacing(4)
         pl.addLayout(self.build_profiles())
         pl.addLayout(top)
         pl.addWidget(split, 1)
@@ -778,6 +801,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
             else T('<small>Leer lassen für den Werksbenutzer {0}</small>').format(i18n.USER_HINT[v]))
         self.version_hint.setText(f"<small>{i18n.VERSION_HINT[v]}</small>")
         self.version_hint.setToolTip(i18n.VERSION_HINT[v])
+        # Die Hinweise stehen kompakt als Tooltip an Hersteller und Benutzer (die Labels sind ausgeblendet)
+        self.vendor.setToolTip(self.vendor_tip_base + "\n\n" + i18n.VERSION_HINT[v])
+        self.cur_user.setToolTip(self.user_tip_base + "\n\n" + re.sub(r"<[^>]+>", "", self.user_hint.text()))
         self.slot.setEnabled(v in ("", "dell"))
 
     @staticmethod
@@ -868,6 +894,36 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.update_count()
         if hasattr(self, "con_pws"):                    # UEFI-Konsole: neue Adresse samt neuem Administrator anbieten
             self.console_refresh_ips()
+
+    @staticmethod
+    def compact_form(box):
+        """Formular mit engen Abständen für die Kopf-Felder der Seite."""
+        f = QFormLayout(box)
+        f.setContentsMargins(8, 2, 8, 4)
+        f.setVerticalSpacing(3)
+        return f
+
+    def apply_defaults(self):
+        """Subnetzmaske/Gateway der Vorgaben in markierte (sonst alle) Zeilen der Serverliste eintragen."""
+        if not self.validate_defaults():
+            self.status.setText(T("Subnetzmaske oder Gateway ist ungültig."))
+            return
+        mask, gw = self.def_mask.text().strip(), self.def_gw.text().strip()
+        if not (mask or gw):
+            self.status.setText(T("Bitte zuerst Subnetzmaske und/oder Gateway oben eintragen."))
+            return
+        rows = sorted({i.row() for i in self.table.selectedIndexes()}) or range(self.table.rowCount())
+        n = 0
+        for r in rows:
+            if not any(self.cell(r, c) for c in range(len(i18n.COLS))):
+                continue                                    # leere Zeilen auslassen, wie beim Passwort
+            if mask:
+                self.table.item(r, 3).setText(mask)
+            if gw:
+                self.table.item(r, 4).setText(gw)
+            n += 1
+        self.touch()
+        self.status.setText(T("Subnetzmaske/Gateway in {0} Zeilen eingetragen.").format(n))
 
     def apply_password(self):
         for r in range(self.table.rowCount()):
