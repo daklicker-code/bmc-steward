@@ -45,6 +45,16 @@ BIOS_PROFILES = HERE / "bmc-bios-profile.json"   # UEFI-Vorlagen: eigener Bereic
 DATA = Path(os.environ.get("BMC_STEWARD_DATA") or HERE)
 
 
+# Zeitplan der geplanten Passwort-Rotation (Reiter „Benutzer“): {enabled, interval_days, last_run}. Enthält
+# selbst keine Passwörter; die bei einer Rotation neu gesetzten Passwörter landen unter DATA/passwort-rotation/
+# (siehe users_tab.py), bis die Schlüsselbund-Integration das übernimmt.
+ROTATION_STATE = DATA / "bmc-rotation.json"
+
+# Ob Passwörter der Serverliste im System-Schlüsselbund statt im Klartext abgelegt werden sollen
+# (siehe vault.py): {"use_vault": bool}. Globale Einstellung, unabhängig vom gewählten Profil.
+VAULT_STATE = DATA / "bmc-vault.json"
+
+
 def private_dir(path):
     """Legt einen Ordner an, der nur für den eigenen Benutzer lesbar ist, und gibt ihn zurück."""
     path = Path(path)
@@ -2768,10 +2778,10 @@ TR = {
 "Ajouter automatiquement",
 "Automatisch übernäh"
 ],
-"Trägt neu gefundene Geräte von selbst in die Serverliste ein (Aktuelle IP).\nEs wird nichts konfiguriert: Neue IP, Hostname und der Start bleiben Handarbeit.\nEin Gerät kommt nur einmal in die Liste; wer eine Zeile löscht, bekommt sie nicht\nvon selbst zurück. Während eines Laufs wartet die Übernahme bis zum Ende.\nOhne Haken übernimmt nur der Knopf rechts.": [
-"Adds newly found devices to the server list by itself (Current IP).\nNothing gets configured: new IP, hostname and the start stay manual.\nA device is added only once; if you delete a row, it does not come back\non its own. During a run, adding waits until the run is over.\nWithout the tick, only the button on the right adds devices.",
-"Ajoute automatiquement les appareils nouvellement trouvés à la liste des serveurs (IP actuelle).\nRien n'est configuré : nouvelle IP, nom d'hôte et démarrage restent manuels.\nUn appareil n'est ajouté qu'une seule fois ; une ligne supprimée ne revient pas\ntoute seule. Pendant une exécution, l'ajout attend la fin.\nSans coche, seul le bouton de droite ajoute des appareils.",
-"Träit neu gfundeni Grät vo sälber i d Serverlischte ii (Aktuelli IP).\nEs wird nüt konfiguriert: Neui IP, Hostname und de Start bliibed Handarbeit.\nEs Grät chunnt nume eimal i d Lischte; wer e Ziile löscht, überchunnt sie nöd\nvo sälber zrugg. Während emene Luuf wartet d Übernahm bis zum Ändi.\nOhni Häägli übernimmt nume de Chnopf rächts."
+"Trägt neu gefundene Geräte von selbst in die Serverliste ein (Aktuelle IP).\nEs wird nichts konfiguriert: Neue IP, Hostname und der Start bleiben Handarbeit.\nEin Gerät kommt nur einmal in die Liste; wer eine Zeile löscht, bekommt sie nicht\nvon selbst zurück. Während eines Laufs wartet die Übernahme bis zum Ende.\nStandardmäßig aus: ohne Haken übernimmt nur der Knopf rechts.": [
+"Adds newly found devices to the server list by itself (Current IP).\nNothing gets configured: new IP, hostname and the start stay manual.\nA device is added only once; if you delete a row, it does not come back\non its own. During a run, adding waits until the run is over.\nOff by default: without the tick, only the button on the right adds devices.",
+"Ajoute automatiquement les appareils nouvellement trouvés à la liste des serveurs (IP actuelle).\nRien n'est configuré : nouvelle IP, nom d'hôte et démarrage restent manuels.\nUn appareil n'est ajouté qu'une seule fois ; une ligne supprimée ne revient pas\ntoute seule. Pendant une exécution, l'ajout attend la fin.\nDésactivé par défaut : sans coche, seul le bouton de droite ajoute des appareils.",
+"Träit neu gfundeni Grät vo sälber i d Serverlischte ii (Aktuelli IP).\nEs wird nüt konfiguriert: Neui IP, Hostname und de Start bliibed Handarbeit.\nEs Grät chunnt nume eimal i d Lischte; wer e Ziile löscht, überchunnt sie nöd\nvo sälber zrugg. Während emene Luuf wartet d Übernahm bis zum Ändi.\nStandardmässig us: ohni Häägli übernimmt nume de Chnopf rächts."
 ],
 "{0} Geräte automatisch übernommen: jetzt neue IP und Hostname eintragen": [
 "{0} devices added automatically: now enter new IP and hostname",
@@ -4317,7 +4327,380 @@ TR = {
 "Hostname:": ["Hostname:", "Nom d'hôte :", "Hostname:"],
 "Letzte Adresse:": ["Last address:", "Dernière adresse :", "Leschti Adress:"],
 "Sicherungszeit:": ["Backup time:", "Heure de sauvegarde :", "Sicherigszit:"],
-"Seriennr.": ["Serial no.", "N° de série", "Seriennr."]
+"Seriennr.": ["Serial no.", "N° de série", "Seriennr."],
+"DNS": ["DNS", "DNS", "DNS"],
+"Setzt die DNS-Server am Management-Netzwerkinterface des BMC.": [
+"Sets the DNS servers on the BMC's management network interface.",
+"Définit les serveurs DNS sur l'interface réseau de gestion du BMC.",
+"Setzt d'DNS-Server am Management-Netzwerkinterface vom BMC."
+],
+"DNS-Server 1": ["DNS server 1", "Serveur DNS 1", "DNS-Server 1"],
+"DNS-Server 2": ["DNS server 2", "Serveur DNS 2", "DNS-Server 2"],
+"Pflicht, wenn DNS eingerichtet wird.": [
+"Required if DNS is set up.", "Obligatoire si le DNS est configuré.", "Pflicht, wenn DNS iigrichtet wird."
+],
+"Optional, zweiter DNS-Server.": [
+"Optional, second DNS server.", "Facultatif, deuxième serveur DNS.", "Optional, zwöite DNS-Server."
+],
+"VLAN": ["VLAN", "VLAN", "VLAN"],
+"VLAN-Tag am Management-Netzwerkinterface des BMC (Standard-Redfish).": [
+"VLAN tag on the BMC's management network interface (standard Redfish).",
+"Tag VLAN sur l'interface réseau de gestion du BMC (Redfish standard).",
+"VLAN-Tag am Management-Netzwerkinterface vom BMC (Standard-Redfish)."
+],
+"VLAN abschalten": ["Disable VLAN", "Désactiver le VLAN", "VLAN abschalte"],
+"VLAN-ID": ["VLAN ID", "ID VLAN", "VLAN-ID"],
+"0 schaltet das VLAN-Tag wieder ab (Zugriff über das untaggte Netz).": [
+"0 switches the VLAN tag off again (access via the untagged network).",
+"0 désactive à nouveau le tag VLAN (accès via le réseau non balisé).",
+"0 schaltet s'VLAN-Tag wieder ab (Zugriff über's untaggte Netz)."
+],
+"IPv6": ["IPv6", "IPv6", "IPv6"],
+"IPv6 am Management-Netzwerkinterface des BMC.": [
+"IPv6 on the BMC's management network interface.",
+"IPv6 sur l'interface réseau de gestion du BMC.",
+"IPv6 am Management-Netzwerkinterface vom BMC."
+],
+"Aus": ["Off", "Désactivé", "Us"],
+"Automatisch (SLAAC)": ["Automatic (SLAAC)", "Automatique (SLAAC)", "Automatisch (SLAAC)"],
+"DHCPv6": ["DHCPv6", "DHCPv6", "DHCPv6"],
+"Statisch": ["Static", "Statique", "Statisch"],
+"z. B. fd00::10": ["e.g. fd00::10", "p. ex. fd00::10", "z. B. fd00::10"],
+"Betriebsart": ["Mode", "Mode", "Betriebsart"],
+"Aus, automatisch per Router (SLAAC), per DHCPv6-Server oder eine feste Adresse.": [
+"Off, automatic via router (SLAAC), via a DHCPv6 server, or a fixed address.",
+"Désactivé, automatique via le routeur (SLAAC), via un serveur DHCPv6, ou une adresse fixe.",
+"Us, automatisch per Router (SLAAC), per DHCPv6-Server oder e feschti Adress."
+],
+"Nur bei „Statisch“ nötig.": [
+"Only needed for “Static”.", "Nécessaire seulement pour « Statique ».", "Nume bi „Statisch“ nötig."
+],
+"Präfixlänge": ["Prefix length", "Longueur de préfixe", "Präfixlängi"],
+"Meist 64.": ["Usually 64.", "Généralement 64.", "Meischtens 64."],
+"Optional, nur bei „Statisch“.": [
+"Optional, only for “Static”.", "Facultatif, seulement pour « Statique ».", "Optional, nume bi „Statisch“."
+],
+"Netzwerkport (Shared/Dedicated)": [
+"Network port (Shared/Dedicated)", "Port réseau (partagé/dédié)", "Netzwerkport (Shared/Dedicated)"
+],
+"Eigener Management-Port (Dedicated) oder gemeinsam mit dem LOM/OCP-Port (Shared). Bislang nur bei Dell über Redfish gesetzt; bei den anderen Herstellern bitte in der Oberfläche umstellen.": [
+"Dedicated management port, or shared with the LOM/OCP port. So far only set via Redfish on Dell; for the other vendors please switch it in their web interface.",
+"Port de gestion dédié, ou partagé avec le port LOM/OCP. Pour l'instant réglé via Redfish uniquement chez Dell ; pour les autres fabricants, veuillez le modifier dans l'interface web.",
+"Eigene Management-Port (Dedicated) oder gmeinsam mit em LOM/OCP-Port (Shared). Bisher nume bi Dell über Redfish gsetzt; bi de andere Herstellern bitte in der Oberflächi umstelle."
+],
+"Eigener Port (Dedicated)": ["Dedicated port", "Port dédié", "Eigene Port (Dedicated)"],
+"Gemeinsam (Shared)": ["Shared", "Partagé", "Gmeinsam (Shared)"],
+"Netzwerkport": ["Network port", "Port réseau", "Netzwerkport"],
+"DNS: mindestens den ersten Server eintragen.": [
+"DNS: enter at least the first server.", "DNS : saisir au moins le premier serveur.",
+"DNS: mindeschtens de erscht Server iitraage."
+],
+"IPv6: bei „Statisch“ die Adresse eintragen.": [
+"IPv6: enter the address for “Static”.", "IPv6 : saisir l'adresse pour « Statique ».",
+"IPv6: bi „Statisch“ d'Adress iitraage."
+],
+"  Netzwerkport (Shared/Dedicated): bei diesem Hersteller bitte in der Oberfläche umstellen.": [
+"  Network port (Shared/Dedicated): please switch this in the web interface for this vendor.",
+"  Port réseau (partagé/dédié) : veuillez le modifier dans l'interface web pour ce fabricant.",
+"  Netzwerkport (Shared/Dedicated): bi däm Hersteller bitte in der Oberflächi umstelle."
+],
+
+"Benutzer": ["Users", "Utilisateurs", "Benutzer"],
+"Konten": ["Accounts", "Comptes", "Konte"],
+"Gesperrt": ["Locked", "Verrouillé", "Gsperrt"],
+"Aktiv": ["Active", "Actif", "Aktiv"],
+"SSH-Keys": ["SSH keys", "Clés SSH", "SSH-Keys"],
+"SSH-Key": ["SSH key", "Clé SSH", "SSH-Key"],
+"Benutzername": ["Username", "Nom d'utilisateur", "Benutzernaame"],
+"Rolle": ["Role", "Rôle", "Rolle"],
+"Neues Konto": ["New account", "Nouveau compte", "Neue Konto"],
+"Zufallspasswort": ["Random password", "Mot de passe aléatoire", "Zuefallspasswort"],
+"Anlegen …": ["Create …", "Créer …", "Alege …"],
+"Löschen": ["Delete", "Supprimer", "Lösche"],
+"Rolle ändern …": ["Change role …", "Changer le rôle …", "Rolle ändere …"],
+"Rolle ändern": ["Change role", "Changer le rôle", "Rolle ändere"],
+"Passwort setzen …": ["Set password …", "Définir le mot de passe …", "Passwort setze …"],
+"Passwort setzen": ["Set password", "Définir le mot de passe", "Passwort setze"],
+"SSH-Key setzen …": ["Set SSH key …", "Définir la clé SSH …", "SSH-Key setze …"],
+"SSH-Key setzen": ["Set SSH key", "Définir la clé SSH", "SSH-Key setze"],
+"SSH-Keys entfernen": ["Remove SSH keys", "Supprimer les clés SSH", "SSH-Keys entferne"],
+"SSH-Keys entfernen?": ["Remove SSH keys?", "Supprimer les clés SSH ?", "SSH-Keys entferne?"],
+"SSH-Key löschen": ["Delete SSH key", "Supprimer la clé SSH", "SSH-Key lösche"],
+"Gerät": ["Device", "Appareil", "Gerät"],
+"Adresse": ["Address", "Adresse", "Adress"],
+"Konten laden": ["Load accounts", "Charger les comptes", "Konte lade"],
+"Lese Konten …": ["Reading accounts …", "Lecture des comptes …", "Les Konte …"],
+"Fehler: {0}": ["Error: {0}", "Erreur : {0}", "Fehler: {0}"],
+"{0} Konten gelesen ({1}).": [
+"{0} accounts read ({1}).", "{0} comptes lus ({1}).", "{0} Konte gläse ({1})."
+],
+"Fehler, siehe Protokoll.": ["Error, see log.", "Erreur, voir le journal.", "Fehler, lueg s'Protokoll."],
+"Bitte eine Adresse eintragen.": [
+"Please enter an address.", "Veuillez saisir une adresse.", "Bitte e Adress iitraage."
+],
+"Bitte ein Konto in der Tabelle wählen.": [
+"Please select an account in the table.", "Veuillez sélectionner un compte dans le tableau.",
+"Bitte es Konto in der Tabälle wähle."
+],
+"Bitte Benutzername und Passwort eintragen.": [
+"Please enter a username and password.", "Veuillez saisir un nom d'utilisateur et un mot de passe.",
+"Bitte Benutzernaame und Passwort iitraage."
+],
+"Konto {0} wird jetzt wirklich gelöscht.": [
+"Account {0} is now really being deleted.", "Le compte {0} va maintenant vraiment être supprimé.",
+"Konto {0} wird jetzt wirklich glöscht."
+],
+"Benutzer löschen?": ["Delete user?", "Supprimer l'utilisateur ?", "Benutzer lösche?"],
+"Benutzer {0} anlegen": ["Create user {0}", "Créer l'utilisateur {0}", "Benutzer {0} alege"],
+"Benutzer {0} löschen": ["Delete user {0}", "Supprimer l'utilisateur {0}", "Benutzer {0} lösche"],
+"Neue Rolle für {0}": ["New role for {0}", "Nouveau rôle pour {0}", "Neui Rolle für {0}"],
+"Rolle von {0} ändern": ["Change role of {0}", "Changer le rôle de {0}", "Rolle vo {0} ändere"],
+"Neues Passwort für {0}": ["New password for {0}", "Nouveau mot de passe pour {0}", "Neus Passwort für {0}"],
+"Passwort von {0} setzen": ["Set password of {0}", "Définir le mot de passe de {0}", "Passwort vo {0} setze"],
+"Öffentlicher SSH-Key für {0}": [
+"Public SSH key for {0}", "Clé SSH publique pour {0}", "Öffentlichi SSH-Key für {0}"
+],
+"SSH-Key für {0} setzen": ["Set SSH key for {0}", "Définir la clé SSH pour {0}", "SSH-Key für {0} setze"],
+"Dieses Konto hat keine gespeicherten SSH-Keys.": [
+"This account has no saved SSH keys.", "Ce compte n'a aucune clé SSH enregistrée.",
+"Das Konto het kei gspeicherete SSH-Keys."
+],
+"Alle SSH-Keys von {0} werden jetzt wirklich entfernt.": [
+"All SSH keys of {0} are now really being removed.",
+"Toutes les clés SSH de {0} vont maintenant vraiment être supprimées.",
+"Alli SSH-Keys vo {0} werdet jetzt wirklich entfernt."
+],
+"SSH-Keys von {0} entfernen": ["Remove SSH keys of {0}", "Supprimer les clés SSH de {0}", "SSH-Keys vo {0} entferne"],
+"Feste Wahl überspringt die Erkennung. „Automatisch erkennen“ fragt das Gerät.": [
+"A fixed choice skips detection. “Detect automatically” asks the device.",
+"Un choix fixe ignore la détection. « Détecter automatiquement » interroge l'appareil.",
+"Feschti Wahl überspringt d'Erkennung. „Automatisch erkenne“ frogt s'Gerät."
+],
+"Fällt für Geräte ein, deren Spalte „Passwort“ in der Serverliste leer ist.": [
+"Used for devices whose “Password” column in the server list is empty.",
+"Utilisé pour les appareils dont la colonne « Mot de passe » de la liste des serveurs est vide.",
+"Gilt für Geräte, dere Spalte „Passwort“ in der Serverlischte leer isch."
+],
+"Adresse des Geräts. Vorschläge aus der Serverliste („Neuware“).": [
+"The device's address. Suggestions from the server list (“New hardware”).",
+"Adresse de l'appareil. Suggestions issues de la liste des serveurs (« Nouveau matériel »).",
+"Adress vom Gerät. Vorschläg usdr Serverlischte („Neuware“)."
+],
+"Konten dieses Geräts (Redfish-AccountService). SSH-Key-Verwaltung ist ein neuerer DMTF-Standard und auf echter Hardware ungeprüft; nicht unterstützende Firmware wird übersprungen, nicht als Fehler gemeldet.": [
+"This device's accounts (Redfish AccountService). SSH key management is a newer DMTF standard and "
+"untested on real hardware; firmware that doesn't support it is skipped, not reported as an error.",
+"Comptes de cet appareil (Redfish AccountService). La gestion des clés SSH est une norme DMTF plus "
+"récente et non testée sur du matériel réel ; un firmware qui ne la prend pas en charge est ignoré, "
+"pas signalé comme une erreur.",
+"Konte vo däm Gerät (Redfish-AccountService). SSH-Key-Verwaltig isch en neuere DMTF-Standard und uf "
+"echter Hardware ungeprüeft; Firmware ohni Unterstützig wird übersprunge, nid als Fehler gmäldet."
+],
+"Passwort-Rotation (ganze Serverliste „Neuware“)": [
+"Password rotation (whole server list “New hardware”)",
+"Rotation des mots de passe (toute la liste des serveurs « Nouveau matériel »)",
+"Passwort-Rotation (ganzi Serverlischte „Neuware“)"
+],
+"Rotiert das Passwort des gerade angemeldeten Benutzers auf allen Servern der Liste. Neue Passwörter werden sofort in der Spalte „Passwort“ nachgetragen und zusätzlich in einer eigenen Datei gesichert (siehe „Sicherungen/Protokolle“) - die Serverliste danach bitte speichern, sonst gehen sie beim Beenden verloren.": [
+"Rotates the password of the currently logged-in user on every server of the list. New passwords are "
+"immediately added to the “Password” column and also saved to a separate file (see “Backups/logs”) - "
+"please save the server list afterwards, otherwise they are lost on exit.",
+"Fait tourner le mot de passe de l'utilisateur actuellement connecté sur tous les serveurs de la liste. "
+"Les nouveaux mots de passe sont immédiatement ajoutés à la colonne « Mot de passe » et aussi "
+"enregistrés dans un fichier séparé (voir « Sauvegardes/journaux ») - veuillez ensuite enregistrer la "
+"liste des serveurs, sinon ils sont perdus à la fermeture.",
+"Rotiert s'Passwort vom grad aagmäldete Benutzer auf allne Server vo der Lischte. Neui Passwörter "
+"werdet sofort in der Spalte „Passwort“ naachgtreit und zuesätzlich in einere eigete Datei gsicheret "
+"(lueg „Sicherige/Protokoll“) - d'Serverlischte danach bitte spiichere, sonst gönd si bim Beände verlore."
+],
+"Trockenlauf (nichts ändern)": ["Dry run (change nothing)", "Essai à blanc (rien ne change)",
+                                "Tröckeloif (nüt ändere)"],
+"Scharf: Passwörter jetzt rotieren": [
+"Live: rotate passwords now", "Réel : faire tourner les mots de passe maintenant",
+"Scharf: Passwörter jetzt rotiere"
+],
+"Passwörter wirklich rotieren?": [
+"Really rotate passwords?", "Vraiment faire tourner les mots de passe ?", "Passwörter wirklich rotiere?"
+],
+"Auf {0} Servern wird das Passwort geändert.": [
+"The password is changed on {0} servers.", "Le mot de passe est modifié sur {0} serveurs.",
+"Uf {0} Server wird s'Passwort gänderet."
+],
+"Auf allen Servern der Liste wird jetzt wirklich ein neues, zufälliges Passwort gesetzt. Die neuen Passwörter werden in der Serverliste nachgetragen und zusätzlich gesichert.": [
+"A new, random password is now really being set on every server of the list. The new passwords are "
+"added to the server list and also saved.",
+"Un nouveau mot de passe aléatoire va maintenant vraiment être défini sur tous les serveurs de la "
+"liste. Les nouveaux mots de passe sont ajoutés à la liste des serveurs et aussi enregistrés.",
+"Uf allne Server vo der Lischte wird jetzt wirklich es neus, zuefällige Passwort gsetzt. D'neue "
+"Passwörter werdet in der Serverlischte naachgtreit und zuesätzlich gsicheret."
+],
+"Geplante Rotation aktiv": ["Scheduled rotation active", "Rotation planifiée active", "Gplanti Rotation aktiv"],
+"Läuft nur, solange BMC-Steward geöffnet ist (kein Systemdienst). Prüft stündlich, ob das Intervall abgelaufen ist, und rotiert dann scharf und ohne Rückfrage - Protokoll und neue Passwörter wie oben.": [
+"Only runs while BMC-Steward is open (not a system service). Checks hourly whether the interval has "
+"elapsed and then rotates live, without asking - log and new passwords as above.",
+"Ne fonctionne que tant que BMC-Steward est ouvert (ce n'est pas un service système). Vérifie toutes "
+"les heures si l'intervalle est écoulé, puis effectue la rotation réellement, sans demander - journal "
+"et nouveaux mots de passe comme ci-dessus.",
+"Laift nume, solang BMC-Steward offe isch (kei Systemdienst). Prüeft stündlich, ob s'Intervall "
+"abgloffe isch, und rotiert denn scharf und ohni Rückfrag - Protokoll und neui Passwörter wie obe."
+],
+"Intervall": ["Interval", "Intervalle", "Intervall"],
+"Tage": ["days", "jours", "Tag"],
+"Zuletzt gelaufen": ["Last run", "Dernière exécution", "Zletscht gloffe"],
+"noch nie": ["never", "jamais", "no nie"],
+"— {0} —": ["— {0} —", "— {0} —", "— {0} —"],
+"— Passwort-Rotation, {0}, {1} Server —": [
+"— Password rotation, {0}, {1} servers —", "— Rotation des mots de passe, {0}, {1} serveurs —",
+"— Passwort-Rotation, {0}, {1} Server —"
+],
+"— Geplante Rotation wird ausgelöst (Intervall {0} Tage) —": [
+"— Scheduled rotation is triggered (interval {0} days) —",
+"— La rotation planifiée est déclenchée (intervalle {0} jours) —",
+"— Gplanti Rotation wird usglöst (Intervall {0} Tag) —"
+],
+"  Neue Passwörter stehen jetzt in der Serverliste (Spalte „Passwort“) und zusätzlich gesichert unter {0}. Bitte die Serverliste jetzt speichern.": [
+"  New passwords are now in the server list (“Password” column) and also saved under {0}. Please "
+"save the server list now.",
+"  Les nouveaux mots de passe figurent maintenant dans la liste des serveurs (colonne « Mot de "
+"passe ») et sont aussi enregistrés sous {0}. Veuillez enregistrer la liste des serveurs maintenant.",
+"  Neui Passwörter stönd jetzt in der Serverlischte (Spalte „Passwort“) und zuesätzlich gsicheret "
+"unter {0}. Bitte d'Serverlischte jetzt spiichere."
+],
+"  Benutzer {0} angelegt": ["  User {0} created", "  Utilisateur {0} créé", "  Benutzer {0} aglegt"],
+"  Benutzer {0} gelöscht": ["  User {0} deleted", "  Utilisateur {0} supprimé", "  Benutzer {0} glöscht"],
+"Benutzer anlegen": ["Create user", "Créer l'utilisateur", "Benutzer alege"],
+"Benutzer löschen": ["Delete user", "Supprimer l'utilisateur", "Benutzer lösche"],
+"  FEHLER: kein freier Benutzer-Slot mehr frei.": [
+"  ERROR: no free user slot left.", "  ERREUR : plus aucun emplacement utilisateur libre.",
+"  FEHLER: kei freie Benutzer-Slot me frei."
+],
+"  Rolle auf {0} gesetzt": ["  Role set to {0}", "  Rôle défini sur {0}", "  Rolle uf {0} gsetzt"],
+"  Rolle: iLO 3/4 kennt nur eine feste Rechtemenge, nichts geändert.": [
+"  Role: iLO 3/4 only knows one fixed set of privileges, nothing changed.",
+"  Rôle : iLO 3/4 ne connaît qu'un seul ensemble fixe de droits, rien n'a changé.",
+"  Rolle: iLO 3/4 kennt nume ei feschti Rächtemänge, nüt gänderet."
+],
+"  Konto {0}": ["  Account {0}", "  Compte {0}", "  Konto {0}"],
+"aktiviert": ["activated", "activé", "aktiviert"],
+"deaktiviert": ["deactivated", "désactivé", "deaktiviert"],
+"Aktiv/Inaktiv setzen": ["Set active/inactive", "Définir actif/inactif", "Aktiv/Inaktiv setze"],
+"  Aktiv/Inaktiv: bei iLO 3/4 bitte das Konto löschen oder das Passwort ändern.": [
+"  Active/inactive: on iLO 3/4 please delete the account or change the password.",
+"  Actif/inactif : sur iLO 3/4, veuillez supprimer le compte ou changer le mot de passe.",
+"  Aktiv/Inaktiv: bi iLO 3/4 bitte s'Konto lösche oder s'Passwort ändere."
+],
+"  Passwort von {0} neu gesetzt": [
+"  Password of {0} reset", "  Mot de passe de {0} redéfini", "  Passwort vo {0} neu gsetzt"
+],
+"  SSH-Key: auf diesem Gerät nicht unterstützt, übersprungen": [
+"  SSH key: not supported on this device, skipped",
+"  Clé SSH : non prise en charge sur cet appareil, ignorée",
+"  SSH-Key: uf däm Gerät nid unterstützt, übersprunge"
+],
+"  FEHLER: eigenes Konto nicht gefunden": [
+"  ERROR: own account not found", "  ERREUR : compte propre introuvable",
+"  FEHLER: eigete Konto nid gfunde"
+],
+
+"Passwörter im Schlüsselbund speichern (statt im Klartext)": [
+"Store passwords in the keyring (instead of in plain text)",
+"Enregistrer les mots de passe dans le trousseau (au lieu du texte brut)",
+"Passwörter im Schlüsselbund spiichere (statt im Klartext)"
+],
+"Beim Speichern der Liste wandern die Passwörter in den System-Schlüsselbund (Secret Service/libsecret, Windows-Anmeldeinformationsverwaltung, macOS-Schlüsselbundverwaltung) statt in die Datei; die Datei enthält dann nur noch Adressen, Hostnamen und Einstellungen. Beim Laden werden leere Passwort-Felder automatisch aus dem Schlüsselbund aufgefüllt (Zuordnung über die Seriennummer, sonst über die Aktuelle IP). Ebenso wird jedes von Hand eingetragene oder geänderte Passwort sofort mitgesichert, solange der Haken gesetzt ist.": [
+"When saving the list, passwords go into the system keyring (Secret Service/libsecret, Windows "
+"Credential Manager, macOS Keychain) instead of into the file; the file then only contains "
+"addresses, hostnames and settings. When loading, empty password fields are automatically filled "
+"in from the keyring (matched by serial number, otherwise by current IP). Likewise, any password "
+"entered or changed by hand is saved immediately, as long as this box stays checked.",
+"En enregistrant la liste, les mots de passe vont dans le trousseau système (Secret Service/"
+"libsecret, gestionnaire d'identifiants Windows, trousseau macOS) au lieu du fichier ; le fichier ne "
+"contient alors plus que les adresses, noms d'hôtes et paramètres. Au chargement, les champs de mot "
+"de passe vides sont automatiquement remplis depuis le trousseau (association via le numéro de "
+"série, sinon via l'IP actuelle). De même, tout mot de passe saisi ou modifié à la main est "
+"enregistré immédiatement, tant que cette case reste cochée.",
+"Bim Spiichere vo der Lischte wandered d'Passwörter in de System-Schlüsselbund (Secret Service/"
+"libsecret, Windows-Aamäldigsverwaltig, macOS-Schlüsselbundverwaltig) statt in d'Datei; d'Datei "
+"enthaltet denn nume noch Adresse, Hostnaame und Ischtellige. Bim Lade werdet leeri Passwort-Fälder "
+"automatisch usem Schlüsselbund ufgfüllt (Zuordnig über d'Seriennummer, sonst über d'Aktuelli IP). "
+"Grad so wird jedes vo Hand iitreit oder gänderte Passwort sofort mitgsicheret, solang de Haake "
+"gsetzt isch."
+],
+"Kein Schlüsselbund auf diesem Rechner erreichbar (Paket „keyring“ fehlt, oder es läuft kein Secret-Service-Dienst, z. B. bei einer Sitzung ohne Desktop-Umgebung). Passwörter bleiben wie bisher nur in der Tabelle/CSV.": [
+"No keyring reachable on this machine (the “keyring” package is missing, or no Secret Service is "
+"running, e.g. in a session without a desktop environment). Passwords stay in the table/CSV only, "
+"as before.",
+"Aucun trousseau accessible sur cette machine (le paquet « keyring » est manquant, ou aucun service "
+"Secret Service ne fonctionne, par exemple dans une session sans environnement de bureau). Les mots "
+"de passe restent uniquement dans le tableau/CSV, comme avant.",
+"Kein Schlüsselbund uf däm Rächner erreichbar (Paket „keyring“ fehlt, oder es laift kein "
+"Secret-Service-Dienst, zum Bischpiel bi re Sitzig ohni Desktop-Umgäbig). Passwörter bliibed wie "
+"bisher nume in der Tabälle/CSV."
+],
+"Schlüsselbund für diese Liste leeren": [
+"Clear keyring for this list", "Vider le trousseau pour cette liste",
+"Schlüsselbund für die Lischte leere"
+],
+"Entfernt die Schlüsselbund-Einträge aller Server dieser Liste wieder. Ändert nichts an der Tabelle selbst.": [
+"Removes the keyring entries of every server in this list again. Does not change the table itself.",
+"Supprime à nouveau les entrées du trousseau de tous les serveurs de cette liste. Ne modifie pas le "
+"tableau lui-même.",
+"Entfernt d'Schlüsselbund-Iitreg vo allne Server vo dere Lischte wieder. Änderet nüt an der Tabälle "
+"sälber."
+],
+"{0} Passwörter aus der Serverliste in den Schlüsselbund übernommen.": [
+"{0} passwords taken over from the server list into the keyring.",
+"{0} mots de passe repris de la liste des serveurs dans le trousseau.",
+"{0} Passwörter usder Serverlischte in Schlüsselbund übernoo."
+],
+"Schlüsselbund leeren?": ["Clear keyring?", "Vider le trousseau ?", "Schlüsselbund leere?"],
+"Entfernt die Schlüsselbund-Einträge aller {0} Server dieser Liste.": [
+"Removes the keyring entries of all {0} servers in this list.",
+"Supprime les entrées du trousseau des {0} serveurs de cette liste.",
+"Entfernt d'Schlüsselbund-Iitreg vo allne {0} Server vo dere Lischte."
+],
+"{0} Schlüsselbund-Einträge entfernt.": [
+"{0} keyring entries removed.", "{0} entrées du trousseau supprimées.", "{0} Schlüsselbund-Iitreg entfernt."
+],
+" ({0} Passwörter aus dem Schlüsselbund aufgefüllt)": [
+" ({0} passwords filled in from the keyring)", " ({0} mots de passe complétés depuis le trousseau)",
+" ({0} Passwörter usem Schlüsselbund ufgfüllt)"
+],
+"Im Schlüsselbund speichern legt sie stattdessen im System-Schlüsselbund ab (Zuordnung über Seriennummer, sonst Aktuelle IP); die Datei bleibt dann wie „Ohne Passwörter“.": [
+"Store in keyring puts them in the system keyring instead (matched by serial number, otherwise "
+"current IP); the file then stays like “Without passwords”.",
+"Enregistrer dans le trousseau les place plutôt dans le trousseau système (association via le "
+"numéro de série, sinon l'IP actuelle) ; le fichier reste alors comme « Sans mots de passe ».",
+"Im Schlüsselbund spiichere legt si statt däm im System-Schlüsselbund ab (Zuordnig über "
+"Seriennummer, sonst Aktuelli IP); d'Datei bliibt denn wie „Ohni Passwörter“."
+],
+"Im Schlüsselbund speichern": [
+"Store in keyring", "Enregistrer dans le trousseau", "Im Schlüsselbund spiichere"
+],
+" ({0} Passwörter im Schlüsselbund)": [
+" ({0} passwords in the keyring)", " ({0} mots de passe dans le trousseau)",
+" ({0} Passwörter im Schlüsselbund)"
+],
+"  Neue Passwörter stehen jetzt in der Serverliste (Spalte „Passwort“)": [
+"  New passwords are now in the server list (“Password” column)",
+"  Les nouveaux mots de passe figurent maintenant dans la liste des serveurs (colonne « Mot de passe »)",
+"  Neui Passwörter stönd jetzt in der Serverlischte (Spalte „Passwort“)"
+],
+"und im Schlüsselbund.": ["and in the keyring.", "et dans le trousseau.", "und im Schlüsselbund."],
+"und für {0} davon zusätzlich im Schlüsselbund.": [
+"and {0} of them also in the keyring.", "et {0} d'entre eux aussi dans le trousseau.",
+"und für {0} dervo zuesätzlich im Schlüsselbund."
+],
+"und für die restlichen {0} zusätzlich gesichert unter {1}.": [
+"and the remaining {0} also saved under {1}.", "et les {0} restants aussi enregistrés sous {1}.",
+"und für die reschtleche {0} zuesätzlich gsicheret unter {1}."
+],
+"und zusätzlich gesichert unter {0}.": [
+"and also saved under {0}.", "et aussi enregistrés sous {0}.", "und zuesätzlich gsicheret unter {0}."
+],
+"Bitte die Serverliste jetzt speichern.": [
+"Please save the server list now.", "Veuillez enregistrer la liste des serveurs maintenant.",
+"Bitte d'Serverlischte jetzt spiichere."
+]
 }
 
 

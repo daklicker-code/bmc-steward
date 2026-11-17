@@ -373,6 +373,15 @@ class RedfishClient:
     # ---------- Sicherung vor Änderungen ----------
     MGR_PATH = {"dell": "/redfish/v1/Managers/iDRAC.Embedded.1"}        # sonst /redfish/v1/Managers/1
 
+    # Dediziertes Management-Netzwerkinterface je Hersteller (für DNS/VLAN/IPv6, siehe ServicesEngine weiter
+    # unten). Nur Dell ist echt geprüft (iDRAC9); die übrigen Pfade folgen dem gleichen Namensschema wie die
+    # Neuware-Einrichtung (setup_hpe/setup_smc/setup_lenovo), sind aber auf echter Hardware ungeprüft – deshalb
+    # läuft alles darüber über soft() (404/405/501 = "nicht unterstützt", kein Fehler).
+    ETH_PATH = {"dell": "/redfish/v1/Managers/iDRAC.Embedded.1/EthernetInterfaces/NIC.1",
+                "hpe": "/redfish/v1/Managers/1/EthernetInterfaces/1",
+                "smc": "/redfish/v1/Managers/1/EthernetInterfaces/1",
+                "lenovo": "/redfish/v1/Managers/1/EthernetInterfaces/NIC"}
+
     def backup(self, ip, user, pw, vendor, reason):
         """Liest vor einer Änderung die wichtigsten Einstellungen (nur GET) und legt sie als JSON ab:
         <Datenordner>/sicherungen/<Seriennummer>/<Zeit>-<Anlass>.json. Grundlage zum Nachsehen und
@@ -1463,7 +1472,8 @@ class ServicesEngine(RedfishClient):
     uebersprungen, nicht geraten. Protokollzeilen gehen an log()."""
 
     ROLES = ("Administrator", "Operator", "ReadOnly")
-    LABEL = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": "HTTPS-Zertifikat", "hard": "Härtung"}
+    LABEL = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": "HTTPS-Zertifikat", "hard": "Härtung",
+             "dns": "DNS", "vlan": "VLAN", "ipv6": "IPv6", "nicmode": "Netzwerkport"}
     UNSUPPORTED = re.compile(r"PropertyUnknown|PropertyNotWritable|NotSupported|not supported|ActionNotSupported|"
                              r"PropertyValueNotInList|ResourceNotFound|InsufficientPrivilege", re.I)
 
@@ -1573,6 +1583,68 @@ class ServicesEngine(RedfishClient):
         self.fail(label, self.code)
         return False
 
+    IPV6_MODE_LABEL = {"disabled": "Aus", "slaac": "Automatisch (SLAAC)", "dhcpv6": "DHCPv6", "static": "Statisch"}
+
+    def svc_dns(self, ip, pw, v, cfg):
+        """DNS-Server am Management-Interface. Standard-Redfish (StaticNameServers); bei Dell zusätzlich
+        über die Attribute-API, falls das Interface selbst es nicht annimmt."""
+        servers = [s.strip() for s in cfg.get("servers", []) if s.strip()][:2]
+        if not servers:
+            return None
+        nic = self.ETH_PATH.get(v)
+        res = self.soft(T("DNS"), ip, pw, "PATCH", nic, {"StaticNameServers": servers}) if nic else None
+        if res is not None or v != "dell":
+            return res
+        return self.soft(T("DNS"), ip, pw, "PATCH", self.MGR_PATH["dell"] + "/Attributes",
+                         {"Attributes": {"NIC.1.DNSServer1": servers[0],
+                                         "NIC.1.DNSServer2": servers[1] if len(servers) > 1 else ""}})
+
+    def svc_vlan(self, ip, pw, v, cfg):
+        """VLAN-Tag am Management-Interface, über das Standard-Redfish-VLAN-Objekt. ID 0 = VLAN abschalten."""
+        nic = self.ETH_PATH.get(v)
+        if not nic:
+            return None
+        vid = int(cfg.get("id") or 0)
+        body = {"VLAN": {"VLANEnable": True, "VLANId": vid}} if vid else {"VLAN": {"VLANEnable": False}}
+        return self.soft(T("VLAN"), ip, pw, "PATCH", nic, body)
+
+    def svc_ipv6(self, ip, pw, v, cfg):
+        """IPv6 am Management-Interface: aus, SLAAC, DHCPv6 oder statisch (DMTF-Standardeigenschaften
+        IPv6AutoConfigEnabled/DHCPv6/IPv6StaticAddresses)."""
+        nic = self.ETH_PATH.get(v)
+        if not nic:
+            return None
+        mode = cfg.get("mode") or "disabled"
+        if mode == "static":
+            addr = cfg.get("address", "").strip()
+            if not addr:
+                return None
+            body = {"IPv6AutoConfigEnabled": False, "DHCPv6": {"OperatingMode": "Disabled"},
+                    "IPv6StaticAddresses": [{"Address": addr, "PrefixLength": int(cfg.get("prefix") or 64)}]}
+            gw = cfg.get("gateway", "").strip()
+            if gw:
+                body["IPv6DefaultGateway"] = gw
+        elif mode == "dhcpv6":
+            body = {"IPv6AutoConfigEnabled": False, "DHCPv6": {"OperatingMode": "Stateful"}}
+        elif mode == "slaac":
+            body = {"IPv6AutoConfigEnabled": True, "DHCPv6": {"OperatingMode": "Disabled"}}
+        else:
+            body = {"IPv6AutoConfigEnabled": False, "DHCPv6": {"OperatingMode": "Disabled"},
+                    "IPv6StaticAddresses": []}
+        return self.soft(T("IPv6"), ip, pw, "PATCH", nic, body)
+
+    def svc_nicmode(self, ip, pw, v, cfg):
+        """Eigener Management-Port (Dedicated) oder gemeinsam mit LOM/OCP (Shared). Nicht einheitlich über
+        Standard-Redfish lösbar; bislang nur für Dell (iDRAC-Attribut NIC.1.NicSelection) umgesetzt, bei den
+        übrigen Herstellern bitte in der Weboberfläche umstellen (Hinweis im Protokoll)."""
+        mode = cfg.get("mode") or "dedicated"
+        if v == "dell":
+            value = "Dedicated" if mode == "dedicated" else "LOM1"
+            return self.soft(T("Netzwerkport"), ip, pw, "PATCH", self.MGR_PATH["dell"] + "/Attributes",
+                             {"Attributes": {"NIC.1.NicSelection": value}})
+        self.log(T("  Netzwerkport (Shared/Dedicated): bei diesem Hersteller bitte in der Oberfläche umstellen."))
+        return None
+
     def svc_hard(self, ip, pw, v, cfg):
         """Härtung über Standard-Redfish: unnötige Netzwerkdienste aus, Kontosperre, Session-Zeitlimit."""
         mgr = self.MGR_PATH.get(v, "/redfish/v1/Managers/1")
@@ -1608,7 +1680,8 @@ class ServicesEngine(RedfishClient):
     def run(self):
         """Gibt True zurueck, wenn alle Server ohne Fehler durchliefen."""
         order = [("ntp", self.svc_ntp), ("syslog", self.svc_syslog), ("ldap", self.svc_ldap), ("cert", self.svc_cert),
-                 ("hard", self.svc_hard)]
+                 ("dns", self.svc_dns), ("vlan", self.svc_vlan), ("ipv6", self.svc_ipv6),
+                 ("nicmode", self.svc_nicmode), ("hard", self.svc_hard)]
         active = [(k, fn) for k, fn in order if k in self.services]
         done, failed = [], []
         for ip, row_pw in self.rows:
@@ -1653,6 +1726,244 @@ class ServicesEngine(RedfishClient):
         summary = T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(len(done), len(failed))
         self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
         return not failed
+
+
+
+
+class UsersEngine(RedfishClient):
+    """Benutzerverwaltung über Redfish AccountService: Konten eines Geräts lesen/anlegen/löschen, Rolle,
+    Aktiv-Status und Passwort setzen, SSH-Public-Keys je Konto (DMTF-Standard ManagerAccount „Keys“, auf
+    echter Hardware bislang ungeprüft – deshalb über soft(), das 404/405/501 als „nicht unterstützt“ statt
+    als Fehler behandelt). iLO 3/4 kennt weder Rollen noch SSH-Keys über seine Schnittstelle (RIBCL); dort
+    sind nur Konten anlegen/löschen/Passwort setzen möglich. Für die Passwort-Rotation arbeitet run() wie
+    ServicesEngine die Serverliste ab."""
+
+    ACCOUNTS = "/redfish/v1/AccountService/Accounts"
+    ROLES = ("Administrator", "Operator", "ReadOnly")
+    PRIVS = "".join(f'<{p} value="Yes"/>' for p in ("ADMIN_PRIV", "REMOTE_CONS_PRIV", "RESET_SERVER_PRIV",
+                                                     "VIRTUAL_MEDIA_PRIV", "CONFIG_ILO_PRIV"))
+    UNSUPPORTED = re.compile(r"PropertyUnknown|PropertyNotWritable|NotSupported|not supported|ActionNotSupported|"
+                             r"PropertyValueNotInList|ResourceNotFound|InsufficientPrivilege", re.I)
+
+    def __init__(self, rows=None, cur_user="", dry=True, log=print, stopped=lambda: False, vendor=None):
+        super().__init__(dry, log, stopped)
+        self.rows, self.cur_user_set = rows or [], cur_user
+        self.force_vendor = vendor
+
+    def soft(self, label, ip, user, pw, method, path, body=None):
+        """Wie api(), aber eine Einstellung, die der BMC nicht kennt, gilt als „nicht unterstützt“ (None)
+        statt als Fehler. Rückgabe True / None / False."""
+        code = self.api(ip, user, pw, method, path, body)
+        if self.ok(code):
+            self.log(T("  {0}: gesetzt").format(label), "ok")
+            return True
+        if code in (404, 405, 501) or (code == 400 and self.UNSUPPORTED.search(" ".join(self.errmsg()))):
+            self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(label))
+            return None
+        self.fail(label, code)
+        return False
+
+    # ---------- Konten lesen ----------
+    def list_accounts(self, ip, user, pw, v):
+        """[{"path","username","role","enabled","locked","keys_path","ssh_keys"}] oder None bei Fehler.
+        Leere Dell-Slots (kein Benutzername) werden nicht aufgeführt."""
+        if v == "hpe_old":
+            return self._list_accounts_ribcl(ip, user, pw)
+        if not self.ok(self.api(ip, user, pw, "GET", self.ACCOUNTS)) or not isinstance(self.body, dict):
+            return None
+        out = []
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if not path or not self.ok(self.api(ip, user, pw, "GET", path)) or not isinstance(self.body, dict):
+                continue
+            b = self.body
+            name = str(b.get("UserName") or "")
+            if not name:
+                continue
+            keys = b.get("Keys")
+            keys_path = keys.get("@odata.id") if isinstance(keys, dict) else None
+            out.append({"path": path, "username": name, "role": str(b.get("RoleId") or ""),
+                       "enabled": bool(b.get("Enabled", True)), "locked": bool(b.get("Locked", False)),
+                       "keys_path": keys_path, "ssh_keys": self._count_ssh_keys(ip, user, pw, keys_path)})
+        return out
+
+    def _count_ssh_keys(self, ip, user, pw, keys_path):
+        if not keys_path or not self.ok(self.api(ip, user, pw, "GET", keys_path)) or not isinstance(self.body, dict):
+            return 0
+        return len(self.body.get("Members") or [])
+
+    def _list_accounts_ribcl(self, ip, user, pw):
+        code = self.ribcl(ip, user, pw, "read", "USER_INFO", "<GET_ALL_USERS/>")
+        if not self.ok(code):
+            return None
+        logins = re.findall(r'USER_LOGIN\s+VALUE\s*=\s*"([^"]+)"', self.xml)
+        return [{"path": login, "username": login, "role": "Administrator", "enabled": True, "locked": False,
+                "keys_path": None, "ssh_keys": 0} for login in logins]
+
+    def _own_account_path(self, ip, user, pw, v):
+        """Pfad des Kontos, mit dem gerade angemeldet ist (für die Passwort-Rotation)."""
+        if not self.ok(self.api(ip, user, pw, "GET", self.ACCOUNTS)) or not isinstance(self.body, dict):
+            return None
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if path and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict) \
+                    and str(self.body.get("UserName") or "").lower() == user.lower():
+                return path
+        return None
+
+    # ---------- Konten ändern ----------
+    def create_account(self, ip, user, pw, v, new_user, new_pass, role="Administrator"):
+        if v == "hpe_old":
+            code = self.ribcl(ip, user, pw, "write", "USER_INFO",
+                              f"<ADD_USER USER_NAME={xq(new_user)} USER_LOGIN={xq(new_user)} "
+                              f"PASSWORD={xq(new_pass)}>{self.PRIVS}</ADD_USER>")
+        elif v == "dell":
+            if not self.ok(self.api(ip, user, pw, "GET", self.ACCOUNTS)) or not isinstance(self.body, dict):
+                self.fail(T("Konten lesen"), self.code)
+                return False
+            empty = None
+            for m in self.body.get("Members") or []:
+                path = m.get("@odata.id") if isinstance(m, dict) else None
+                if path and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict) \
+                        and not self.body.get("UserName"):
+                    empty = path
+                    break
+            if not empty:
+                self.log(T("  FEHLER: kein freier Benutzer-Slot mehr frei."), "err")
+                return False
+            code = self.api(ip, user, pw, "PATCH", empty,
+                           {"UserName": new_user, "Password": new_pass, "RoleId": role, "Enabled": True})
+        else:
+            code = self.api(ip, user, pw, "POST", self.ACCOUNTS,
+                           {"UserName": new_user, "Password": new_pass, "RoleId": role, "Enabled": True})
+        if self.ok(code):
+            self.log(T('  Benutzer {0} angelegt').format(new_user), "ok")
+            return True
+        self.fail(T("Benutzer anlegen"), code)
+        return False
+
+    def delete_account(self, ip, user, pw, v, account):
+        """account: Redfish-Pfad des Kontos, bei iLO 3/4 der Login-Name."""
+        if v == "hpe_old":
+            code = self.ribcl(ip, user, pw, "write", "USER_INFO", f"<DELETE_USER USER_LOGIN={xq(account)}/>")
+        elif v == "dell":
+            # Dell-Slots lassen sich nicht löschen, nur leeren und abschalten
+            code = self.api(ip, user, pw, "PATCH", account, {"UserName": "", "Enabled": False})
+        else:
+            code = self.api(ip, user, pw, "DELETE", account)
+        if self.ok(code):
+            self.log(T('  Benutzer {0} gelöscht').format(account), "ok")
+            return True
+        self.fail(T("Benutzer löschen"), code)
+        return False
+
+    def set_role(self, ip, user, pw, v, account, role):
+        if v == "hpe_old":
+            self.log(T("  Rolle: iLO 3/4 kennt nur eine feste Rechtemenge, nichts geändert."))
+            return None
+        code = self.api(ip, user, pw, "PATCH", account, {"RoleId": role})
+        if self.ok(code):
+            self.log(T('  Rolle auf {0} gesetzt').format(role), "ok")
+            return True
+        self.fail(T("Rolle ändern"), code)
+        return False
+
+    def set_enabled(self, ip, user, pw, v, account, enabled):
+        if v == "hpe_old":
+            self.log(T("  Aktiv/Inaktiv: bei iLO 3/4 bitte das Konto löschen oder das Passwort ändern."))
+            return None
+        code = self.api(ip, user, pw, "PATCH", account, {"Enabled": bool(enabled)})
+        if self.ok(code):
+            self.log(T('  Konto {0}').format(T("aktiviert") if enabled else T("deaktiviert")), "ok")
+            return True
+        self.fail(T("Aktiv/Inaktiv setzen"), code)
+        return False
+
+    def rotate_password(self, ip, user, pw, v, account, new_pass, login_name=""):
+        """account: Redfish-Pfad, bei iLO 3/4 der Login-Name."""
+        if v == "hpe_old":
+            code = self.ribcl(ip, user, pw, "write", "USER_INFO",
+                              f"<MOD_USER USER_LOGIN={xq(account)}><PASSWORD value={xq(new_pass)}/></MOD_USER>")
+        else:
+            code = self.api(ip, user, pw, "PATCH", account, {"Password": new_pass})
+        if self.ok(code):
+            self.log(T('  Passwort von {0} neu gesetzt').format(login_name or account), "ok")
+            return True
+        self.fail(T("Passwort setzen"), code)
+        return False
+
+    # ---------- SSH-Public-Keys (DMTF-Standard, ungeprüft außerhalb von Tests) ----------
+    def list_ssh_keys(self, ip, user, pw, keys_path):
+        """[{"path","key"}] vorhandener SSH-Keys dieses Kontos, oder [] (keine oder nicht unterstützt)."""
+        if not keys_path or not self.ok(self.api(ip, user, pw, "GET", keys_path)) or not isinstance(self.body, dict):
+            return []
+        out = []
+        for m in self.body.get("Members") or []:
+            path = m.get("@odata.id") if isinstance(m, dict) else None
+            if path and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict):
+                out.append({"path": path, "key": str(self.body.get("KeyString") or "")})
+        return out
+
+    def add_ssh_key(self, ip, user, pw, keys_path, pubkey):
+        """Legt einen neuen SSH-Public-Key am Konto an. None = dieser Hersteller/diese Firmware kennt das
+        (noch) nicht (404/405/501), kein Fehler."""
+        if not keys_path:
+            self.log(T("  SSH-Key: auf diesem Gerät nicht unterstützt, übersprungen"))
+            return None
+        return self.soft(T("SSH-Key"), ip, user, pw, "POST", keys_path, {"KeyType": "SSH", "KeyString": pubkey})
+
+    def delete_ssh_key(self, ip, user, pw, key_path):
+        if not key_path:
+            return None
+        return self.soft(T("SSH-Key löschen"), ip, user, pw, "DELETE", key_path)
+
+    # ---------- Passwort-Rotation über die ganze Serverliste ----------
+    def run(self):
+        """Rotiert das Passwort des aktuell angemeldeten Benutzers auf allen Servern der Liste; je Server ein
+        neues Zufallspasswort (Engine.random_password). Gibt (ok, {Adresse: neues_Passwort}) zurück; die
+        neuen Passwörter sind NUR hier im Rückgabewert und im Protokoll – nirgends sonst gespeichert."""
+        done, failed, new_pw = [], [], {}
+        for ip, row_pw in self.rows:
+            if self.stopped():
+                self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
+                failed.append(T("Abbruch"))
+                break
+            if not row_pw:
+                self.log(T('== {0}: kein Passwort').format(ip), "err")
+                failed.append(ip)
+                continue
+            self.log("== " + ip, "head")
+            v = self.force_vendor or self.vendor(ip)
+            if self.dry and v not in self.NAME:
+                self.log(T('  Trockenlauf: Hersteller nicht erkennbar ({0}), zeige den Dell-Ablauf').format(v))
+                v = "dell"
+            if v == "offline":
+                self.log(T("  FEHLER: nicht erreichbar"), "err")
+                failed.append(ip)
+                continue
+            if v not in self.NAME:
+                self.log(T("  FEHLER: Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)"), "err")
+                self.unknown_hint()
+                failed.append(ip)
+                continue
+            user = self.cur_user_set or self.DEFAULT_USER[v]
+            self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], user))
+            self.backup(ip, user, row_pw, v, "rotation")
+            account = user if v == "hpe_old" else self._own_account_path(ip, user, row_pw, v)
+            if account is None:
+                self.log(T("  FEHLER: eigenes Konto nicht gefunden"), "err")
+                failed.append(ip)
+                continue
+            pw2 = Engine.random_password()
+            if self.rotate_password(ip, user, row_pw, v, account, pw2, login_name=user):
+                new_pw[ip] = pw2
+                done.append(ip)
+            else:
+                failed.append(ip)
+        self.log("")
+        summary = T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(len(done), len(failed))
+        self.log(summary + (": " + " ".join(failed) if failed else ""), "err" if failed else "ok")
+        return not failed, new_pw
 
 
 
@@ -2106,6 +2417,82 @@ class ServicesEngineThread(QThread):
             self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
             good = False
         self.result.emit(0 if good else 1)
+
+
+
+
+class UsersEngineThread(QThread):
+    """Passwort-Rotation über die ganze Serverliste (UsersEngine.run())."""
+    line = pyqtSignal(str, str)
+    result = pyqtSignal(int)
+    rotated = pyqtSignal(dict)      # Adresse -> neues Passwort, nur für erfolgreiche Server
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent)
+        self.kw = kw
+
+    def run(self):
+        try:
+            good, new_pw = UsersEngine(log=lambda text, kind="": self.line.emit(text, kind),
+                                       stopped=self.isInterruptionRequested, **self.kw).run()
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            good, new_pw = False, {}
+        self.rotated.emit(new_pw)
+        self.result.emit(0 if good else 1)
+
+
+
+
+class UsersListThread(QThread):
+    """Liest einmalig die Kontenliste eines einzelnen Geräts, ändert nichts."""
+    done = pyqtSignal(object, str, str)     # Liste oder None, Hersteller, Fehlertext
+
+    def __init__(self, parent, ip, user, pw, vendor):
+        super().__init__(parent)
+        self.ip, self.user, self.pw, self.vendor = ip, user, pw, vendor
+
+    def run(self):
+        ue = UsersEngine(dry=False)
+        try:
+            v = self.vendor or ue.vendor(self.ip)
+            if v == "offline":
+                self.done.emit(None, v, T("Gerät nicht erreichbar."))
+                return
+            if v not in ue.NAME:
+                self.done.emit(None, v, T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC)."))
+                return
+            user = self.user or ue.DEFAULT_USER[v]
+            accounts = ue.list_accounts(self.ip, user, self.pw, v)
+            if accounts is None:
+                self.done.emit(None, v, "\n".join(ue.fail_lines(T("Konten lesen"), ue.code)))
+            else:
+                self.done.emit(accounts, v, "")
+        except Exception as e:
+            self.done.emit(None, "", T('Unerwarteter Fehler: {0!r}').format(e))
+
+
+
+
+class UsersActionThread(QThread):
+    """Führt eine einzelne Kontenaktion auf einem Gerät aus (anlegen/löschen/Rolle/Passwort/SSH-Key). fn
+    bekommt die (scharfe) UsersEngine übergeben und liefert True/False/None (None = nicht unterstützt,
+    gilt als Erfolg ohne Änderung)."""
+    line = pyqtSignal(str, str)
+    result = pyqtSignal(object)
+
+    def __init__(self, parent, fn, dry=False):
+        super().__init__(parent)
+        self.fn, self.dry = fn, dry
+
+    def run(self):
+        ue = UsersEngine(dry=self.dry, log=lambda text, kind="": self.line.emit(text, kind))
+        try:
+            res = self.fn(ue)
+        except Exception as e:
+            self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
+            res = False
+        self.result.emit(res)
 
 
 

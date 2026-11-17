@@ -26,9 +26,10 @@ from .dhcp import DhcpThread, probe_dhcp_servers, stop_leftover_dhcp
 from .console import ConsoleMixin
 from .sidenav import SideNav
 from .firmware_tab import FirmwareTabMixin
+from .users_tab import UsersTabMixin
 from .vbmc_tab import VbmcTabMixin
 from .scanner import ScannerDialog
-from . import applog, selfguard, trust
+from . import applog, selfguard, trust, vault
 from .applog import LOG, LevelCombo, LogLabel, LogView
 
 
@@ -205,7 +206,7 @@ class PwDelegate(QStyledItemDelegate):
 
 
 
-class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
+class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, QWidget):
     DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
 
     @classmethod
@@ -344,6 +345,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemChanged.connect(self.update_count)
         self.table.itemChanged.connect(self.on_item_changed)
+        self.table.itemChanged.connect(self.vault_on_item_changed)
         add = QPushButton(T("+ Server"))
         add.setToolTip(T("Neue Zeile. Passwort, Subnetzmaske und Gateway werden vorbelegt."))
         add.clicked.connect(lambda: self.add_row())
@@ -377,10 +379,39 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         btns.addWidget(save)
         btns.addStretch()
         btns.addWidget(self.count)
+
+        self.vault_use = QCheckBox(T("Passwörter im Schlüsselbund speichern (statt im Klartext)"))
+        self.vault_use.toggled.connect(self.vault_use_toggled)
+        if vault.available():
+            self.vault_use.setToolTip(T("Beim Speichern der Liste wandern die Passwörter in den "
+                                        "System-Schlüsselbund (Secret Service/libsecret, Windows-"
+                                        "Anmeldeinformationsverwaltung, macOS-Schlüsselbundverwaltung) "
+                                        "statt in die Datei; die Datei enthält dann nur noch Adressen, "
+                                        "Hostnamen und Einstellungen. Beim Laden werden leere "
+                                        "Passwort-Felder automatisch aus dem Schlüsselbund aufgefüllt "
+                                        "(Zuordnung über die Seriennummer, sonst über die Aktuelle IP). "
+                                        "Ebenso wird jedes von Hand eingetragene oder geänderte Passwort "
+                                        "sofort mitgesichert, solange der Haken gesetzt ist."))
+        else:
+            self.vault_use.setEnabled(False)
+            self.vault_use.setToolTip(T("Kein Schlüsselbund auf diesem Rechner erreichbar (Paket "
+                                        "„keyring“ fehlt, oder es läuft kein Secret-Service-Dienst, z. B. "
+                                        "bei einer Sitzung ohne Desktop-Umgebung). Passwörter bleiben wie "
+                                        "bisher nur in der Tabelle/CSV."))
+        vault_clear = QPushButton(T("Schlüsselbund für diese Liste leeren"))
+        vault_clear.setToolTip(T("Entfernt die Schlüsselbund-Einträge aller Server dieser Liste wieder. "
+                                 "Ändert nichts an der Tabelle selbst."))
+        vault_clear.clicked.connect(self.vault_clear_list)
+        vrow = QHBoxLayout()
+        vrow.addWidget(self.vault_use)
+        vrow.addStretch()
+        vrow.addWidget(vault_clear)
+
         box_list = QGroupBox(T("Serverliste"))
         v = QVBoxLayout(box_list)
         v.addWidget(self.table)
         v.addLayout(btns)
+        v.addLayout(vrow)
 
         # --- Start ---
         self.dry = QCheckBox(T("Trockenlauf (nichts ändern)"))
@@ -459,6 +490,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
         self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
         self.tabs.addTab(self.build_services(), T("Dienste"))
+        self.tabs.addTab(self.build_users(), T("Benutzer"))
         self.tabs.addTab(self.build_firmware(), T("Firmware"))
         self.tabs.addTab(self.build_console(), T("UEFI-Konsole"))
         self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
@@ -523,6 +555,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.dirty = False
         self.vendor_changed()
         self.read_profiles()
+        self.vault_load_state()
         self.add_row()
         self.update_count()
         self.tabs.setCurrentIndex(0)
@@ -624,7 +657,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         if p.get("dhcp_from") and p.get("dhcp_to"):
             self.dhcp_from.setText(str(p["dhcp_from"]))
             self.dhcp_to.setText(str(p["dhcp_to"]))
-        self.auto_take.setChecked(bool(p.get("dhcp_auto", True)))      # ältere Profile ohne Angabe: an
+        self.auto_take.setChecked(bool(p.get("dhcp_auto", False)))     # ältere Profile ohne Angabe: aus
         self.lock_factory.setChecked(bool(p.get("lock_factory", True)))
         self.clear_pass_after.setChecked(bool(p.get("clear_pass_after", True)))
         self.validate_defaults()
@@ -855,6 +888,80 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.vendor_threads[ip] = th
         th.start()
 
+    # ---------- Schlüsselbund (statt Klartext-Passwörter in der Serverliste) ----------
+    def vault_on_item_changed(self, item):
+        """Solange der Haken „Passwörter im Schlüsselbund speichern“ gesetzt ist, wird ein von Hand
+        eingetragenes oder geändertes Passwort (Spalte 1) sofort mitgesichert; ändert sich stattdessen die
+        Seriennummer (Spalte 6, z. B. durch „Seriennummern auslesen“) eines Server mit Passwort, wandert der
+        Eintrag vom alten auf den neuen Schlüssel (Seriennummer statt Aktuelle IP)."""
+        if not getattr(self, "vault_use", None) or not self.vault_use.isChecked() or item.column() not in (1, 6):
+            return
+        r = item.row()
+        ip, pw, serial = self.cell(r, 0), self.cell(r, 1), self.cell(r, 6)
+        if item.column() == 6 and pw:
+            vault.delete("", ip)        # alter Schlüssel war die IP, jetzt gilt die Seriennummer
+        if pw:
+            vault.store(serial, ip, pw)
+
+    def vault_store_all_rows(self):
+        """Übernimmt jedes nicht leere Passwort der Serverliste in den Schlüsselbund. Gibt die Anzahl
+        übernommener Passwörter zurück (0, wenn kein Schlüsselbund verfügbar ist)."""
+        return sum(1 for r in range(self.table.rowCount())
+                  if self.cell(r, 1) and vault.store(self.cell(r, 6), self.cell(r, 0), self.cell(r, 1)))
+
+    def vault_use_toggled(self, checked):
+        self.vault_save_state()
+        if not checked:
+            return
+        n = self.vault_store_all_rows()
+        if n:
+            self.status.setText(T('{0} Passwörter aus der Serverliste in den Schlüsselbund übernommen.')
+                                .format(n))
+
+    def vault_autofill(self):
+        """Füllt leere Passwort-Felder aus dem Schlüsselbund auf (Seriennummer, sonst Aktuelle IP);
+        bestehende Passwörter werden nie überschrieben. Gibt die Anzahl aufgefüllter Zeilen zurück."""
+        if not vault.available():
+            return 0
+        n = 0
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            if self.cell(r, 1):
+                continue
+            ip, serial = self.cell(r, 0), self.cell(r, 6)
+            found = vault.fetch(serial, ip)
+            if found and self.table.item(r, 1):
+                self.table.item(r, 1).setText(found)
+                n += 1
+        self.table.blockSignals(False)
+        return n
+
+    def vault_clear_list(self):
+        rows = [(self.cell(r, 0), self.cell(r, 6)) for r in range(self.table.rowCount())
+                if self.cell(r, 0) or self.cell(r, 6)]
+        if not rows:
+            return
+        if not self.confirm(T("Schlüsselbund leeren?"),
+                            T("Entfernt die Schlüsselbund-Einträge aller {0} Server dieser Liste.")
+                            .format(len(rows))):
+            return
+        n = sum(1 for ip, serial in rows if vault.delete(serial, ip))
+        self.status.setText(T('{0} Schlüsselbund-Einträge entfernt.').format(n))
+
+    def vault_load_state(self):
+        try:
+            data = json.loads(i18n.VAULT_STATE.read_text(encoding="utf-8"))
+        except (OSError, ValueError, AttributeError):
+            data = {}
+        self.vault_use.setChecked(bool(data.get("use_vault", False)) and vault.available())
+
+    def vault_save_state(self):
+        try:
+            i18n.VAULT_STATE.write_text(json.dumps({"use_vault": self.vault_use.isChecked()}, indent=1),
+                                        encoding="utf-8")
+        except OSError:
+            pass
+
     def on_vendor_probe_done(self, ip, text, tip):
         """Trägt das Ergebnis in jede Zeile ein, deren Aktuelle IP noch mit der geprüften übereinstimmt."""
         self.vendor_threads.pop(ip, None)
@@ -958,6 +1065,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 if done and f[0]:
                     self.table.item(self.table.rowCount() - 1, 0).setData(Qt.ItemDataRole.UserRole, f[0])
         self.table.blockSignals(False)
+        self._vault_autofilled = self.vault_autofill()
         self.update_count()
         return True
 
@@ -988,32 +1096,46 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                 self.add_row()
             self.dirty = not replace
             self.tabs.setCurrentIndex(1)
-            self.status.setText(T('Geladen: {0}').format(path))
+            self.status.setText(T('Geladen: {0}').format(path) + (
+                T(' ({0} Passwörter aus dem Schlüsselbund aufgefüllt)').format(self._vault_autofilled)
+                if self._vault_autofilled else ''))
 
     def save_dialog(self):
-        """Fragt nach Datei und danach, ob Passwörter hinein sollen. Gibt True zurück, wenn gespeichert wurde."""
+        """Fragt nach Datei und danach, ob/wie Passwörter hinein sollen. Gibt True zurück, wenn gespeichert
+        wurde."""
         path, _ = QFileDialog.getSaveFileName(self, T("Liste speichern"), str(LIST), T("CSV (*.csv)"))
         if not path:
             return False
         box = QMessageBox(QMessageBox.Icon.Question, T("Liste speichern"),
                           T("Sollen die Passwörter mit in die Datei?"), parent=self)
-        box.setInformativeText(T("Ohne Passwörter enthält die Datei nur Adressen, Hostnamen und Einstellungen. "
-                               "Mit Passwörtern stehen diese im Klartext in der Datei."))
+        info = T("Ohne Passwörter enthält die Datei nur Adressen, Hostnamen und Einstellungen. "
+                 "Mit Passwörtern stehen diese im Klartext in der Datei.")
+        b_vault = None
+        if vault.available():
+            info += " " + T("Im Schlüsselbund speichern legt sie stattdessen im System-Schlüsselbund ab "
+                            "(Zuordnung über Seriennummer, sonst Aktuelle IP); die Datei bleibt dann wie "
+                            "„Ohne Passwörter“.")
+            b_vault = box.addButton(T("Im Schlüsselbund speichern"), QMessageBox.ButtonRole.ActionRole)
+        box.setInformativeText(info)
         b_without = box.addButton(T("Ohne Passwörter"), QMessageBox.ButtonRole.AcceptRole)
         b_with = box.addButton(T("Mit Passwörtern"), QMessageBox.ButtonRole.DestructiveRole)
         box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(b_without)
+        box.setDefaultButton(b_vault if b_vault and self.vault_use.isChecked() else b_without)
         box.exec()
-        if box.clickedButton() not in (b_without, b_with):
+        clicked = box.clickedButton()
+        if clicked not in (b_without, b_with, b_vault):
             return False
         try:
-            self.write_file(path, with_passwords=box.clickedButton() is b_with)
+            self.write_file(path, with_passwords=clicked is b_with)
         except OSError as e:
             QMessageBox.warning(self, T("Liste speichern"), T('Datei nicht schreibbar:\n{0}').format(e))
             return False
+        n = self.vault_store_all_rows() if clicked is b_vault else 0
         self.dirty = False
         self.status.setText(T('Gespeichert in {0}').format(path) + (
-            T(" (mit Passwörtern im Klartext)") if box.clickedButton() is b_with else T(" (ohne Passwörter)")))
+            T(" (mit Passwörtern im Klartext)") if clicked is b_with
+            else T(" ({0} Passwörter im Schlüsselbund)").format(n) if clicked is b_vault
+            else T(" (ohne Passwörter)")))
         return True
 
     def write_file(self, path, with_passwords=False):
@@ -1680,12 +1802,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.lease_count = QLabel(T("0 Geräte"))
         self.lease_taken = set()          # MACs, die schon in der Serverliste waren: nie ein zweites Mal eintragen
         self.auto_take = QCheckBox(T("Automatisch übernehmen"))
-        self.auto_take.setChecked(True)
+        self.auto_take.setChecked(False)
         self.auto_take.setToolTip(T("Trägt neu gefundene Geräte von selbst in die Serverliste ein (Aktuelle IP).\n"
                                     "Es wird nichts konfiguriert: Neue IP, Hostname und der Start bleiben Handarbeit.\n"
                                     "Ein Gerät kommt nur einmal in die Liste; wer eine Zeile löscht, bekommt sie nicht\n"
                                     "von selbst zurück. Während eines Laufs wartet die Übernahme bis zum Ende.\n"
-                                    "Ohne Haken übernimmt nur der Knopf rechts."))
+                                    "Standardmäßig aus: ohne Haken übernimmt nur der Knopf rechts."))
         self.auto_take.toggled.connect(self.auto_take_leases)
         self.auto_timer = QTimer(self)             # holt zurückgestellte Geräte nach (Lauf aktiv, Zelle in Bearbeitung)
         self.auto_timer.setInterval(2000)
@@ -2562,6 +2684,65 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         crow.addWidget(self.cert_label, 1)
         f.addRow(crow)
 
+        self.dns_box = QGroupBox(T("DNS"))
+        self.dns_box.setCheckable(True)
+        self.dns_box.setChecked(False)
+        self.dns_box.setToolTip(T("Setzt die DNS-Server am Management-Netzwerkinterface des BMC."))
+        self.dns1 = QLineEdit()
+        self.dns1.setPlaceholderText(T("z. B. 10.20.0.1"))
+        self.dns2 = QLineEdit()
+        self.dns2.setPlaceholderText(T("optional"))
+        f = QFormLayout(self.dns_box)
+        self.tip_row(f, T("DNS-Server 1"), self.dns1, T("Pflicht, wenn DNS eingerichtet wird."))
+        self.tip_row(f, T("DNS-Server 2"), self.dns2, T("Optional, zweiter DNS-Server."))
+
+        self.vlan_box = QGroupBox(T("VLAN"))
+        self.vlan_box.setCheckable(True)
+        self.vlan_box.setChecked(False)
+        self.vlan_box.setToolTip(T("VLAN-Tag am Management-Netzwerkinterface des BMC (Standard-Redfish)."))
+        self.vlan_id = QSpinBox()
+        self.vlan_id.setRange(0, 4094)
+        self.vlan_id.setSpecialValueText(T("VLAN abschalten"))
+        f = QFormLayout(self.vlan_box)
+        self.tip_row(f, T("VLAN-ID"), self.vlan_id, T("0 schaltet das VLAN-Tag wieder ab (Zugriff über das "
+                                                       "untaggte Netz)."))
+
+        self.ipv6_box = QGroupBox(T("IPv6"))
+        self.ipv6_box.setCheckable(True)
+        self.ipv6_box.setChecked(False)
+        self.ipv6_box.setToolTip(T("IPv6 am Management-Netzwerkinterface des BMC."))
+        self.ipv6_mode = QComboBox()
+        for label, key in ((T("Aus"), "disabled"), (T("Automatisch (SLAAC)"), "slaac"),
+                           (T("DHCPv6"), "dhcpv6"), (T("Statisch"), "static")):
+            self.ipv6_mode.addItem(label, key)
+        self.ipv6_mode.currentIndexChanged.connect(self.ipv6_mode_changed)
+        self.ipv6_addr = QLineEdit()
+        self.ipv6_addr.setPlaceholderText(T("z. B. fd00::10"))
+        self.ipv6_prefix = QSpinBox()
+        self.ipv6_prefix.setRange(1, 128)
+        self.ipv6_prefix.setValue(64)
+        self.ipv6_gw = QLineEdit()
+        self.ipv6_gw.setPlaceholderText(T("optional"))
+        f = QFormLayout(self.ipv6_box)
+        self.tip_row(f, T("Betriebsart"), self.ipv6_mode,
+                     T("Aus, automatisch per Router (SLAAC), per DHCPv6-Server oder eine feste Adresse."))
+        self.tip_row(f, T("Adresse"), self.ipv6_addr, T("Nur bei „Statisch“ nötig."))
+        self.tip_row(f, T("Präfixlänge"), self.ipv6_prefix, T("Meist 64."))
+        self.tip_row(f, T("Gateway"), self.ipv6_gw, T("Optional, nur bei „Statisch“."))
+        self.ipv6_mode_changed()
+
+        self.nicmode_box = QGroupBox(T("Netzwerkport (Shared/Dedicated)"))
+        self.nicmode_box.setCheckable(True)
+        self.nicmode_box.setChecked(False)
+        self.nicmode_box.setToolTip(T("Eigener Management-Port (Dedicated) oder gemeinsam mit dem LOM/OCP-Port "
+                                      "(Shared). Bislang nur bei Dell über Redfish gesetzt; bei den anderen "
+                                      "Herstellern bitte in der Oberfläche umstellen."))
+        self.nicmode = QComboBox()
+        for label, key in ((T("Eigener Port (Dedicated)"), "dedicated"), (T("Gemeinsam (Shared)"), "shared")):
+            self.nicmode.addItem(label, key)
+        f = QFormLayout(self.nicmode_box)
+        self.tip_row(f, T("Modus"), self.nicmode, self.nicmode_box.toolTip())
+
         self.hard_box = QGroupBox(T("Härtung (empfohlen)"))
         self.hard_box.setCheckable(True)
         self.hard_box.setChecked(False)
@@ -2612,7 +2793,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
 
         settings = QWidget()
         sv = QVBoxLayout(settings)
-        for w in (box_login, self.ntp_box, self.syslog_box, self.ldap_box, self.cert_box, self.hard_box):
+        for w in (box_login, self.ntp_box, self.syslog_box, self.ldap_box, self.cert_box, self.dns_box,
+                 self.vlan_box, self.ipv6_box, self.nicmode_box, self.hard_box):
             sv.addWidget(w)
         sv.addStretch()
         scroll = QScrollArea()
@@ -2666,6 +2848,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
     def ldap_group_remove(self):
         for r in sorted({i.row() for i in self.ldap_groups.selectedIndexes()}, reverse=True):
             self.ldap_groups.removeRow(r)
+
+    def ipv6_mode_changed(self, *_):
+        static = self.ipv6_mode.currentData() == "static"
+        for w in (self.ipv6_addr, self.ipv6_prefix, self.ipv6_gw):
+            w.setEnabled(static)
 
     def cert_load(self):
         path, _ = QFileDialog.getOpenFileName(self, T("Zertifikat wählen"), str(HERE),
@@ -2729,6 +2916,20 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             if not self.cert_pem.strip():
                 return bad(None, T("HTTPS-Zertifikat: erst eine PEM-Datei wählen."))
             out["cert"] = {"pem": self.cert_pem}
+        if self.dns_box.isChecked():
+            if not self.dns1.text().strip():
+                return bad(self.dns1, T("DNS: mindestens den ersten Server eintragen."))
+            out["dns"] = {"servers": [self.dns1.text(), self.dns2.text()]}
+        if self.vlan_box.isChecked():
+            out["vlan"] = {"id": self.vlan_id.value()}
+        if self.ipv6_box.isChecked():
+            mode = self.ipv6_mode.currentData() or "disabled"
+            if mode == "static" and not self.ipv6_addr.text().strip():
+                return bad(self.ipv6_addr, T("IPv6: bei „Statisch“ die Adresse eintragen."))
+            out["ipv6"] = {"mode": mode, "address": self.ipv6_addr.text(), "prefix": self.ipv6_prefix.value(),
+                           "gateway": self.ipv6_gw.text()}
+        if self.nicmode_box.isChecked():
+            out["nicmode"] = {"mode": self.nicmode.currentData() or "dedicated"}
         if self.hard_box.isChecked():
             out["hard"] = {"ipmi": self.hard_ipmi.isChecked(), "ssdp": self.hard_ssdp.isChecked(),
                            "snmp": self.hard_snmp.isChecked(), "lockout": self.hard_lock.value(),
@@ -2750,8 +2951,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
             QMessageBox.warning(self, T("Dienste"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.svc_dry.isChecked()
-        names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat"), "hard": T("Härtung")}
-        chosen = ", ".join(names[k] for k in ("ntp", "syslog", "ldap", "cert", "hard") if k in services)
+        names = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": T("HTTPS-Zertifikat"),
+                 "dns": "DNS", "vlan": "VLAN", "ipv6": "IPv6", "nicmode": T("Netzwerkport"), "hard": T("Härtung")}
+        chosen = ", ".join(names[k] for k in ("ntp", "syslog", "ldap", "cert", "dns", "vlan", "ipv6", "nicmode",
+                                              "hard") if k in services)
         if not dry:
             info = T("Dienste: {0}").format(chosen) + "\n\n" + T(
                 "Es werden Verwaltungseinstellungen der BMCs geändert. Eine falsche LDAP- oder "
@@ -2818,6 +3021,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
                              self.ldap_groups.item(r, 1).text() if self.ldap_groups.item(r, 1) else "")
                             for r in range(self.ldap_groups.rowCount())],
             "cert_on": self.cert_box.isChecked(), "cert_pem": self.cert_pem, "cert_name": self.cert_name,
+            "dns_on": self.dns_box.isChecked(), "dns1": self.dns1.text(), "dns2": self.dns2.text(),
+            "vlan_on": self.vlan_box.isChecked(), "vlan_id": self.vlan_id.value(),
+            "ipv6_on": self.ipv6_box.isChecked(), "ipv6_mode": self.ipv6_mode.currentData() or "disabled",
+            "ipv6_addr": self.ipv6_addr.text(), "ipv6_prefix": self.ipv6_prefix.value(),
+            "ipv6_gw": self.ipv6_gw.text(),
+            "nicmode_on": self.nicmode_box.isChecked(), "nicmode": self.nicmode.currentData() or "dedicated",
             "hard_on": self.hard_box.isChecked(), "hard_ipmi": self.hard_ipmi.isChecked(),
             "hard_ssdp": self.hard_ssdp.isChecked(), "hard_snmp": self.hard_snmp.isChecked(),
             "hard_lock": self.hard_lock.value(), "hard_lock_min": self.hard_lock_min.value(),
@@ -2852,6 +3061,20 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.cert_pem = s["cert_pem"]
         self.cert_name = s["cert_name"]
         self.cert_label.setText(self.cert_name or T("keine Datei gewählt"))
+        self.dns_box.setChecked(s.get("dns_on", False))
+        self.dns1.setText(s.get("dns1", ""))
+        self.dns2.setText(s.get("dns2", ""))
+        self.vlan_box.setChecked(s.get("vlan_on", False))
+        self.vlan_id.setValue(s.get("vlan_id", 0))
+        self.ipv6_box.setChecked(s.get("ipv6_on", False))
+        idx = self.ipv6_mode.findData(s.get("ipv6_mode", "disabled"))
+        self.ipv6_mode.setCurrentIndex(max(0, idx))
+        self.ipv6_addr.setText(s.get("ipv6_addr", ""))
+        self.ipv6_prefix.setValue(s.get("ipv6_prefix", 64))
+        self.ipv6_gw.setText(s.get("ipv6_gw", ""))
+        self.nicmode_box.setChecked(s.get("nicmode_on", False))
+        idx = self.nicmode.findData(s.get("nicmode", "dedicated"))
+        self.nicmode.setCurrentIndex(max(0, idx))
         self.hard_box.setChecked(s.get("hard_on", False))
         self.hard_ipmi.setChecked(s.get("hard_ipmi", True))
         self.hard_ssdp.setChecked(s.get("hard_ssdp", True))
@@ -3163,7 +3386,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, VbmcTabMixin, QWidget):
         self.new_pass2_chk.setChecked(s.get("new_pass2_chk", False))
         self.lock_factory.setChecked(s.get("lock_factory", True))
         self.clear_pass_after.setChecked(s.get("clear_pass_after", True))
-        self.auto_take.setChecked(s.get("auto_take", True))
+        self.auto_take.setChecked(s.get("auto_take", False))
         self.lease_taken = set(s.get("lease_taken", []))
         self.table.blockSignals(True)
         self.table.setRowCount(0)

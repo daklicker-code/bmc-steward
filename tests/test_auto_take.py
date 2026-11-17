@@ -39,8 +39,8 @@ class TestAutoTake(unittest.TestCase):
     def ips(self):
         return [r[0] for r in self.w.rows()]
 
-    def test_default_is_on(self):
-        self.assertTrue(self.initial_auto)
+    def test_default_is_off(self):
+        self.assertFalse(self.initial_auto)
 
     def test_new_device_is_entered_by_itself(self):
         self.w.show_leases([A])
@@ -113,13 +113,15 @@ class TestAutoTake(unittest.TestCase):
         self.w.auto_take_leases()
         self.assertEqual(self.ips(), ["10.0.0.13"])
 
-    def test_profile_keeps_the_setting_and_old_profiles_mean_on(self):
+    def test_profile_keeps_the_setting_and_old_profiles_mean_off(self):
         self.assertTrue(self.w.profile_values()["dhcp_auto"])
         self.w.apply_profile({"dhcp_auto": False})
         self.assertFalse(self.w.auto_take.isChecked())
         self.assertFalse(self.w.profile_values()["dhcp_auto"])
-        self.w.apply_profile({"vendor": ""})            # Profil aus einer älteren Version, ohne die Angabe
+        self.w.apply_profile({"dhcp_auto": True})
         self.assertTrue(self.w.auto_take.isChecked())
+        self.w.apply_profile({"vendor": ""})            # Profil aus einer älteren Version, ohne die Angabe
+        self.assertFalse(self.w.auto_take.isChecked())
 
     def test_language_switch_state_carries_setting_and_known_devices(self):
         self.w.auto_take.setChecked(False)
