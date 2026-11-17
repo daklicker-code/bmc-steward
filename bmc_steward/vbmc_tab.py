@@ -21,7 +21,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
                              QPushButton, QSpinBox, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem,
-                             QVBoxLayout, QWidget)
+                             QToolButton, QVBoxLayout, QWidget)
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
@@ -53,6 +53,13 @@ MODE_INFO = {
     'rz': 'Ein virtueller, vom restlichen Netz getrennter Staging-Switch „bmclab0“ mit eigener Netzwerkkarte je Server, wie im Konfigraum. Die Server holen sich ihre Adresse vom DHCP-Server des Tools oder haben eine feste Werks-IP.\nBeispiel: Ein Dell mit fester Werks-IP 192.168.0.120 ist sofort unter https://192.168.0.120 erreichbar, ein HPE bekommt nach dem Start des DHCP-Servers z. B. 192.168.0.101. Braucht beim Start einmal Root.',
     'router': 'Die Server hängen mit eigener MAC am echten LAN (Kabel-Netzwerkkarte) und bekommen ihre Adresse vom Router, z. B. einer FritzBox, wo sie als eigene Geräte erscheinen.\nBeispiel: Ein HPE meldet sich als „ILOCZ12345“ beim Router und bekommt 192.168.178.45; das Umstellen auf eine feste Adresse wie 192.168.178.201 läuft wirklich durch. Braucht beim Start einmal Root, WLAN geht nicht.',
 }
+
+# Start grün (nur bei gefüllter Liste), Stopp rot (nur sichtbar, solange der Cluster läuft)
+START_STYLE = ("QPushButton{background:#3fa45b;color:#fff;font-weight:bold;border:1px solid #2e8a47;"
+               "border-radius:3px;padding:5px 14px}QPushButton:hover{background:#36934f}")
+STOP_STYLE = ("QPushButton{background:#c9302c;color:#fff;font-weight:bold;border:1px solid #a52623;"
+              "border-radius:3px;padding:5px 14px}QPushButton:hover{background:#b02a26}"
+              "QPushButton:disabled{background:#d9a09e;border-color:#c98f8d}")
 
 # Spalten der Cluster-Tabelle
 C_VENDOR, C_GEN, C_NET, C_IP, C_USER, C_PASS, C_MODEL, C_SERIAL, C_SLOT, C_LIC = range(10)
@@ -127,6 +134,7 @@ class VbmcTabMixin:
     # ================================================================ Aufbau
     def build_vbmc(self):
         self.vbmc_script = _vbmc_script()
+        self._vbmc_busy = False          # Cluster läuft (oder startet gerade)
         self.vbmc_proc = None
         self.vbmc_servers = []           # letzter Zustand der laufenden Server (aus @@STATE)
         self.vbmc_buf = ""
@@ -140,9 +148,11 @@ class VbmcTabMixin:
                          "eine feste Werks-IP) und zieht beim Umstellen wirklich um."))
         intro.setWordWrap(True)
 
-        # --- Netz-Modus ---
+        # --- Netz-Modus (kompakt: alles in einer Zeile, Erklärung nur auf Knopfdruck) ---
         mbox = QGroupBox(T("Netz"))
-        mf = QFormLayout(mbox)
+        mv = QVBoxLayout(mbox)
+        mv.setContentsMargins(8, 2, 8, 4)
+        mv.setSpacing(2)
         self.vbmc_mode = QComboBox()
         for key, label in MODES:
             self.vbmc_mode.addItem(T(label), key)
@@ -155,79 +165,92 @@ class VbmcTabMixin:
                                     "Konfigraum und Router brauchen beim Start einmal Root (pkexec)."))
         self.vbmc_mode.currentIndexChanged.connect(self.vbmc_mode_changed)
         self.vbmc_mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        self.vbmc_mode_info = QLabel()                  # Erklärung samt Beispiel zum gewählten Modus, rechts daneben
+        # Erklärung samt Beispiel zum gewählten Modus: nur auf Knopfdruck („ⓘ“) sichtbar, spart eine Zeile
+        self.vbmc_mode_info = QLabel()
         self.vbmc_mode_info.setWordWrap(True)
         self.vbmc_mode_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.vbmc_mode_info.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.vbmc_mode_info.setStyleSheet("color:#6b7280;")
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(self.vbmc_mode, 0, Qt.AlignmentFlag.AlignTop)
-        mode_row.addWidget(self.vbmc_mode_info, 1)
-        mf.addRow(T("Modus"), mode_row)
+        self.vbmc_mode_info.setVisible(False)
+        self.vbmc_mode_info_btn = QToolButton()
+        self.vbmc_mode_info_btn.setText("ⓘ")
+        self.vbmc_mode_info_btn.setCheckable(True)
+        self.vbmc_mode_info_btn.setAutoRaise(True)
+        self.vbmc_mode_info_btn.setToolTip(T("Erklärung und Beispiel zum gewählten Modus ein-/ausblenden"))
+        self.vbmc_mode_info_btn.toggled.connect(self.vbmc_mode_info.setVisible)
+        self._vbmc_page_info = {
+            "rz": T("Nach dem Start ist in „DHCP-Server“ die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
+                    "starten (wie am Staging-Switch). Server mit fester Werks-IP sind sofort da - zwei mit "
+                    "derselben IP stören sich wie in echt."),
+            "router": T("Jeder Server bekommt eine eigene MAC (Hersteller-Kennung) und holt sich seine Adresse "
+                        "vom Router; er erscheint dort als eigenes Gerät. Dieser PC erreicht die Server über einen "
+                        "eigenen Labor-Anschluss „bmcshim“ (bekommt ebenfalls eine Adresse vom Router)."),
+        }
 
         self.vbmc_opts = QStackedWidget()
         # Loopback
         lw = QWidget()
-        lf = QFormLayout(lw)
+        lf = QHBoxLayout(lw)
         lf.setContentsMargins(0, 0, 0, 0)
         self.vbmc_base = QLineEdit("127.9.0")
+        self.vbmc_base.setMaximumWidth(110)
         self.vbmc_base.setToolTip(T("Basis für die automatischen Loopback-Adressen, z. B. 127.9.0 -> 127.9.0.11, .12, ..."))
-        lf.addRow(T("Basis-Adresse"), self.vbmc_base)
+        lf.addWidget(QLabel(T("Basis-Adresse")))
+        lf.addWidget(self.vbmc_base)
         self.vbmc_port = QSpinBox()
         self.vbmc_port.setRange(1, 65535)
         self.vbmc_port.setValue(8443)
         self.vbmc_port.setToolTip(T("Redfish-Port. Port 443 bräuchte Root; mit 8443 geht es ohne."))
-        lf.addRow(T("Redfish-Port"), self.vbmc_port)
+        lf.addWidget(QLabel(T("Redfish-Port")))
+        lf.addWidget(self.vbmc_port)
         self.vbmc_console = QCheckBox(T("UEFI-Konsole aktivieren (echtes SSH + IPMI, braucht Root)"))
         self.vbmc_console.setToolTip(T("Zusätzlich SSH (22), IPMI-SOL (623) und Redfish auf 443. Diese Ports "
                                        "verlangen Root-Rechte und die Pakete paramiko + pyghmi. Der Start "
                                        "läuft dann über eine Rechteabfrage (pkexec)."))
-        lf.addRow("", self.vbmc_console)
+        lf.addWidget(self.vbmc_console)
+        lf.addStretch()
         self.vbmc_opts.addWidget(lw)
         # Konfigraum
         rw = QWidget()
-        rf = QFormLayout(rw)
+        rf = QHBoxLayout(rw)
         rf.setContentsMargins(0, 0, 0, 0)
         self.vbmc_rz_addrs = QLineEdit("192.168.0.1/24")
         self.vbmc_rz_addrs.setToolTip(T("Adresse(n) dieses PCs am Staging-Switch, ohne Gateway - wie die Staging-"
                                         "Karte im Konfigraum. Mehrere durch Komma, z. B. 192.168.0.1/24, 10.20.30.1/24, "
                                         "damit auch die neuen Adressen im Zielnetz erreichbar sind."))
-        rf.addRow(T("Dieser PC"), self.vbmc_rz_addrs)
-        rinfo = QLabel(T("Nach dem Start ist in „DHCP-Server“ die Karte „bmclab0“ schon gewählt: dort den DHCP-Server "
-                         "starten (wie am Staging-Switch). Server mit fester Werks-IP sind sofort da - zwei mit "
-                         "derselben IP stören sich wie in echt."))
-        rinfo.setWordWrap(True)
-        rf.addRow("", rinfo)
+        rf.addWidget(QLabel(T("Dieser PC")))
+        rf.addWidget(self.vbmc_rz_addrs, 1)
         self.vbmc_opts.addWidget(rw)
         # Router
         hw = QWidget()
-        hf = QFormLayout(hw)
+        hf = QHBoxLayout(hw)
         hf.setContentsMargins(0, 0, 0, 0)
-        nrow = QHBoxLayout()
         self.vbmc_nic = QComboBox()
         self.vbmc_nic.setEditable(True)
         self.vbmc_nic.setToolTip(T("Kabel-Netzwerkkarte, die am Router hängt. WLAN geht nicht: ein WLAN-Router "
                                    "nimmt von einem Client keine zusätzlichen MAC-Adressen an."))
-        nrow.addWidget(self.vbmc_nic, 1)
         nref = QPushButton("↻")
         nref.setFixedWidth(32)
         nref.setToolTip(T("Netzwerkkarten neu einlesen"))
         nref.clicked.connect(self.vbmc_fill_nics)
-        nrow.addWidget(nref)
-        nwrap = QWidget()
-        nwrap.setLayout(nrow)
-        hf.addRow(T("Netzwerkkarte"), nwrap)
-        hinfo = QLabel(T("Jeder Server bekommt eine eigene MAC (Hersteller-Kennung) und holt sich seine Adresse "
-                         "vom Router; er erscheint dort als eigenes Gerät. Dieser PC erreicht die Server über einen "
-                         "eigenen Labor-Anschluss „bmcshim“ (bekommt ebenfalls eine Adresse vom Router)."))
-        hinfo.setWordWrap(True)
-        hf.addRow("", hinfo)
+        hf.addWidget(QLabel(T("Netzwerkkarte")))
+        hf.addWidget(self.vbmc_nic, 1)
+        hf.addWidget(nref)
         self.vbmc_opts.addWidget(hw)
-        mf.addRow(self.vbmc_opts)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        mode_row.addWidget(QLabel(T("Modus")))
+        mode_row.addWidget(self.vbmc_mode)
+        mode_row.addWidget(self.vbmc_mode_info_btn)
+        mode_row.addSpacing(12)
+        mode_row.addWidget(self.vbmc_opts, 1)
+        mv.addLayout(mode_row)
+        mv.addWidget(self.vbmc_mode_info)
 
         # --- Cluster ---
         fbox = QGroupBox(T("Cluster-Konfiguration"))
-        fbox.setToolTip(T("Jede Zeile ist ein virtueller Server. „Cluster starten“ startet alle Zeilen zusammen."))
+        fbox.setToolTip(T("Jede Zeile ist ein virtueller Server. „Starten“ startet alle Zeilen zusammen."))
         fl = QVBoxLayout(fbox)
         self.vbmc_fleet = QTableWidget(0, 10)
         self.vbmc_fleet.setHorizontalHeaderLabels([T("Hersteller"), T("Generation"), T("Werks-Netz"), T("Werks-IP"),
@@ -251,7 +274,7 @@ class VbmcTabMixin:
         hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(C_MODEL, QHeaderView.ResizeMode.Stretch)
         self.vbmc_fleet.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.vbmc_fleet.setMinimumHeight(150)
+        self.vbmc_fleet.setMinimumHeight(200)
         fl.addWidget(self.vbmc_fleet)
         frow = QHBoxLayout()
         self.vbmc_add_btns = []
@@ -282,19 +305,28 @@ class VbmcTabMixin:
         frow.addWidget(self.vbmc_save_btn)
         fl.addLayout(frow)
 
-        # --- Start/Stopp ---
-        self.vbmc_start_btn = QPushButton(T("Cluster starten"))
+        # --- Start/Stopp (Status in derselben Zeile) ---
+        self.vbmc_start_btn = QPushButton(T("Starten"))
         self.vbmc_start_btn.setMinimumHeight(30)
+        self.vbmc_start_btn.setMinimumWidth(110)
         self.vbmc_start_btn.clicked.connect(self.vbmc_start)
-        self.vbmc_stop_btn = QPushButton(T("Cluster stoppen"))
+        self.vbmc_stop_btn = QPushButton(T("Stoppen"))
+        self.vbmc_stop_btn.setMinimumHeight(30)
+        self.vbmc_stop_btn.setMinimumWidth(110)
+        self.vbmc_stop_btn.setStyleSheet(STOP_STYLE)
         self.vbmc_stop_btn.setEnabled(False)
+        self.vbmc_stop_btn.setVisible(False)             # erscheint erst, wenn gestartet wurde
         self.vbmc_stop_btn.clicked.connect(self.vbmc_stop)
+        self.vbmc_status = QLabel()
+        self.vbmc_status.setWordWrap(True)
         btns = QHBoxLayout()
         btns.addWidget(self.vbmc_start_btn)
         btns.addWidget(self.vbmc_stop_btn)
-        btns.addStretch()
-        self.vbmc_status = QLabel()
-        self.vbmc_status.setWordWrap(True)
+        btns.addWidget(self.vbmc_status, 1)
+        # „Starten“ nur grün, wenn die Liste gefüllt ist
+        fm = self.vbmc_fleet.model()
+        for sig in (fm.rowsInserted, fm.rowsRemoved, fm.modelReset):
+            sig.connect(self.vbmc_update_start)
 
         # --- Laufende Server ---
         rbox = QGroupBox(T("Laufende Server"))
@@ -330,48 +362,61 @@ class VbmcTabMixin:
 
         self.vbmc_log = LogView()                   # dasselbe Protokoll wie im Hauptfenster
 
-        lbox = QGroupBox(T("Protokoll"))
+        lbox = QWidget()                            # ohne Rahmen und Titel: spart Platz
         ll = QVBoxLayout(lbox)
+        ll.setContentsMargins(0, 2, 0, 0)
+        ll.setSpacing(2)
         lrow = QHBoxLayout()
+        lrow.setSpacing(6)
         self.vbmc_log_open_btn = QPushButton(T("Protokoll"))
+        self.vbmc_log_open_btn.setFlat(True)
+        self.vbmc_log_open_btn.setStyleSheet("QPushButton{font-weight:bold;padding:0 6px;border:none}"
+                                             "QPushButton:hover{text-decoration:underline}")
         self.vbmc_log_open_btn.setToolTip(T("Öffnet das Protokoll als Textdatei im Standard-Editor.\n"
                                             "Passwörter stehen nicht darin; geändert wird nichts."))
         self.vbmc_log_open_btn.clicked.connect(self.vbmc_open_log)
         self.vbmc_log_level = LevelCombo()
+        self.vbmc_log_level.setMaximumHeight(22)
         lrow.addWidget(self.vbmc_log_open_btn)
         lrow.addWidget(self.vbmc_log_level)
         lrow.addStretch()
         ll.addLayout(lrow)
-        ll.addWidget(self.vbmc_log)
+        f = self.vbmc_log.font()
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 1))
+        self.vbmc_log.setFont(f)
+        self.vbmc_log.setMinimumHeight(60)
+        ll.addWidget(self.vbmc_log, 1)
 
         top = QWidget()
         tl = QVBoxLayout(top)
         tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(4)
         tl.addWidget(intro)
         tl.addWidget(mbox)
         tl.addWidget(fbox, 1)
         tl.addLayout(btns)
-        tl.addWidget(self.vbmc_status)
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(top)
         split.addWidget(rbox)
         split.addWidget(lbox)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
+        split.setStretchFactor(0, 4)
+        split.setStretchFactor(1, 3)
         split.setStretchFactor(2, 1)
+        split.setChildrenCollapsible(False)
         lay = QVBoxLayout()
+        lay.setContentsMargins(4, 4, 4, 4)
         lay.addWidget(split)
         page = QWidget()
         page.setLayout(lay)
 
         self.vbmc_fill_nics()
         self.vbmc_mode_changed()
+        self.vbmc_update_start()
         if self.vbmc_script is None:
-            self.vbmc_start_btn.setEnabled(False)
             self.vbmc_set_status(T("tools/vbmc/vbmc.py nicht gefunden. Der Reiter funktioniert nur, wenn "
                                    "BMC-Steward aus dem Quellcode läuft."), True)
         else:
-            self.vbmc_set_status(T("Bereit. Server hinzufügen (oder Szenario laden) und „Cluster starten“."))
+            self.vbmc_set_status(T("Bereit. Server hinzufügen (oder Szenario laden) und „Starten“."))
         return page
 
     # ================================================================ Cluster-Tabelle
@@ -380,7 +425,10 @@ class VbmcTabMixin:
 
     def vbmc_mode_changed(self, *_):
         mode = self.vbmc_current_mode()
-        self.vbmc_mode_info.setText(T(MODE_INFO[mode]))
+        info = T(MODE_INFO[mode])
+        if self._vbmc_page_info.get(mode):
+            info += "\n\n" + self._vbmc_page_info[mode]
+        self.vbmc_mode_info.setText(info)
         self.vbmc_opts.setCurrentIndex({"loopback": 0, "rz": 1, "router": 2}[mode])
         lab = mode != "loopback"
         for r in range(self.vbmc_fleet.rowCount()):
@@ -651,8 +699,19 @@ class VbmcTabMixin:
         for w in (self.vbmc_mode, self.vbmc_opts, self.vbmc_fleet, self.vbmc_one_each, self.vbmc_del_btn,
                   self.vbmc_rand_btn, self.vbmc_load_btn, *self.vbmc_add_btns):
             w.setEnabled(not running)
-        self.vbmc_start_btn.setEnabled(not running and self.vbmc_script is not None)
+        self._vbmc_busy = running
+        self.vbmc_stop_btn.setVisible(running)
         self.vbmc_stop_btn.setEnabled(running)
+        self.vbmc_update_start()
+
+    def vbmc_update_start(self, *_):
+        """„Starten“: grün und bedienbar nur, wenn die Serverliste gefüllt ist und der Cluster nicht läuft."""
+        ready = (self.vbmc_script is not None and not self._vbmc_busy
+                 and self.vbmc_fleet.rowCount() > 0)
+        self.vbmc_start_btn.setEnabled(ready)
+        self.vbmc_start_btn.setStyleSheet(START_STYLE if ready else "")
+        self.vbmc_start_btn.setToolTip("" if ready or self._vbmc_busy or self.vbmc_script is None else
+                                       T("Bitte mindestens einen Server hinzufügen (oder ein Szenario laden)."))
 
     def vbmc_start(self):
         if self.vbmc_running() or self.vbmc_script is None:

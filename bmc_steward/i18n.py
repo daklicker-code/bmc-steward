@@ -1114,10 +1114,10 @@ TR = {
 "Câble",
 "Kabel"
 ],
-"Bereit. Server hinzufügen (oder Szenario laden) und „Cluster starten“.": [
-"Ready. Add servers (or load a scenario) and “Start cluster”.",
-"Prêt. Ajoutez des serveurs (ou chargez un scénario) et « Démarrer le cluster ».",
-"Parat. Server dezuefüege (oder Szenario lade) und „Cluster starte“."
+"Bereit. Server hinzufügen (oder Szenario laden) und „Starten“.": [
+"Ready. Add servers (or load a scenario) and “Start”.",
+"Prêt. Ajoutez des serveurs (ou chargez un scénario) et « Démarrer ».",
+"Parat. Server dezuefüege (oder Szenario lade) und „Starte“."
 ],
 "Szenario laden": [
 "Load scenario",
@@ -1638,25 +1638,25 @@ TR = {
 "En plus SSH (22), IPMI-SOL (623) et Redfish sur 443. Ces ports nécessitent des droits root et les paquets paramiko + pyghmi. Le démarrage passe alors par une demande de privilèges (pkexec).",
 "Zuesätzlich SSH (22), IPMI-SOL (623) und Redfish uf 443. Die Ports bruuche Root-Rächt und d Pakete paramiko + pyghmi. De Start lauft denn über e Rächtefrog (pkexec)."
 ],
-"Cluster starten": [
-"Start cluster",
-"Démarrer le cluster",
-"Cluster starte"
+"Stoppen": [
+"Stop",
+"Arrêter",
+"Stoppe"
 ],
-"Cluster stoppen": [
-"Stop cluster",
-"Arrêter le cluster",
-"Cluster stoppe"
+"Erklärung und Beispiel zum gewählten Modus ein-/ausblenden": [
+"Show/hide explanation and example for the selected mode",
+"Afficher/masquer l'explication et l'exemple du mode choisi",
+"Erklärig und Bispil zum gwählte Modus ein-/uusblände"
 ],
 "Ausgabe des Clusters (Adressen, Werks-Logins, Statusmeldungen) …": [
 "Cluster output (addresses, factory logins, status messages) …",
 "Sortie du cluster (adresses, identifiants d'usine, messages d'état) …",
 "Usgab vom Cluster (Adrässe, Werks-Logins, Status-Mäldige) …"
 ],
-"Cluster läuft. Adressen stehen unten; mit „Cluster stoppen“ beenden.": [
-"Cluster is running. Addresses are below; stop with “Stop cluster”.",
-"Le cluster tourne. Les adresses sont ci-dessous ; arrêtez avec « Arrêter le cluster ».",
-"De Cluster lauft. D Adrässe stönd unde; mit „Cluster stoppe“ beände."
+"Cluster läuft. Adressen stehen unten; mit „Stoppen“ beenden.": [
+"Cluster is running. Addresses are below; stop with “Stop”.",
+"Le cluster tourne. Les adresses sont ci-dessous ; arrêtez avec « Arrêter ».",
+"De Cluster lauft. D Adrässe stönd unde; mit „Stoppe“ beände."
 ],
 "Cluster gestoppt.": [
 "Cluster stopped.",
@@ -4209,7 +4209,7 @@ TR = {
 "Ein virtueller, vom restlichen Netz getrennter Staging-Switch „bmclab0“ mit eigener Netzwerkkarte je Server, wie im Konfigraum. Die Server holen sich ihre Adresse vom DHCP-Server des Tools oder haben eine feste Werks-IP.\nBeispiel: Ein Dell mit fester Werks-IP 192.168.0.120 ist sofort unter https://192.168.0.120 erreichbar, ein HPE bekommt nach dem Start des DHCP-Servers z. B. 192.168.0.101. Braucht beim Start einmal Root.": ["A virtual staging switch \"bmclab0\", isolated from the rest of the network, with its own network card per server, like in a configuration room. The servers get their address from the tool's DHCP server or have a fixed factory IP.\nExample: a Dell with the fixed factory IP 192.168.0.120 is reachable right away at https://192.168.0.120; an HPE gets e.g. 192.168.0.101 once the DHCP server is started. Needs root once at start.", "Un switch de staging virtuel « bmclab0 », isolé du reste du réseau, avec une carte réseau par serveur, comme dans une salle de configuration. Les serveurs obtiennent leur adresse du serveur DHCP de l'outil ou ont une IP d'usine fixe.\nExemple : un Dell avec l'IP d'usine fixe 192.168.0.120 est joignable tout de suite en https://192.168.0.120 ; un HPE obtient p. ex. 192.168.0.101 une fois le serveur DHCP démarré. Nécessite root une fois au démarrage.", "En virtuelle, vom restliche Netz trennte Staging-Switch „bmclab0“ mit eigener Netzwerkcharte pro Server, wie im Konfigraum. D Server hole sich ihri Adrässe vom DHCP-Server vom Tool oder händ e feschti Werks-IP.\nBispiil: En Dell mit de feschte Werks-IP 192.168.0.120 isch sofort under https://192.168.0.120 erreichbar, en HPE überchunnt nach em Start vom DHCP-Server z. B. 192.168.0.101. Bruucht bim Start einisch Root."],
 "Die Server hängen mit eigener MAC am echten LAN (Kabel-Netzwerkkarte) und bekommen ihre Adresse vom Router, z. B. einer FritzBox, wo sie als eigene Geräte erscheinen.\nBeispiel: Ein HPE meldet sich als „ILOCZ12345“ beim Router und bekommt 192.168.178.45; das Umstellen auf eine feste Adresse wie 192.168.178.201 läuft wirklich durch. Braucht beim Start einmal Root, WLAN geht nicht.": ["The servers sit on the real LAN (wired network card) with their own MAC and get their address from the router, e.g. a FritzBox, where they appear as separate devices.\nExample: an HPE registers as \"ILOCZ12345\" with the router and gets 192.168.178.45; switching it to a fixed address such as 192.168.178.201 really goes through. Needs root once at start; Wi-Fi does not work.", "Les serveurs sont sur le vrai réseau local (carte réseau filaire) avec leur propre MAC et obtiennent leur adresse du routeur, p. ex. une FritzBox, où ils apparaissent comme des appareils distincts.\nExemple : un HPE se présente comme « ILOCZ12345 » auprès du routeur et obtient 192.168.178.45 ; le passage à une adresse fixe comme 192.168.178.201 fonctionne réellement. Nécessite root une fois au démarrage ; le Wi-Fi ne marche pas.", "D Server hänge mit eigener MAC am ächte LAN (Chabel-Netzwerkcharte) und überchömed ihri Adrässe vom Router, z. B. ere FritzBox, wo si als eigeni Grät erschiine.\nBispiil: En HPE meldet sich als „ILOCZ12345“ bim Router und überchunnt 192.168.178.45; s Umstelle uf e feschti Adrässe wie 192.168.178.201 louft würkli düre. Bruucht bim Start einisch Root, WLAN gaht nöd."],
 "Cluster-Konfiguration": ["Cluster configuration", "Configuration du cluster", "Cluster-Konfiguration"],
-"Jede Zeile ist ein virtueller Server. „Cluster starten“ startet alle Zeilen zusammen.": ["Each row is one virtual server. \"Start cluster\" starts all rows together.", "Chaque ligne est un serveur virtuel. « Démarrer le cluster » démarre toutes les lignes ensemble.", "Jedi Ziile isch en virtuelle Server. „Cluster starten“ startet alli Ziile zäme."],
+"Jede Zeile ist ein virtueller Server. „Starten“ startet alle Zeilen zusammen.": ["Each row is one virtual server. \"Start\" starts all rows together.", "Chaque ligne est un serveur virtuel. « Démarrer » démarre toutes les lignes ensemble.", "Jedi Ziile isch en virtuelle Server. „Starte“ startet alli Ziile zäme."],
 "Lizenz": ["License", "Licence", "Lizänz"],
 "Lizenziert": ["Licensed", "Sous licence", "Lizänziert"],
 "Ohne Lizenz": ["Unlicensed", "Sans licence", "Ohni Lizänz"],
