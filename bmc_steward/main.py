@@ -364,6 +364,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
                         "Spalte „Passwort“ eintragen. Das Handy speichert keine Bilder."))
         scan.clicked.connect(self.open_scanner)
         btns.addWidget(scan)
+        find = QPushButton(T("Server suchen …"))
+        find.setToolTip(T("Adresse unbekannt? Sucht im Netz nach BMCs (nur lesend, ohne Anmeldung) und übernimmt die\n"
+                          "markierten Treffer als neue Zeilen in diese Liste."))
+        find.clicked.connect(lambda: self.open_netscan(False))
+        btns.addWidget(find)
         btns.addWidget(load)
         btns.addWidget(save)
         btns.addStretch()
@@ -817,6 +822,28 @@ class Window(ConsoleMixin, FirmwareTabMixin, UsersTabMixin, VbmcTabMixin, BiosTa
         self.table.setCurrentCell(r, 0)
         if not vendor_text and ipv4(values[0] if values else ""):
             self.probe_vendor(values[0])
+
+    def netscan_to_list(self, rows):
+        """Treffer der Netzsuche als neue Zeilen („Aktuelle IP“, Seriennummer, erkannter Hersteller); schon
+        vorhandene Adressen werden übersprungen. Passwort, Maske und Gateway kommen aus den Vorgaben oben."""
+        have = {self.cell(r, 0) for r in range(self.table.rowCount())}
+        added = 0
+        for row in rows:
+            ip = row["ip"]
+            if ip in have:
+                continue
+            values = [""] * len(i18n.COLS)
+            values[0] = ip
+            values[1] = self.cur_pass.text()
+            values[3] = self.def_mask.text().strip()
+            values[4] = self.def_gw.text().strip()
+            values[6] = row.get("serial", "")
+            self.add_row(values, Engine.NAME.get(row["vendor"], ""))
+            have.add(ip)
+            added += 1
+        self.update_count()
+        self.touch()
+        self.say(T("Server suchen: {0} neue Zeilen in der Serverliste.").format(added))
 
     def remove_rows(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
