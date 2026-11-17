@@ -1,0 +1,14 @@
+{
+    "@odata.type": "#EthernetInterface.v1_9_0.EthernetInterface",
+    "@odata.id": "/redfish/v1/Managers/1/EthernetInterfaces/1",
+    "Id": "1",
+    "Name": "Manager Ethernet Interface",
+    "DHCPv4": {"DHCPEnabled": true},
+    "IPv4StaticAddresses": [],
+    "StaticNameServers": [],
+    "VLAN": {"VLANEnable": false, "VLANId": 0},
+    "IPv6AutoConfigEnabled": true,
+    "DHCPv6": {"OperatingMode": "Disabled"},
+    "IPv6StaticAddresses": [],
+    "IPv6DefaultGateway": ""
+}

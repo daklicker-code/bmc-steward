@@ -1,0 +1,14 @@
+{
+    "@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot",
+    "@odata.id": "/redfish/v1/",
+    "Id": "RootService",
+    "Name": "Root Service",
+    "RedfishVersion": "1.15.0",
+    "UUID": "a2222222-2222-4222-8222-222222222222",
+    "Vendor": "HPE",
+    "Managers": {"@odata.id": "/redfish/v1/Managers"},
+    "Systems": {"@odata.id": "/redfish/v1/Systems"},
+    "AccountService": {"@odata.id": "/redfish/v1/AccountService"},
+    "SessionService": {"@odata.id": "/redfish/v1/SessionService"},
+    "Oem": {"Hpe": {"Manager": [{"ManagerType": "iLO 5"}]}}
+}

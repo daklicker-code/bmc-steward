@@ -1,0 +1,12 @@
+{
+    "@odata.type": "#Manager.v1_14_0.Manager",
+    "@odata.id": "/redfish/v1/Managers/1",
+    "Id": "1",
+    "Name": "Manager",
+    "ManagerType": "BMC",
+    "Model": "iLO 5",
+    "FirmwareVersion": "2.81",
+    "NetworkProtocol": {"@odata.id": "/redfish/v1/Managers/1/NetworkProtocol"},
+    "EthernetInterfaces": {"@odata.id": "/redfish/v1/Managers/1/EthernetInterfaces"},
+    "Oem": {"Hpe": {}}
+}

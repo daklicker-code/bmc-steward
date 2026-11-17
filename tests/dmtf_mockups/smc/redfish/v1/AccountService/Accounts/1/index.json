@@ -1,0 +1,11 @@
+{
+    "@odata.type": "#ManagerAccount.v1_10_0.ManagerAccount",
+    "@odata.id": "/redfish/v1/AccountService/Accounts/1",
+    "Id": "1",
+    "Name": "User Account",
+    "UserName": "ADMIN",
+    "RoleId": "Administrator",
+    "Enabled": true,
+    "Locked": false,
+    "Keys": {"@odata.id": "/redfish/v1/AccountService/Accounts/1/Keys"}
+}

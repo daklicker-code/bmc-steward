@@ -1,0 +1,14 @@
+{
+    "@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot",
+    "@odata.id": "/redfish/v1/",
+    "Id": "RootService",
+    "Name": "Root Service",
+    "RedfishVersion": "1.15.0",
+    "UUID": "a1111111-1111-4111-8111-111111111111",
+    "Vendor": "Dell",
+    "Managers": {"@odata.id": "/redfish/v1/Managers"},
+    "Systems": {"@odata.id": "/redfish/v1/Systems"},
+    "AccountService": {"@odata.id": "/redfish/v1/AccountService"},
+    "SessionService": {"@odata.id": "/redfish/v1/SessionService"},
+    "Oem": {"Dell": {}}
+}

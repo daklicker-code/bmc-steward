@@ -1,0 +1,10 @@
+{
+    "@odata.type": "#ManagerAccount.v1_10_0.ManagerAccount",
+    "@odata.id": "/redfish/v1/AccountService/Accounts/2",
+    "Id": "2",
+    "Name": "User Account",
+    "UserName": "",
+    "RoleId": "",
+    "Enabled": false,
+    "Locked": false
+}

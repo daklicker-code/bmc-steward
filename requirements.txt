@@ -5,3 +5,5 @@ PyQt6>=6.4
 # pyte                # Text: Terminal-Darstellung
 # paramiko            # Text: SSH-Konsole (Dell/HPE/Lenovo)
 # pyghmi              # Text: IPMI-Serial-over-LAN (Supermicro)
+# Optional fuer den Schluesselbund (Reiter "Neuware", Serverliste, und Reiter "Benutzer", Passwort-Rotation):
+# keyring             # Secret Service/libsecret (Linux), Windows-Anmeldeinformationsverwaltung, macOS-Schluesselbund

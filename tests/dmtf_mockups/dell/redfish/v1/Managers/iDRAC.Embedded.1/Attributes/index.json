@@ -1,0 +1,11 @@
+{
+    "@odata.type": "#DellAttributes.v1_0_0.DellAttributes",
+    "@odata.id": "/redfish/v1/Managers/iDRAC.Embedded.1/Attributes",
+    "Id": "iDRACAttributes",
+    "Name": "iDRACAttributes",
+    "AttributeRegistry": "iDRACAttributeRegistry.v1_0_0",
+    "Attributes": {
+        "Security.1.TLSProtocol": "TLS 1.2 and Higher",
+        "NTPConfigGroup.1.NTPEnable": "Disabled"
+    }
+}

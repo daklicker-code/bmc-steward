@@ -1,0 +1,14 @@
+{
+    "@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot",
+    "@odata.id": "/redfish/v1/",
+    "Id": "RootService",
+    "Name": "Root Service",
+    "RedfishVersion": "1.13.0",
+    "UUID": "a3333333-3333-4333-8333-333333333333",
+    "Vendor": "Lenovo",
+    "Managers": {"@odata.id": "/redfish/v1/Managers"},
+    "Systems": {"@odata.id": "/redfish/v1/Systems"},
+    "AccountService": {"@odata.id": "/redfish/v1/AccountService"},
+    "SessionService": {"@odata.id": "/redfish/v1/SessionService"},
+    "Oem": {"Lenovo": {}}
+}

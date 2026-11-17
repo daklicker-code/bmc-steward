@@ -1,0 +1,12 @@
+{
+    "@odata.type": "#ManagerNetworkProtocol.v1_9_0.ManagerNetworkProtocol",
+    "@odata.id": "/redfish/v1/Managers/iDRAC.Embedded.1/NetworkProtocol",
+    "Id": "NetworkProtocol",
+    "Name": "Manager Network Protocol",
+    "HTTP": {"ProtocolEnabled": true, "Port": 80},
+    "HTTPS": {"ProtocolEnabled": true, "Port": 443},
+    "IPMI": {"ProtocolEnabled": true, "Port": 623},
+    "SSDP": {"ProtocolEnabled": true, "Port": 1900, "NotifyMulticastIntervalSeconds": 600, "NotifyTTL": 5, "NotifyIPv6Scope": "Site"},
+    "SNMP": {"ProtocolEnabled": true, "Port": 161},
+    "SSH": {"ProtocolEnabled": true, "Port": 22}
+}

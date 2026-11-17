@@ -1,0 +1,12 @@
+{
+    "@odata.type": "#AccountService.v1_12_0.AccountService",
+    "@odata.id": "/redfish/v1/AccountService",
+    "Id": "AccountService",
+    "Name": "Account Service",
+    "ServiceEnabled": true,
+    "AccountLockoutThreshold": 0,
+    "AccountLockoutDuration": 0,
+    "AccountLockoutCounterResetAfter": 0,
+    "Accounts": {"@odata.id": "/redfish/v1/AccountService/Accounts"},
+    "Roles": {"@odata.id": "/redfish/v1/AccountService/Roles"}
+}

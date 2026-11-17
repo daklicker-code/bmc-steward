@@ -275,16 +275,16 @@ class TestWindowLayout(unittest.TestCase):
         cls.w = Window()
 
     def test_page_order_is_unchanged(self):
-        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = UEFI, 6 = Konsole
-        self.assertEqual(self.w.tabs.count(), 9)
-        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 6)
-        names = [self.w.tabs.menu.item(i).text() for i in range(9)]
+        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = UEFI, 7 = Konsole
+        self.assertEqual(self.w.tabs.count(), 10)
+        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 7)
+        names = [self.w.tabs.menu.item(i).text() for i in range(10)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
-                                 "Firmware", "UEFI-Konsole", "Testlabor", "Hilfe"])      # ohne Nummern
+                                 "Benutzer", "Firmware", "UEFI-Konsole", "Testlabor", "Hilfe"])      # ohne Nummern
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
-        page = self.w.tabs.stack.widget(8)
+        page = self.w.tabs.stack.widget(9)
         self.assertIs(self.w.help_logo.parent(), page)
         self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 
@@ -321,7 +321,7 @@ class TestWindowLayout(unittest.TestCase):
         self.w.tabs.setCurrentIndex(0)
         self.w.console_panel_show(False)
         self.w.monitor.clicked.emit()
-        self.assertEqual(self.w.tabs.currentIndex(), 6)
+        self.assertEqual(self.w.tabs.currentIndex(), 7)
         self.assertFalse(self.w.con_panel.isHidden())
 
     def test_click_on_live_monitor_opens_full_console(self):
@@ -331,7 +331,7 @@ class TestWindowLayout(unittest.TestCase):
             self.w.tabs.setCurrentIndex(0)
             self.w.console_panel_show(True)
             self.w.console_enter()
-            self.assertEqual(self.w.tabs.currentIndex(), 6)
+            self.assertEqual(self.w.tabs.currentIndex(), 7)
             self.assertTrue(self.w.con_panel.isHidden())
         finally:
             del self.w.console_source               # zurück zur echten Methode
