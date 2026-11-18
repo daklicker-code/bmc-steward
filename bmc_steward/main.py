@@ -572,6 +572,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         lay = QVBoxLayout(self)
         lay.addLayout(body, 1)
         lay.addWidget(self.status)
+        self.main_lay, self.main_body = lay, body        # Ränder fallen im Vollbild der Konsole weg
 
         self.dirty = False
         self.vendor_changed()

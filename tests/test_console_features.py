@@ -545,8 +545,11 @@ class ConsolePage(unittest.TestCase):
         w.console_fullscreen(True)
         self.assertTrue(w.con_strip.isHidden())
         self.assertTrue(w.con_head.isHidden())
-        self.assertFalse(w.con_tools.isHidden())             # die Werkzeugleiste gehört zur schmalen Leiste
+        self.assertTrue(w.con_tools.isHidden())              # Werkzeugleiste gehört zur einklappbaren Leiste (standardmäßig zu)
+        w.con_fs_handle.click()
+        self.assertFalse(w.con_tools.isHidden())
         w.console_fullscreen(False)
+        self.assertFalse(w.con_tools.isHidden())
         self.assertFalse(w.con_strip.isHidden())
         self.assertFalse(w.con_head.isHidden())
 
