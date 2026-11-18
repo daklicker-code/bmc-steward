@@ -170,6 +170,11 @@ class RedfishClient:
     NAME = {"dell": "Dell (iDRAC)", "hpe": "HPE (iLO)", "hpe_old": "HPE (iLO 3/4)", "smc": "Supermicro",
             "lenovo": "Lenovo (XCC)"}
     SYS_ID = {"dell": "System.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
+    # Meldet sich unter einer Adresse, an der schon ein anderes Gerät gemerkt ist, ein unbekanntes Gerät mit
+    # anderem Zertifikat, wird es gesperrt (True) bzw. nur gewarnt (False). Ein Angreifer könnte sonst einfach
+    # eine neue Geräte-Kennung melden und würde als „neues Gerät“ durchgewunken. Nur „Neuware“ (Engine) warnt
+    # bloß, weil sich dort Werks- und DHCP-Adressen mit immer neuen Geräten wiederholen.
+    STRICT_NEW = True
 
     def __init__(self, dry=True, log=print, stopped=lambda: False):
         self.dry, self.log, self.stopped = dry, log, stopped
@@ -251,7 +256,23 @@ class RedfishClient:
         fp = self.fp.get(addr)
         if not fp:
             return True
-        state, old = trust.store().check(key, fp, addr, accept_change=key in self.expect)
+        st = trust.store()
+        if key not in st.pins and key not in self.expect:
+            others = {k: v for k, v in st.for_addr(addr).items() if k != key and v != fp}
+            if others:
+                old_fp = next(iter(others.values()))
+                if self.STRICT_NEW:
+                    msg = T("Unter dieser Adresse war bisher ein anderes Gerät mit anderem Zertifikat gemerkt "
+                            "(gemerkt {0}, jetzt {1}). Möglicher Angriff (Man-in-the-Middle) – es wurde kein "
+                            "Passwort gesendet. Wurde das Gerät getauscht, den alten Eintrag unter „Zertifikate“ "
+                            "(links unten) entfernen.").format(trust.short(old_fp), trust.short(fp))
+                    self.pin_err[addr] = msg
+                    self.log("  " + T("GESPERRT: ") + msg, "err")
+                    return False
+                self.log("  " + T("Hinweis: Unter dieser Adresse war bisher ein anderes Gerät gemerkt ({0}). "
+                                  "Bei Werks- oder DHCP-Adressen ist das normal, sonst bitte prüfen.")
+                         .format(trust.short(old_fp)), "warn")
+        state, old = st.check(key, fp, addr, accept_change=key in self.expect)
         if state == "new":
             self.log(T("  Neues Gerät: Zertifikat gemerkt (SHA-256 {0})").format(trust.short(fp)))
         elif state == "renewed":
@@ -756,6 +777,8 @@ class RedfishClient:
 
 class Engine(RedfishClient):
     """Konfiguriert Benutzer/Netzwerk aller Server der Liste; Protokollzeilen gehen an log()."""
+    STRICT_NEW = False          # Neuware: Werks-/DHCP-Adressen wiederholen sich mit neuen Geräten
+
 
     def __init__(self, rows, cur_user, cur_pass, new_user, new_pass, slot=3, dry=True,
                  log=print, stopped=lambda: False, verify_wait=240, vendor=None, on_done=lambda ip: None,

@@ -9,7 +9,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "3.3.1"
+__version__ = "3.3.3"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -194,3 +194,14 @@ def mask(text):
     """Passwörter kommen nie ins Protokoll: nur Länge und Form (A Großbuchstabe, a Kleinbuchstabe, 9 Ziffer, # Rest)."""
     return f"{len(text)} Z. " + "".join("A" if c.isupper() else "a" if c.islower() else "9" if c.isdigit() else "#"
                                        for c in text[:40])
+
+
+def intro_label(html):
+    """Kurze Erklärung oben auf einer Seite: was sie tut und wofür man sie braucht (abgesetzter Kasten)."""
+    from PyQt6.QtWidgets import QLabel
+    lab = QLabel(html)
+    lab.setWordWrap(True)
+    lab.setObjectName("pageIntro")
+    lab.setStyleSheet("QLabel#pageIntro { background: palette(alternate-base); border: 1px solid palette(mid); "
+                      "border-radius: 6px; padding: 6px 8px; }")
+    return lab

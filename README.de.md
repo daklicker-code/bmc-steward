@@ -56,6 +56,7 @@ Dazu kommt:
 - **Mehrsprachig:** Deutsch, Englisch, Französisch, Schweizerdeutsch (Auswahl links unten unter dem Menü).
 - **Virtuelle Testflotte** (`tools/vbmc/`): virtuelle BMCs aller vier Hersteller – Redfish mit echtem Adresswechsel, dazu echtes SSH und IPMI-SOL für die Konsole. Steuerbar aus der Seite „Testlabor“ oder eigenständig über die Kommandozeile.
 - **Aufnahme und Vergleich** (Seite „Aufnahme“): liest den Redfish-Baum eines echten Geräts ausschließlich lesend (einzige Ausnahme: die Anmeldung per Session) und speichert ihn im DMTF-Mockup-Format – mit geschwärzten Seriennummern, Adressen, Hostnamen, Zertifikaten und Schlüsseln, einem Fähigkeitsbericht und einer Selbstprüfung, die das Speichern bei einem Rest verweigert. Zwei Aufnahmen desselben Geräts (z. B. vor und nach einem Firmware-Update) lassen sich vergleichen: weggefallene Schreibrechte, Pfade, Aktionen und erlaubte Werte werden als kritisch gemeldet. Auch per Kommandozeile: `python3 -m bmc_steward.capture --help`.
+- **Installationshinweise je Seite:** Fehlt auf diesem Rechner ein optionales Paket (z. B. `paramiko` und `pyghmi` für die Textkonsole, `dnsmasq` für den DHCP-Server, `zbar`/`tesseract` für den Handy-Scanner), zeigt die betroffene Seite unten einen schmalen Randbereich mit dem passenden Installationsbefehl für das erkannte System (Arch, Debian/Ubuntu, Fedora, openSUSE, Windows) zum Kopieren.
 - **Modular aufgebaut** (Paket `bmc_steward/`); entwickelt unter Linux, läuft aus dem Quellcode auch unter Windows (die fertige .exe ist archiviert und wird nicht mehr gepflegt).
 
 ## Schutz vor Fehlbedienung
@@ -240,6 +241,15 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
   „beim ersten Kontakt merken“: Der SHA-256-Fingerabdruck wird je Gerät gespeichert, ein späterer Wechsel sperrt
   das Gerät, bevor ein Passwort gesendet wird. Der allererste Kontakt ist ungeschützt – deshalb nur im getrennten
   Staging-Netz arbeiten und bei Bestandsservern den Fingerabdruck einmal mit der BMC-Oberfläche vergleichen.
+- Meldet sich unter einer Adresse, an der schon ein anderes Gerät gemerkt ist, ein unbekanntes Gerät mit anderem
+  Zertifikat, wird es gesperrt (sonst könnte sich ein Angreifer einfach als „neues Gerät“ ausgeben). Nur bei
+  „Neuware“ gibt es dann bloß einen Hinweis, weil sich Werks- und DHCP-Adressen dort mit neuen Geräten wiederholen.
+  Nach einem Gerätetausch den alten Eintrag unter „Zertifikate“ entfernen.
+- DHCP-Server und Testlabor starten Programme aus dem Tool-Ordner per `pkexec` mit Root-Rechten. Der Tool-Ordner
+  sollte deshalb nur für den eigenen Benutzer schreibbar sein; wer ganz sicher gehen will, legt ihn root-eigen ab
+  (z. B. unter `/opt`) und startet BMC-Steward von dort.
+- Der Link des Handy-Scanners enthält einen zufälligen 128-Bit-Geheimwert und gilt nur, solange das Scanner-Fenster
+  läuft.
 - Arbeitsdaten (Fingerabdrücke `bmc-pins.json`, Sicherungen `sicherungen/`, Revisionsprotokoll `protokolle/`)
   liegen neben dem Tool, Rechte 0600/0700. Mit der Umgebungsvariable `BMC_STEWARD_DATA` lässt sich ein anderer
   Ordner wählen, z. B. ein verschlüsseltes Laufwerk.

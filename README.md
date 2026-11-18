@@ -56,6 +56,7 @@ On top of that:
 - **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
 - **Virtual test cluster** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
 - **Capture and compare** (page "Aufnahme"): reads the Redfish tree of a real device strictly read-only (the only exception is the session login) and saves it in DMTF mockup format – with serial numbers, addresses, host names, certificates and keys redacted, a capability report and a self-check that refuses to save if anything is left over. Two captures of the same device (e.g. before and after a firmware update) can be compared: lost write permissions, paths, actions and allowed values are reported as critical. Also available on the command line: `python3 -m bmc_steward.capture --help`.
+- **Install hints per page:** if an optional package is missing on this machine (e.g. `paramiko` and `pyghmi` for the text console, `dnsmasq` for the DHCP server, `zbar`/`tesseract` for the phone scanner), the affected page shows a slim footer with the matching install command for the detected system (Arch, Debian/Ubuntu, Fedora, openSUSE, Windows), ready to copy.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
 ## Built to forgive mistakes
@@ -239,6 +240,14 @@ for such devices automatically and notes it in the log.
   first use”: the SHA-256 fingerprint is stored per device, and a later change blocks the device before any
   password is sent. The very first contact is unprotected – so work only in an isolated staging network and,
   for existing servers, compare the fingerprint once with the BMC's web interface.
+- If an unknown device with a different certificate answers at an address where another device is already
+  pinned, it is blocked (otherwise an attacker could simply pose as a “new device”). Only “New hardware” merely
+  warns, because factory and DHCP addresses repeat there with new devices. After swapping a device, remove the
+  old entry under “Certificates”.
+- The DHCP server and the test lab start programs from the tool folder via `pkexec` with root rights. Keep the
+  tool folder writable only by your own user; to be fully safe, place it root-owned (e.g. under `/opt`) and start
+  BMC-Steward from there.
+- The phone scanner link carries a random 128-bit secret and is valid only while the scanner window is running.
 - Working data (fingerprints `bmc-pins.json`, backups `sicherungen/`, audit log `protokolle/`) is stored next
   to the tool with permissions 0600/0700. The environment variable `BMC_STEWARD_DATA` selects another folder,
   e.g. an encrypted drive.

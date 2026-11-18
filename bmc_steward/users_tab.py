@@ -200,7 +200,7 @@ class UsersTabMixin:
         if bold:
             style += "font-weight:bold;"
         self.users_log.append(f'<span style="{style}">{html.escape(text)}</span>')
-        LOG.info(T("Benutzer") + ": " + text, color, bold)
+        LOG.info(T("Benutzerkonten") + ": " + text, color, bold)
 
     def users_show_line(self, line, kind=""):
         self.users_say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
@@ -282,14 +282,14 @@ class UsersTabMixin:
     def users_create(self):
         ip, user, pw = self.users_current_login()
         if not ip:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte eine Adresse eintragen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte eine Adresse eintragen."))
             return
         dlg = NewAccountDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         new_user, new_pass, role = dlg.values()
         if not new_user or not new_pass:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte Benutzername und Passwort eintragen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte Benutzername und Passwort eintragen."))
             return
         v = self.users_vendor.currentData() or self.users_vendor_cur
         self.users_run_action(T("Benutzer {0} anlegen").format(new_user),
@@ -299,7 +299,7 @@ class UsersTabMixin:
     def users_delete(self):
         a = self.users_selected()
         if not a:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte ein Konto in der Tabelle wählen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte ein Konto in der Tabelle wählen."))
             return
         if not self.confirm(T("Benutzer löschen?"),
                             T("Konto {0} wird jetzt wirklich gelöscht.").format(a["username"])):
@@ -313,7 +313,7 @@ class UsersTabMixin:
     def users_change_role(self):
         a = self.users_selected()
         if not a:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte ein Konto in der Tabelle wählen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte ein Konto in der Tabelle wählen."))
             return
         role, ok = QInputDialog.getItem(self, T("Rolle ändern"), T("Neue Rolle für {0}").format(a["username"]),
                                         list(UsersEngine.ROLES),
@@ -330,7 +330,7 @@ class UsersTabMixin:
     def users_set_password(self):
         a = self.users_selected()
         if not a:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte ein Konto in der Tabelle wählen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte ein Konto in der Tabelle wählen."))
             return
         new_pass, ok = QInputDialog.getText(self, T("Passwort setzen"),
                                             T("Neues Passwort für {0}").format(a["username"]),
@@ -347,7 +347,7 @@ class UsersTabMixin:
     def users_add_ssh_key(self):
         a = self.users_selected()
         if not a:
-            QMessageBox.warning(self, T("Benutzer"), T("Bitte ein Konto in der Tabelle wählen."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Bitte ein Konto in der Tabelle wählen."))
             return
         dlg = QDialog(self)
         dlg.setWindowTitle(T("SSH-Key setzen"))
@@ -374,7 +374,7 @@ class UsersTabMixin:
     def users_delete_ssh_keys(self):
         a = self.users_selected()
         if not a or not a["ssh_keys"]:
-            QMessageBox.warning(self, T("Benutzer"), T("Dieses Konto hat keine gespeicherten SSH-Keys."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Dieses Konto hat keine gespeicherten SSH-Keys."))
             return
         if not self.confirm(T("SSH-Keys entfernen?"),
                             T("Alle SSH-Keys von {0} werden jetzt wirklich entfernt.").format(a["username"])):
@@ -401,7 +401,7 @@ class UsersTabMixin:
     def rot_run_now(self):
         rows = [(ip, pw or self.users_pass.text()) for ip, pw in self.reachable_rows()]
         if not rows:
-            QMessageBox.warning(self, T("Benutzer"), T("Die Serverliste („Neuware“) ist leer."))
+            QMessageBox.warning(self, T("Benutzerkonten"), T("Die Serverliste („Neuware“) ist leer."))
             return
         dry = self.rot_dry.isChecked()
         if not dry:
