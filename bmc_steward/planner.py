@@ -20,6 +20,9 @@ VERSION = 1
 MIN_RACK_U, MAX_RACK_U, MAX_DEV_U = 4, 60, 10
 HE_M = 0.04445                       # eine Höheneinheit in Metern
 RACK_PITCH_M = 0.6                   # Abstand zweier Racks in einer Reihe (Rackbreite)
+MIN_GRID, MAX_COLS, MAX_ROWS = 2, 104, 99    # Bodenraster: Spalten A … CZ, Reihen 1 … 99
+ORIENTS = ("N", "S", "O", "W")             # Rackfront zeigt nach Norden, Süden, Osten oder Westen
+TILE_M = 0.6                               # Bodenplatte 600 × 600 mm; ein Rack belegt 1 × 2 Platten
 CABLE_LENGTHS = (0.5, 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 30)
 PDU_RESERVE = 0.8                    # über 80 % Last bleibt keine Reserve für eine A/B-Einspeisung
 VENDORS = ("dell", "hpe", "lenovo", "smc", "gen")
@@ -98,6 +101,45 @@ def vendor_of(text):
     return "gen"
 
 
+def col_name(i):
+    """Spaltenname wie im Rechenzentrum (und in Tabellen): 0 -> A, 25 -> Z, 26 -> AA, 27 -> AB …"""
+    name = ""
+    i += 1
+    while i > 0:
+        i, rest = divmod(i - 1, 26)
+        name = chr(65 + rest) + name
+    return name
+
+
+def col_index(name):
+    """Umkehrung von col_name: "A" -> 0, "AA" -> 26; None bei ungültigem Namen."""
+    if not name or not name.isalpha() or not name.isascii():
+        return None
+    i = 0
+    for ch in name.upper():
+        i = i * 26 + ord(ch) - 64
+    return i - 1
+
+
+def coord_name(x, y):
+    """Koordinate einer Bodenplatte, z. B. (2, 6) -> "C07"."""
+    return f"{col_name(x)}{y + 1:02d}"
+
+
+def parse_coord(text):
+    """"C07", "c7" oder "AA12" -> (Spalte, Reihe) mit Zählung ab 0; None, wenn es keine Koordinate ist."""
+    m = re.fullmatch(r"\s*([A-Za-z]{1,3})\s*-?\s*(\d{1,3})\s*", text or "")
+    if not m:
+        return None
+    x, y = col_index(m.group(1)), int(m.group(2)) - 1
+    return (x, y) if x is not None and y >= 0 else None
+
+
+def rack_tiles(x, y, orient):
+    """Bodenplatten eines Racks (600 × 1200 mm): zwei Platten in Blickrichtung der Front."""
+    return {(x, y), (x, y + 1)} if orient in ("N", "S") else {(x, y), (x + 1, y)}
+
+
 def round_length(m):
     return next((x for x in CABLE_LENGTHS if x >= m - 1e-9), float(int(m) + 1))
 
@@ -115,6 +157,8 @@ class Plan:
         self.mask = "255.255.255.0"
         self.gw = "10.20.0.1"
         self.schema = "{name}"
+        self.site, self.room, self.row = "", "", ""     # Standort › Raum › Reihe
+        self.cols, self.rows = 26, 16                   # Bodenraster des Raums (Spalten A …, Reihen 1 …)
 
     # ------------------------------------------------------------ Grundlagen
     def _id(self, prefix):
@@ -137,7 +181,7 @@ class Plan:
         return next((i for i, r in enumerate(self.racks) if r["id"] == rid), -1)
 
     # ------------------------------------------------------------ Racks
-    def add_rack(self, name=None, h=42):
+    def add_rack(self, name=None, h=42, at=None):
         h = max(MIN_RACK_U, min(MAX_RACK_U, int(h)))
         if not name:
             n = len(self.racks) + 1
@@ -145,9 +189,67 @@ class Plan:
             while f"R{n:02d}" in names:
                 n += 1
             name = f"R{n:02d}"
-        r = {"id": self._id("r"), "name": str(name)[:20], "h": h}
+        r = {"id": self._id("r"), "name": str(name)[:20], "h": h, "x": None, "y": None, "orient": "S"}
         self.racks.append(r)
+        if at is not None and self.can_stand(r["id"], at[0], at[1], r["orient"]):
+            r["x"], r["y"] = at
+        else:
+            spot = self.free_spot()
+            if spot:
+                r["x"], r["y"] = spot
         return r
+
+    # ------------------------------------------------------------ Grundriss
+    def coord(self, r):
+        return coord_name(r["x"], r["y"]) if r.get("x") is not None else "–"
+
+    def occupied(self, ignore=None):
+        tiles = {}
+        for r in self.racks:
+            if r["id"] != ignore and r.get("x") is not None:
+                for t in rack_tiles(r["x"], r["y"], r["orient"]):
+                    tiles[t] = r["id"]
+        return tiles
+
+    def can_stand(self, rid, x, y, orient):
+        """Passt das Rack mit dieser Ausrichtung auf Platte (x, y), ohne über den Raum hinaus oder auf ein
+        anderes Rack zu ragen?"""
+        tiles = rack_tiles(x, y, orient)
+        if any(not (0 <= tx < self.cols and 0 <= ty < self.rows) for tx, ty in tiles):
+            return False
+        busy = self.occupied(ignore=rid)
+        return not any(t in busy for t in tiles)
+
+    def free_spot(self, orient="S"):
+        """Nächster freier Stellplatz: Racks stehen nebeneinander in einer Reihe, ab Platte C03."""
+        last = [r for r in self.racks if r.get("x") is not None]
+        if last:
+            r = last[-1]
+            cand = (r["x"] + (1 if r["orient"] in ("N", "S") else 0), r["y"] + (0 if r["orient"] in ("N", "S") else 1))
+            if self.can_stand(None, cand[0], cand[1], orient):
+                return cand
+        start = (min(2, self.cols - 1), min(2, self.rows - 2))
+        order = [(x, y) for y in range(self.rows) for x in range(self.cols)]
+        order.sort(key=lambda t: (t[1] < start[1], t[1], t[0] < start[0], t[0]))
+        return next((t for t in order if self.can_stand(None, t[0], t[1], orient)), None)
+
+    def move_rack(self, rid, x, y, orient=None):
+        r = self.rack(rid)
+        orient = orient or r["orient"]
+        if not self.can_stand(rid, x, y, orient):
+            return False
+        r["x"], r["y"], r["orient"] = x, y, orient
+        return True
+
+    def set_grid(self, cols, rows):
+        """Neue Rastergröße; gibt die Racks zurück, die dann außerhalb stünden (dann bleibt alles, wie es war)."""
+        cols = max(MIN_GRID, min(MAX_COLS, int(cols)))
+        rows = max(MIN_GRID, min(MAX_ROWS, int(rows)))
+        out = [r for r in self.racks if r.get("x") is not None and any(
+            tx >= cols or ty >= rows for tx, ty in rack_tiles(r["x"], r["y"], r["orient"]))]
+        if not out:
+            self.cols, self.rows = cols, rows
+        return out
 
     def remove_rack(self, rid):
         """Nur leere Racks lassen sich entfernen; gibt False zurück, wenn noch Geräte darin stehen."""
@@ -306,7 +408,11 @@ class Plan:
             m = abs(A["pos"] - B["pos"]) * HE_M + 0.6
         else:
             ra, rb = self.rack(A["rack"]), self.rack(B["rack"])
-            m = (abs(self.rack_index(A["rack"]) - self.rack_index(B["rack"])) * RACK_PITCH_M
+            if ra.get("x") is not None and rb.get("x") is not None:     # Weg über den Grundriss
+                gap = (abs(ra["x"] - rb["x"]) + abs(ra["y"] - rb["y"])) * TILE_M
+            else:
+                gap = abs(self.rack_index(A["rack"]) - self.rack_index(B["rack"])) * RACK_PITCH_M
+            m = (gap
                  + (ra["h"] - A["pos"] + rb["h"] - B["pos"]) * HE_M + 1.2)
         return round_length(m)
 
@@ -384,6 +490,8 @@ class Plan:
             elif L["cap"] and L["w"] > L["cap"] * PDU_RESERVE:
                 out.append(("warn", T("Rack {0}: PDU über 80 % – keine Reserve für A/B-Einspeisung").format(r["name"]),
                             None))
+            if r.get("x") is None:
+                out.append(("warn", T("Rack {0}: kein Stellplatz im Grundriss").format(r["name"]), None))
             if L["used"] > r["h"] * 0.9:
                 out.append(("info", T("Rack {0} ist fast voll ({1} HE frei)").format(r["name"], r["h"] - L["used"]),
                             None))
@@ -507,7 +615,9 @@ class Plan:
     def to_dict(self):
         return {"format": FORMAT, "version": VERSION, "name": self.name, "seq": self.seq, "racks": self.racks,
                 "devices": self.devs, "cables": self.cables,
-                "net": {"ip_start": self.ip_start, "mask": self.mask, "gw": self.gw, "schema": self.schema}}
+                "net": {"ip_start": self.ip_start, "mask": self.mask, "gw": self.gw, "schema": self.schema},
+                "location": {"site": self.site, "room": self.room, "row": self.row},
+                "floor": {"cols": self.cols, "rows": self.rows}}
 
     @classmethod
     def from_dict(cls, data):
@@ -517,11 +627,21 @@ class Plan:
             raise ValueError(T("Keine Plan-Datei von BMC-Steward."))
         p = cls()
         p.name = str(data.get("name") or "")[:60]
+        loc = data.get("location") if isinstance(data.get("location"), dict) else {}
+        for k in ("site", "room", "row"):
+            if isinstance(loc.get(k), str):
+                setattr(p, k, loc[k][:40])
         net = data.get("net") if isinstance(data.get("net"), dict) else {}
         for k in ("ip_start", "mask", "gw", "schema"):
             if isinstance(net.get(k), str):
                 setattr(p, k, net[k][:64])
         ids = set()
+        floor = data.get("floor") if isinstance(data.get("floor"), dict) else {}
+        try:
+            p.cols = max(MIN_GRID, min(MAX_COLS, int(floor.get("cols", p.cols))))
+            p.rows = max(MIN_GRID, min(MAX_ROWS, int(floor.get("rows", p.rows))))
+        except (TypeError, ValueError):
+            pass
         for r in data.get("racks") or []:
             try:
                 rid, h = str(r["id"]), int(r["h"])
@@ -530,8 +650,17 @@ class Plan:
             if rid in ids:
                 continue
             ids.add(rid)
-            p.racks.append({"id": rid, "name": str(r.get("name") or rid)[:20],
-                            "h": max(MIN_RACK_U, min(MAX_RACK_U, h))})
+            rack = {"id": rid, "name": str(r.get("name") or rid)[:20], "h": max(MIN_RACK_U, min(MAX_RACK_U, h)),
+                    "x": None, "y": None, "orient": r.get("orient") if r.get("orient") in ORIENTS else "S"}
+            p.racks.append(rack)
+            x, y = r.get("x"), r.get("y")
+            if (isinstance(x, int) and isinstance(y, int) and not isinstance(x, bool) and not isinstance(y, bool)
+                    and p.can_stand(rid, x, y, rack["orient"])):
+                rack["x"], rack["y"] = x, y
+            else:
+                spot = p.free_spot(rack["orient"])
+                if spot:
+                    rack["x"], rack["y"] = spot
         for d in data.get("devices") or []:
             try:
                 did, kind, u = str(d["id"]), str(d["kind"]), int(d["u"])
@@ -579,8 +708,15 @@ def demo_plan(inventory):
     der Serverliste werden eingebaut und verkabelt."""
     p = Plan()
     p.name = T("Beispiel")
-    r1 = p.add_rack("C01", 42)
-    r2 = p.add_rack("C02", 24)
+    p.site, p.room, p.row = "FRA", T("Raum 2"), "C"
+    p.cols, p.rows = 20, 12
+    r1 = p.add_rack("C04", 42, at=(2, 3))                  # Racks heißen wie ihr Stellplatz
+    r2 = p.add_rack("D04", 24, at=(3, 3))
+    for x in (4, 5):
+        p.add_rack(coord_name(x, 3), 42, at=(x, 3))
+    for x in range(2, 6):                                  # gegenüber, Fronten zum Kaltgang
+        r = p.add_rack(coord_name(x, 7), 42, at=(x, 7))
+        r["orient"] = "N"
     p.sync_inventory(inventory)
     pos = 42
     for key in ("patch", "oob", "leaf", "leaf", "fw"):
