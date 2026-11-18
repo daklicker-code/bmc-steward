@@ -8,7 +8,8 @@ qapp()
 import bmc_steward.i18n as i18n
 i18n.set_language("de")
 i18n.build_texts()
-from bmc_steward.planner import Plan, col_index, col_name, coord_name, demo_plan, parse_coord, port_label, vendor_of
+from bmc_steward.planner import (Plan, col_index, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord,
+                                 port_label, port_name, vendor_of)
 
 INV = [{"key": "sn:A1", "name": "srv-a", "vendor": "dell", "model": "Dell iDRAC9", "serial": "A1"},
        {"key": "sn:B2", "name": "srv-b", "vendor": "hpe", "model": "HPE iLO 6", "serial": "B2"}]
@@ -259,6 +260,52 @@ class TestFloor(unittest.TestCase):
         self.assertNotEqual((q.racks[1]["x"], q.racks[1]["y"]), (q.racks[0]["x"], q.racks[0]["y"]))
 
 
+class TestNetApp(unittest.TestCase):
+    def test_example_is_clean_and_labelled(self):
+        p = netapp_demo_plan(INV)
+        self.assertEqual(p.checks(), [])
+        aff = p.placed("storage")[0]
+        self.assertEqual(port_name(aff, "a_e0m"), "A e0M")
+        fb = p.placed("bridge")[0]
+        self.assertEqual(port_name(fb, "sasa"), "SAS A")
+        nets = {c["net"] for c in p.cables}
+        self.assertTrue({"fc", "sas", "cluster", "mgmt", "data", "uplink"} <= nets)
+        rows = p.bom()
+        self.assertTrue(any(r[1] == "SFP-Optik FC 32G" for r in rows))
+        q = Plan.from_dict(json.loads(json.dumps(p.to_dict())))
+        self.assertEqual(port_name(q.dev(aff["id"]), "a_e0m"), "A e0M")       # Beschriftung übersteht das Laden
+        self.assertEqual(len(q.cables), len(p.cables))
+
+    def test_checks_and_simulation(self):
+        p = Plan()
+        r = p.add_rack("S", 42)
+        made, err = p.apply_template("metrocluster", r["id"])
+        self.assertIsNone(err)
+        fc1, fc2, cl1, cl2, aff, fb1, fb2, sh1, sh2 = made
+        state = p.simulate(failed=[fc1["id"]])
+        self.assertEqual(state[aff["id"]], "degraded")          # zweite Fabric trägt
+        self.assertEqual(state[fb1["id"]], "down")
+        self.assertEqual(state[sh1["id"]], "degraded")          # noch über das Nachbar-Shelf
+        self.assertEqual(p.simulate(failed=[fc1["id"], fc2["id"]])[aff["id"]], "down")
+        p.disconnect(p.cable_at(aff["id"], "a_0b")["id"])
+        p.disconnect(p.cable_at(aff["id"], "b_0b")["id"])
+        p.disconnect(p.cable_at(aff["id"], "b_fcvi")["id"])
+        self.assertTrue(any("zweite Fabric" in t for _, t, _ in p.checks()))
+        small = Plan()
+        tiny = small.add_rack("T", 10)
+        made, err = small.apply_template("metrocluster", tiny["id"])
+        self.assertEqual(made, [])
+        self.assertIn("14 HE", err)
+
+    def test_remove_rack_with_devices(self):
+        p, r, oob, leaf, a, b = small_plan()
+        p.place(a, r["id"], 5)
+        self.assertFalse(p.remove_rack(r["id"]))
+        self.assertTrue(p.remove_rack(r["id"], force=True))
+        self.assertIn(a, p.devs)                                # Bestand bleibt
+        self.assertNotIn(oob, p.devs)
+
+
 class TestPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -443,6 +490,93 @@ class TestPage(unittest.TestCase):
             w.pl_canvas.grab()
         w.pl_theme.setCurrentIndex(w.pl_theme.findData("auto"))
         self.assertEqual(w.planner_theme, planner_tab.default_theme())
+        w.plan_dirty = False
+
+    def test_zoom_menus_undo_and_catalog(self):
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtGui import QWheelEvent
+        from PyQt6.QtWidgets import QApplication
+        w = self.w
+        self.fill_list()
+        w.planner_set_plan(netapp_demo_plan(w.planner_inventory()), dirty=False)
+        # Zoom mit dem Mausrad: Modellkoordinaten bleiben gleich, Klicks treffen weiterhin
+        w.planner_set_view("floor")
+        fc = w.pl_floor
+        fc.resize(fc.minimumSize())
+        ev = QWheelEvent(QPointF(100, 100), QPointF(100, 100), QPoint(0, 0), QPoint(0, 240),
+                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+        QApplication.sendEvent(fc, ev)
+        self.assertAlmostEqual(fc.zoom, 1.15 ** 2, places=3)
+        self.assertEqual(w.pl_zoom_label.text(), f"{round(fc.zoom * 100)} %")
+        fc.resize(fc.minimumSize())
+        rack = w.plan.racks[1]
+        QTest.mouseClick(fc, Qt.MouseButton.LeftButton, pos=(fc.rack_rect(rack).center() * fc.zoom).toPoint())
+        self.assertEqual(w.pl_canvas.sel, ("rack", rack["id"]))
+        w.planner_zoom(None)
+        self.assertEqual(fc.zoom, 1.0)
+        w.planner_set_view("front")
+        w.planner_zoom(1.15)
+        self.assertGreater(w.pl_canvas.zoom, 1.0)
+        self.assertEqual(fc.zoom, 1.0)                          # jede Ansicht hat ihren eigenen Zoom
+        w.pl_canvas.set_zoom(1.0)
+        # Kontextmenüs
+        texts = lambda m: [a.text() for a in m.actions()]
+        m = w.planner_context_menu("tile", (10, 10))
+        self.assertIn("Rack hier aufstellen", texts(m))
+        m = w.planner_context_menu("rack", rack["id"])
+        self.assertIn("Rack löschen …", texts(m))
+        self.assertIn("Vorlage einsetzen", texts(m))
+        aff = w.plan.placed("storage")[0]
+        m = w.planner_context_menu("dev", aff["id"])
+        self.assertTrue(any(t.startswith("Alle Kabel abziehen") for t in texts(m)))
+        m = w.planner_context_menu("port", (aff["id"], "a_0a"))
+        self.assertTrue(any(t.startswith("Gegenstelle zeigen") for t in texts(m)))
+        empty = w.plan.racks[2]
+        m = w.planner_context_menu("slot", (empty["id"], 20))
+        sub = next(a.menu() for a in m.actions() if a.text() == "Hier einbauen")
+        netapp = next(a.menu() for a in sub.actions() if a.text() == "NetApp-Speicher")
+        next(a for a in netapp.actions() if a.text().startswith("NetApp DS224C")).trigger()
+        shelf = next(d for d in w.plan.placed("shelf") if d["rack"] == empty["id"])
+        self.assertEqual((shelf["pos"], shelf["u"]), (19, 2))   # oben bündig an HE 20
+        # Rückgängig / Wiederholen
+        w.planner_undo()
+        self.assertFalse(any(d["rack"] == empty["id"] for d in w.plan.placed("shelf")))
+        w.planner_redo()
+        self.assertTrue(any(d["rack"] == empty["id"] for d in w.plan.placed("shelf")))
+        before = len(w.plan.cables)
+        w.planner_unplug(w.plan.placed("storage")[0]["id"])
+        self.assertLess(len(w.plan.cables), before)
+        w.planner_undo()
+        self.assertEqual(len(w.plan.cables), before)
+        # Rack mit Inhalt löschen (Rückfrage bestätigt) und zurückholen
+        from unittest import mock
+        from PyQt6.QtWidgets import QMessageBox
+        racks = len(w.plan.racks)
+        with mock.patch.object(QMessageBox, "exec", lambda box: None), \
+                mock.patch.object(QMessageBox, "clickedButton",
+                                  lambda box: next(b for b in box.buttons() if b.text() == "Löschen")):
+            w.planner_delete_rack(rack["id"])
+        self.assertEqual(len(w.plan.racks), racks - 1)
+        w.planner_undo()
+        self.assertEqual(len(w.plan.racks), racks)
+        # Katalog: Suche und Racks per Doppelklick
+        w.pl_lib_filter.setText("atto")
+        shown = [w.pl_lib.item(i).text() for i in range(w.pl_lib.count()) if not w.pl_lib.item(i).isHidden()]
+        self.assertTrue(any("ATTO FibreBridge" in t for t in shown))
+        self.assertFalse(any("Leaf" in t for t in shown))
+        w.pl_lib_filter.clear()
+        item = next(w.pl_lib.item(i) for i in range(w.pl_lib.count())
+                    if w.pl_lib.item(i).data(0x0100) == "rack:47")
+        w.planner_lib_double(item)
+        self.assertEqual(w.plan.racks[-1]["h"], 47)
+        # Rack per Drag & Drop aus dem Katalog auf eine Bodenplatte
+        w.pl_floor.rackDropped.emit(24, 12, 9)
+        self.assertEqual((w.plan.racks[-1]["h"], w.plan.coord(w.plan.racks[-1])), (24, "M10"))
+        # Tooltip an einem Port in der Rückansicht
+        w.planner_set_view("rear")
+        c = w.pl_canvas.port_center(aff["id"], "a_0a")
+        self.assertIn("A 0a", w.pl_canvas.tip_at(c, (aff["id"], "a_0a")))
         w.plan_dirty = False
 
     def test_simulation_toggle(self):
