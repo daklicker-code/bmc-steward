@@ -30,6 +30,7 @@ from .firmware_tab import FirmwareTabMixin
 from .users_tab import UsersTabMixin
 from .capture_tab import CaptureTabMixin
 from .vbmc_tab import VbmcTabMixin
+from .planner_tab import PlannerTabMixin
 from .bios_tab import BiosTabMixin
 from .dhcp_tab import DhcpTabMixin
 from .existing_tab import ExistingTabMixin
@@ -197,7 +198,7 @@ class RestoreDialog(QDialog):
 
 
 class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, VbmcTabMixin, BiosTabMixin, DhcpTabMixin,
-            ExistingTabMixin, ServicesTabMixin, QWidget):
+            ExistingTabMixin, ServicesTabMixin, PlannerTabMixin, QWidget):
     DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
 
     @classmethod
@@ -536,8 +537,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs.addTab(fw_page, T("Firmware"))
         self.tabs.addTab(self.build_capture(), T("Aufnahme"))
         vbmc_page = self.build_vbmc()
+        self.vbmc_page = vbmc_page
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
         self.tabs.addTab(vbmc_page, T("Testlabor"))
+        self.tabs.addTab(self.build_planner(), T("Aufbauplaner"))   # hinten, damit die Seitennummern bleiben
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[i18n.LANG] + ABOUT)
@@ -628,6 +631,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.bios_mode_changed()
         self.svc_mode_changed()
         self.tabs.currentChanged.connect(self.page_logged)
+        self.tabs.currentChanged.connect(
+            lambda i: self.planner_page_shown() if i == self.tabs.indexOf(self.planner_page) else None)
         applog.watch(self)
         w, h = self.width(), self.height()
         LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
@@ -1419,6 +1424,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             elif box.clickedButton() is not b_drop:
                 event.ignore()
                 return
+        if not self.planner_confirm_discard():
+            event.ignore()
+            return
         self.stop_scanner()
         self.stop_dhcp()
         self.console_shutdown()
@@ -1785,6 +1793,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "bios_ref": self.bios_ref.currentText(), "bios_live": dict(self.bios_live),
             "bios_new": self.bios_wanted(), "bios_pending": dict(self.bios_pending),
             "services": self.export_services(),
+            "planner": self.plan.to_dict(), "planner_path": self.plan_path, "planner_dirty": self.plan_dirty,
         }
 
     def import_state(self, s):
@@ -1818,6 +1827,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.bios_refresh_ips()
         self.bios_ref.setEditText(s["bios_ref"])
         self.import_services(s["services"])
+        if s.get("planner"):
+            from .planner import Plan
+            self.planner_set_plan(Plan.from_dict(s["planner"]), dirty=s.get("planner_dirty", False))
+            self.plan_path = s.get("planner_path")
         self.validate_defaults()
         self.validate_range()
         self.update_count()
