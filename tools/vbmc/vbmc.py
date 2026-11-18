@@ -30,7 +30,7 @@ Beispiele (auf dem CachyOS-PC, auf dem auch BMC-Steward getestet wird):
   sudo python3 vbmc.py --preset --console       # zusätzlich SSH/IPMI/Redfish-443
   python3 vbmc.py --preset --interactive        # Steuerkonsole: add/list/rm/quit
 """
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 __license__ = "MIT"
 
 import argparse
@@ -52,6 +52,7 @@ from urllib.parse import urlsplit, parse_qs
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vbsim.state import ServerSim, RESET_TYPES      # noqa: E402
 from vbsim import redfish_ext, ssdp, webui           # noqa: E402
+from vbsim.ossl import find_openssl, hint as openssl_hint   # noqa: E402
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
 
@@ -141,13 +142,18 @@ def ensure_cert():
     CACHE.mkdir(parents=True, exist_ok=True)
     cert, key = CACHE / "cert.pem", CACHE / "key.pem"
     if not (cert.exists() and key.exists()):
+        exe = find_openssl()
+        if not exe:
+            sys.exit(f"Konnte kein Zertifikat erzeugen: {openssl_hint()}")
         try:
             subprocess.run(
-                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", str(key),
+                [exe, "req", "-x509", "-newkey", "rsa:2048", "-keyout", str(key),
                  "-out", str(cert), "-days", "3650", "-nodes", "-subj", "/CN=vbmc"],
-                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            sys.exit(f"Konnte kein Zertifikat erzeugen (openssl nötig): {e}")
+                check=True, capture_output=True,
+                env={**os.environ, "MSYS2_ARG_CONV_EXCL": "*", "MSYS_NO_PATHCONV": "1"})
+        except (OSError, subprocess.CalledProcessError) as e:
+            detail = (getattr(e, "stderr", b"") or b"").decode("utf-8", "replace").strip()
+            sys.exit(f"Konnte kein Zertifikat erzeugen (openssl: {exe}): {e} {detail}".strip())
     return str(cert), str(key)
 
 
