@@ -8,7 +8,7 @@ qapp()
 import bmc_steward.i18n as i18n
 i18n.set_language("de")
 i18n.build_texts()
-from bmc_steward.planner import Plan, demo_plan, port_label, vendor_of
+from bmc_steward.planner import Plan, col_index, col_name, coord_name, demo_plan, parse_coord, port_label, vendor_of
 
 INV = [{"key": "sn:A1", "name": "srv-a", "vendor": "dell", "model": "Dell iDRAC9", "serial": "A1"},
        {"key": "sn:B2", "name": "srv-b", "vendor": "hpe", "model": "HPE iLO 6", "serial": "B2"}]
@@ -202,6 +202,63 @@ class TestHelpers(unittest.TestCase):
         self.assertIn(a, p.devs)
 
 
+class TestFloor(unittest.TestCase):
+    def test_column_names_like_in_the_datacenter(self):
+        self.assertEqual([col_name(i) for i in (0, 1, 25, 26, 27, 51, 52, 701)],
+                         ["A", "B", "Z", "AA", "AB", "AZ", "BA", "ZZ"])
+        for i in range(800):
+            self.assertEqual(col_index(col_name(i)), i)
+        self.assertEqual(coord_name(2, 6), "C07")
+        self.assertEqual(parse_coord("aa12"), (26, 11))
+        self.assertEqual(parse_coord(" C-7 "), (2, 6))
+        for bad in ("", "7C", "C0", "Ä1", "C", "12"):
+            self.assertIsNone(parse_coord(bad), bad)
+
+    def test_racks_stand_on_tiles(self):
+        p = Plan()
+        p.cols, p.rows = 6, 4
+        a = p.add_rack("A", at=(0, 0))
+        self.assertEqual(p.coord(a), "A01")
+        b = p.add_rack("B")                                    # automatisch daneben
+        self.assertEqual(p.coord(b), "B01")
+        self.assertFalse(p.move_rack(b["id"], 0, 1))            # A belegt A01/A02
+        self.assertFalse(p.move_rack(b["id"], 5, 3))            # zweite Platte läge außerhalb
+        self.assertTrue(p.move_rack(b["id"], 4, 3, "O"))        # quer: E04 + F04
+        self.assertFalse(p.can_stand(None, 5, 3, "S"))
+        self.assertEqual(p.set_grid(5, 4), [b])                 # B stünde dann außerhalb
+        self.assertEqual(p.cols, 6)
+        self.assertEqual(p.set_grid(30, 20), [])
+
+    def test_full_floor_and_cable_distance(self):
+        p = Plan()
+        p.cols = p.rows = 2
+        p.add_rack("A")
+        p.add_rack("B")
+        c = p.add_rack("C")                                     # kein Platz mehr
+        self.assertIsNone(c["x"])
+        self.assertTrue(any("kein Stellplatz" in t for _, t, _ in p.checks()))
+        q = Plan()
+        q.cols = 30
+        r1, r2 = q.add_rack("R1", 10, at=(0, 0)), q.add_rack("R2", 10, at=(20, 0))
+        a, b = q.new_device("leaf"), q.new_device("leaf")
+        q.place(a, r1["id"], 10)
+        q.place(b, r2["id"], 10)
+        cab, _ = q.connect(a["id"], "u1", b["id"], "u1")
+        self.assertEqual(q.cable_length(cab), 15)               # 20 Platten à 0,6 m + Reserve
+
+    def test_positions_survive_saving(self):
+        p = demo_plan(INV)
+        q = Plan.from_dict(json.loads(json.dumps(p.to_dict())))
+        self.assertEqual([(r["x"], r["y"], r["orient"]) for r in q.racks],
+                         [(r["x"], r["y"], r["orient"]) for r in p.racks])
+        self.assertEqual((q.cols, q.rows), (p.cols, p.rows))
+        data = p.to_dict()
+        data["racks"][1].update(x=data["racks"][0]["x"], y=data["racks"][0]["y"])   # Überlappung in der Datei
+        data["floor"] = {"cols": "viele"}
+        q = Plan.from_dict(data)
+        self.assertNotEqual((q.racks[1]["x"], q.racks[1]["y"]), (q.racks[0]["x"], q.racks[0]["y"]))
+
+
 class TestPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -242,7 +299,7 @@ class TestPage(unittest.TestCase):
         self.assertEqual(w.tabs.currentIndex(), 1)
         cells = {w.cell(r, 6): (w.cell(r, 2), w.cell(r, 5)) for r in range(w.table.rowCount())}
         self.assertEqual(cells["SN1"][0][:7], "10.9.0.")
-        self.assertTrue(cells["SN1"][1].startswith("c01-u"))
+        self.assertTrue(cells["SN1"][1].startswith("c04-u"))
         self.assertEqual(w.table.rowCount(), 2)                # nichts doppelt angelegt
 
     def test_library_double_click_and_delete(self):
@@ -306,12 +363,12 @@ class TestPage(unittest.TestCase):
         self.assertEqual(top.text(0), "FRA")
         row = top.child(0).child(0)
         self.assertEqual(row.text(0), "Reihe C")
-        self.assertEqual(row.childCount(), 2)
+        self.assertEqual(row.childCount(), 8)
         dev_item = row.child(0).child(0)
         w.planner_tree_clicked(dev_item)
         did = dev_item.data(0, 0x0100).partition(":")[2]
         self.assertEqual(w.pl_canvas.sel, ("dev", did))
-        self.assertIn("Rack C01", w.pl_crumb.text())
+        self.assertIn("Rack C04", w.pl_crumb.text())
         # Objektliste mit Filter
         self.assertEqual(w.pl_objects.rowCount(), len(w.plan.placed()))
         w.pl_filter.setText("leaf")
@@ -333,6 +390,59 @@ class TestPage(unittest.TestCase):
         w.pl_loc["room"].setText("RZ-Süd")
         w.planner_loc_edit("room", w.pl_loc["room"])
         self.assertEqual(Plan.from_dict(w.plan.to_dict()).room, "RZ-Süd")
+        w.plan_dirty = False
+
+    def test_floor_view_and_themes(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        from bmc_steward import planner_tab
+        w = self.w
+        self.fill_list()
+        w.planner_set_plan(demo_plan(w.planner_inventory()), dirty=False)
+        w.planner_set_view("floor")
+        fc = w.pl_floor
+        fc.resize(fc.minimumSize())
+        rack = w.plan.racks[0]
+        start = fc.rack_rect(rack).center().toPoint()
+        QTest.mouseClick(fc, Qt.MouseButton.LeftButton, pos=start)
+        self.assertEqual(w.pl_canvas.sel, ("rack", rack["id"]))
+        self.assertEqual(w.pl_r_coord.text(), "C04")
+        # Rack um drei Platten nach rechts auf freie Fläche ziehen
+        end = start + (fc.tile_rect(10, 3).center() - fc.tile_rect(2, 3).center()).toPoint()
+        QTest.mousePress(fc, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(fc, start + (end - start) / 4)
+        QTest.mouseMove(fc, end)
+        QTest.mouseRelease(fc, Qt.MouseButton.LeftButton, pos=end)
+        self.assertEqual(w.plan.coord(rack), "K04")
+        # Stellplatz per Eingabe; belegt -> bleibt
+        w.pl_r_coord.setText("D04")
+        w.planner_rack_place()
+        self.assertEqual(w.plan.coord(rack), "K04")
+        w.pl_r_coord.setText("aa10")
+        w.planner_rack_place()
+        self.assertEqual(w.plan.coord(rack), "K04")             # AA liegt außerhalb von 20 Spalten
+        w.pl_grid_cols.setValue(30)
+        w.pl_r_coord.setText("aa10")
+        w.planner_rack_place()
+        self.assertEqual(w.plan.coord(rack), "AA10")
+        # Doppelklick öffnet das Rack in der Rack-Ansicht
+        QTest.mouseDClick(fc, Qt.MouseButton.LeftButton, pos=fc.rack_rect(rack).center().toPoint())
+        self.assertEqual(w.planner_current_view(), "front")
+        # neues Rack auf gewählter Platte
+        w.planner_set_view("floor")
+        QTest.mouseClick(fc, Qt.MouseButton.LeftButton, pos=fc.tile_rect(12, 9).center().toPoint())
+        w.planner_add_rack()
+        self.assertEqual(w.plan.coord(w.plan.racks[-1]), "M10")
+        # Design: automatisch je System, hell/dunkel wählbar und gemerkt
+        self.assertEqual(planner_tab.default_theme(), "light" if planner_tab.WINDOWS else "dark")
+        for choice, name in (("light", "light"), ("dark", "dark")):
+            w.pl_theme.setCurrentIndex(w.pl_theme.findData(choice))
+            self.assertEqual(w.planner_theme, name)
+            self.assertEqual(planner_tab.load_theme_choice(), choice)
+            fc.grab()
+            w.pl_canvas.grab()
+        w.pl_theme.setCurrentIndex(w.pl_theme.findData("auto"))
+        self.assertEqual(w.planner_theme, planner_tab.default_theme())
         w.plan_dirty = False
 
     def test_simulation_toggle(self):
