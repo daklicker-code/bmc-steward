@@ -115,6 +115,7 @@ class Plan:
         self.mask = "255.255.255.0"
         self.gw = "10.20.0.1"
         self.schema = "{name}"
+        self.site, self.room, self.row = "", "", ""     # Standort › Raum › Reihe
 
     # ------------------------------------------------------------ Grundlagen
     def _id(self, prefix):
@@ -507,7 +508,8 @@ class Plan:
     def to_dict(self):
         return {"format": FORMAT, "version": VERSION, "name": self.name, "seq": self.seq, "racks": self.racks,
                 "devices": self.devs, "cables": self.cables,
-                "net": {"ip_start": self.ip_start, "mask": self.mask, "gw": self.gw, "schema": self.schema}}
+                "net": {"ip_start": self.ip_start, "mask": self.mask, "gw": self.gw, "schema": self.schema},
+                "location": {"site": self.site, "room": self.room, "row": self.row}}
 
     @classmethod
     def from_dict(cls, data):
@@ -517,6 +519,10 @@ class Plan:
             raise ValueError(T("Keine Plan-Datei von BMC-Steward."))
         p = cls()
         p.name = str(data.get("name") or "")[:60]
+        loc = data.get("location") if isinstance(data.get("location"), dict) else {}
+        for k in ("site", "room", "row"):
+            if isinstance(loc.get(k), str):
+                setattr(p, k, loc[k][:40])
         net = data.get("net") if isinstance(data.get("net"), dict) else {}
         for k in ("ip_start", "mask", "gw", "schema"):
             if isinstance(net.get(k), str):
@@ -579,6 +585,7 @@ def demo_plan(inventory):
     der Serverliste werden eingebaut und verkabelt."""
     p = Plan()
     p.name = T("Beispiel")
+    p.site, p.room, p.row = "FRA", T("Raum 2"), "C"
     r1 = p.add_rack("C01", 42)
     r2 = p.add_rack("C02", 24)
     p.sync_inventory(inventory)

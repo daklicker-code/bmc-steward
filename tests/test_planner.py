@@ -297,6 +297,44 @@ class TestPage(unittest.TestCase):
         self.assertEqual(srv["pos"], 7)
         self.assertIsNotNone(w.plan.cable_at(srv["id"], "bmc"))   # Kabel bleibt beim Umsetzen stecken
 
+    def test_navigator_objects_and_views(self):
+        w = self.w
+        self.fill_list()
+        w.planner_set_plan(demo_plan(w.planner_inventory()), dirty=False)
+        # Navigator: Standort › Raum › Reihe › Racks › Geräte
+        top = w.pl_tree.topLevelItem(0)
+        self.assertEqual(top.text(0), "FRA")
+        row = top.child(0).child(0)
+        self.assertEqual(row.text(0), "Reihe C")
+        self.assertEqual(row.childCount(), 2)
+        dev_item = row.child(0).child(0)
+        w.planner_tree_clicked(dev_item)
+        did = dev_item.data(0, 0x0100).partition(":")[2]
+        self.assertEqual(w.pl_canvas.sel, ("dev", did))
+        self.assertIn("Rack C01", w.pl_crumb.text())
+        # Objektliste mit Filter
+        self.assertEqual(w.pl_objects.rowCount(), len(w.plan.placed()))
+        w.pl_filter.setText("leaf")
+        shown = [r for r in range(w.pl_objects.rowCount()) if not w.pl_objects.isRowHidden(r)]
+        self.assertEqual(len(shown), 2)
+        w.pl_filter.clear()
+        # Vorderseite: keine Ports und Kabel zum Anklicken; Verkabeln schaltet auf die Rückseite
+        w.planner_set_view("front")
+        srv = w.plan.placed("server")[0]
+        c = w.pl_canvas.port_center(srv["id"], "bmc")
+        self.assertIsNone(w.pl_canvas.port_at(c))
+        w.pl_cable_btn.setChecked(True)
+        self.assertEqual(w.pl_canvas.view, "rear")
+        self.assertEqual(w.pl_canvas.port_at(c), (srv["id"], "bmc"))
+        w.planner_set_view("front")
+        self.assertFalse(w.pl_cable_btn.isChecked())
+        w.pl_canvas.grab()
+        # Standort wird gespeichert
+        w.pl_loc["room"].setText("RZ-Süd")
+        w.planner_loc_edit("room", w.pl_loc["room"])
+        self.assertEqual(Plan.from_dict(w.plan.to_dict()).room, "RZ-Süd")
+        w.plan_dirty = False
+
     def test_simulation_toggle(self):
         w = self.w
         self.fill_list()
