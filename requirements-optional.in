@@ -1,5 +1,5 @@
 # Optionale Abhaengigkeiten (siehe requirements.txt). Aus dieser Datei entsteht requirements-optional.lock.
-PyQt6-WebEngine>=6.4
+PyQt6-WebEngine>=6.140.1
 pyte
 paramiko
 pyghmi
