@@ -281,7 +281,7 @@ class TestWindowLayout(unittest.TestCase):
         self.assertEqual(self.w.tabs.indexOf(self.w.services_page), 5)
         names = [self.w.tabs.menu.item(i).text() for i in range(11)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Konsole", "UEFI-Einstellungen",
-                                 "Dienste", "Benutzer", "Firmware", "Aufnahme", "Testlabor", "Hilfe"])      # ohne Nummern
+                                 "Dienste", "Benutzerkonten", "Firmware", "Aufnahme", "Testlabor", "Hilfe"])      # ohne Nummern
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo

@@ -18,6 +18,7 @@ import threading
 import time
 import zipfile
 from . import i18n
+from . import deps
 from .i18n import T
 from .core import WINDOWS, __version__, mask
 def _win():
@@ -397,8 +398,9 @@ def scan_decode(jpeg, mode, dbg=None):
     werden vergrößert, dann Zeile/Wort/Block-Modi nacheinander, zuletzt invertiert (helle Schrift)."""
     exe = shutil.which("zbarimg" if mode == "barcode" else "tesseract")
     if not exe:
-        return [], (T("zbarimg fehlt am PC. Unter CachyOS: sudo pacman -S zbar") if mode == "barcode"
-                    else T("tesseract fehlt am PC. Unter CachyOS: sudo pacman -S tesseract tesseract-data-eng")), ""
+        name = "zbarimg" if mode == "barcode" else "tesseract"
+        return [], T("{0} fehlt am PC. Installation: {1}").format(
+            name, "; ".join(deps.install_commands([deps.Dep(name, "bin")]))), ""
     img = QImage.fromData(jpeg)
     if img.isNull():
         return [], T("Das Bild konnte nicht gelesen werden."), ""
@@ -530,7 +532,8 @@ def scan_decode(jpeg, mode, dbg=None):
         if not out:
             attempt(gray0, "")
     if not out and errs:
-        return [], T("Tesseract meldet: {0} (Sprachdaten fehlen? sudo pacman -S tesseract-data-eng)").format(errs[0]), info
+        return [], T("Tesseract meldet: {0} (Sprachdaten fehlen? {1})").format(
+            errs[0], "; ".join(deps.install_commands([deps.Dep("tesseract", "bin")]))), info
     # Passwörter haben keine Leerzeichen und viele verschiedene Zeichen; Rauschen wie „EEE TTT“ kommt nach hinten
     out.sort(key=lambda t: (" " in t, -votes[t], -len(set(t.replace(" ", "")))))
     if dbg:
@@ -548,7 +551,7 @@ class ScanServer:
 
     def __init__(self, ip, bridge, port=8443):
         self.ip, self.bridge, self.port = ip, bridge, port
-        self.token = secrets.token_urlsafe(6)
+        self.token = secrets.token_urlsafe(16)        # 128 Bit: auch mit vielen Versuchen im LAN nicht zu erraten
         self.tmp = None
         self.httpd = None
         self.limit = threading.Semaphore(2)
@@ -853,8 +856,6 @@ class ScannerDialog(QDialog):
                  "zbarimg": T("Barcode (Paket „zbar“)"),
                  "tesseract": T("Texterkennung (OCR)"),
                  "qrencode": T("QR-Code zum Verbinden")}
-        pkg = {"openssl": "openssl", "zbarimg": "zbar",
-               "tesseract": "tesseract tesseract-data-eng", "qrencode": "qrencode"}
         order = ("openssl", "zbarimg", "tesseract", "qrencode")
         t = scan_tools()
         rows = []
@@ -865,8 +866,9 @@ class ScannerDialog(QDialog):
         text = "<b>" + html.escape(T("Hilfsprogramme am PC")) + "</b><br>" + "<br>".join(rows)
         missing = [k for k in order if not t.get(k)]
         if missing:
-            cmd = "sudo pacman -S " + " ".join(dict.fromkeys(pkg[k] for k in missing))
-            text += "<br><br>" + html.escape(T("Fehlt etwas? Unter CachyOS:")) + f"<br><code>{html.escape(cmd)}</code>"
+            cmds = deps.install_commands([deps.Dep(k, "bin") for k in missing])
+            text += "<br><br>" + html.escape(T("Fehlt etwas? Installation:")) + "".join(
+                f"<br><code>{html.escape(c)}</code>" for c in cmds)
         self.tools_lbl.setText(text)
 
     def say(self, text):
@@ -1090,7 +1092,8 @@ class ScannerDialog(QDialog):
             self.qr.setPixmap(pix)
             self.qr.setMinimumSize(pix.size())
         else:
-            self.qr.setText(T("(Für einen QR-Code: sudo pacman -S qrencode)"))
+            self.qr.setText(T("(Für einen QR-Code: {0})").format(
+                "; ".join(deps.install_commands([deps.Dep("qrencode", "bin")]))))
         self.say(T("Scanner gestartet auf {0}").format(link.rsplit("/", 2)[0]))
         self.wait_stop(T("Bereit – QR-Code mit dem Handy scannen"))
         self.adjustSize()

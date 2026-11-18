@@ -28,6 +28,10 @@ def press(view, key, mods=KM.NoModifier, text=""):
     view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, mods, text))
 
 
+NO_PYTE = unittest.skipIf(con.pyte is None, "Paket pyte nicht installiert")
+
+
+@NO_PYTE
 class TestTermView(unittest.TestCase):
     def setUp(self):
         self.v = TermView()
@@ -345,6 +349,7 @@ class ConsolePage(unittest.TestCase):
         self.assertEqual(sent, [b"a", b"b"])
 
     # ---------- Kopieren, Einfügen, Bildschirmfoto ----------
+    @NO_PYTE
     def test_copy_selection_or_whole_screen(self):
         w = self.w
         w.term.feed(b"geheim-frei\r\nzweite zeile")

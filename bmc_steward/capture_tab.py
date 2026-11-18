@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGr
 
 from . import capture, i18n
 from .applog import LOG
+from .core import intro_label
 from .i18n import T
 
 
@@ -155,9 +156,19 @@ class CaptureTabMixin:
         cv.addLayout(cb)
         cv.addWidget(self.cap_diff, 1)
 
+        intro = intro_label(T("<b>Was macht die Aufnahme?</b> Sie liest den kompletten Redfish-Baum eines Servers und "
+                         "verändert dabei nichts: Es werden nur Daten abgefragt, einzige Ausnahme ist die Anmeldung "
+                         "(am Ende wird wieder abgemeldet). Heraus kommt ein Ordner mit allen Antworten des BMC und "
+                         "ein Fähigkeitsbericht, z. B. ob Konten angelegt, SSH-Schlüssel hinterlegt oder das Netzwerk "
+                         "geändert werden kann. Seriennummern, Adressen und Zertifikate werden auf Wunsch "
+                         "geschwärzt.<br><b>Typischer Einsatz:</b> vor und nach einem Firmware-Update aufnehmen und "
+                         "beide Aufnahmen unten vergleichen. So fällt auf, wenn ein Update Funktionen wegnimmt, "
+                         "bevor es auf alle Server geht."))
+
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(4, 4, 4, 4)
+        lay.addWidget(intro)
         lay.addWidget(box, 3)
         lay.addWidget(cmp_box, 2)
         return page

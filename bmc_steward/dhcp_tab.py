@@ -18,6 +18,7 @@ from PyQt6.QtCore import QProcess, QTimer, Qt
 from .applog import LOG
 from .core import WINDOWS, ipv4
 from .dhcp import DhcpThread, probe_dhcp_servers
+from . import deps
 from .i18n import T
 
 
@@ -233,7 +234,8 @@ class DhcpTabMixin:
             else:
                 lo, hi = (ipaddress.IPv4Address(w.text().strip()) for w in (self.dhcp_from, self.dhcp_to))
         elif not exe:
-            err = T("dnsmasq ist nicht installiert:\n\nsudo pacman -S dnsmasq")
+            err = T("dnsmasq ist nicht installiert:") + "\n\n" + "\n".join(
+                deps.install_commands([deps.Dep("dnsmasq", "bin")]))
         elif os.geteuid() != 0 and not shutil.which("pkexec"):
             err = T("pkexec (polkit) fehlt, damit kann der DHCP-Server nicht mit Root-Rechten starten.")
         else:

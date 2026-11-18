@@ -16,6 +16,7 @@ from .i18n import T
 from .core import WINDOWS
 from .redfish import RedfishClient, fingerprint
 from . import trust
+from . import deps
 from .monitor import MonitorWidget, SegmentSwitch
 from .netscan_dialog import NetScanDialog
 from .osk import KeyFeeder, OnScreenKeyboard, send_qt_key
@@ -939,36 +940,6 @@ class ConsoleMixin:
                      T("Zeichen × Zeilen; muss zur Einstellung im UEFI passen (meist 80 × 24 oder 80 × 25)."))
         f.addRow(self.con_serial_box)
 
-        pk = QGroupBox(T("Benötigte Pakete"))
-        pl = QVBoxLayout(pk)
-        row = QHBoxLayout()
-        pkgs = [("QtWebEngine", WEBENGINE, "python-pyqt6-webengine"),
-                ("pyte", bool(pyte), "python-pyte"),
-                ("paramiko", paramiko is not None, "python-paramiko"),
-                ("pyghmi", ipmiconsole is not None, "python-pyghmi")]
-        lacking = []
-        for name, ok, pkg in pkgs:
-            lab = QLabel(("✔ " if ok else "❗ ") + name)
-            lab.setStyleSheet("color: #2e9e4f; font-weight: bold;" if ok else "color: #c9302c; font-weight: bold;")
-            lab.setToolTip(T("installiert") if ok else T("nicht installiert, Paket: {0}").format(pkg))
-            row.addWidget(lab)
-            if not ok:
-                lacking.append(pkg)
-        row.addStretch()
-        pl.addLayout(row)
-        if lacking:
-            if WINDOWS:
-                pip = {"python-pyqt6-webengine": "PyQt6-WebEngine", "python-pyte": "pyte",
-                       "python-paramiko": "paramiko", "python-pyghmi": "pyghmi"}
-                cmd = "    pip install " + " ".join(pip.get(p, p) for p in lacking)
-            else:
-                cmd = "    sudo pacman -S " + " ".join(lacking) + "      (Arch/CachyOS)"
-            hint = QLabel(T("Fehlendes nachinstallieren, auf dem Rechner mit diesem Tool (Terminal):") + "\n" + cmd)
-            hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            pl.addWidget(hint)
-        pk.setToolTip(T("✔ installiert, ❗ fehlt. Je nach gewähltem Weg werden nicht alle gebraucht:\n"
-                        "Bild: QtWebEngine · Text: pyte + pyghmi (Supermicro-SOL) bzw. paramiko (SSH, Dell/HPE/Lenovo)."))
-
         self.con_connect = QPushButton(T("Verbinden"))
         self.con_connect.setMinimumHeight(30)
         self.con_connect.clicked.connect(self.console_connect)
@@ -1045,9 +1016,7 @@ class ConsoleMixin:
         else:
             self.con_stack.addWidget(self.console_note(T(
                 "Die eingebettete Web-Konsole braucht QtWebEngine. Installation auf dem Rechner mit diesem Tool:")
-                + ("\n    pip install PyQt6-WebEngine" if WINDOWS else
-                   "\n    sudo pacman -S python-pyqt6-webengine      (Arch/CachyOS)\n"
-                   "    pip install PyQt6-WebEngine                (sonst)")))
+                + "".join("\n    " + c for c in deps.install_commands([deps.Dep("PyQt6-WebEngine", "py")]))))
         self.term = TermView()
         self.term.send.connect(self.console_send)
         self.term_scroll = TermScroll(self.term)
@@ -1068,7 +1037,6 @@ class ConsoleMixin:
         pan = QVBoxLayout(self.con_panel)
         pan.setContentsMargins(0, 0, 0, 0)
         pan.addWidget(box)
-        pan.addWidget(pk)
         self.con_fkeys_esc = False
         self.con_found_vendor = ""
         self.con_user_stop = False
@@ -1691,17 +1659,16 @@ class ConsoleMixin:
     # ---------- Textkonsole ----------
     def console_open_serial(self, ip, user, pw, vendor):
         if not pyte:
-            self.console_fail(T("Für die Textkonsole fehlt „pyte“: pip install pyte "
-                                "(unter Arch/CachyOS: sudo pacman -S python-pyte)"))
+            self.console_fail(T("Es fehlt: {0}. Installation: {1}").format(
+                "pyte", "; ".join(deps.install_commands([deps.Dep("pyte", "py")]))))
             return
         method = self.con_method.currentData()
         if method == "auto":
             method = "ipmitool" if vendor == "smc" or vendor not in SSH_SOL_CMD else "ssh"
         lacking = SerialSession.missing(method, vendor)
         if lacking:
-            pip = {"python-paramiko": "paramiko", "python-pyghmi": "pyghmi"}
-            names = [pip.get(p, p) for p in lacking] if WINDOWS else lacking
-            how = ("pip install " if WINDOWS else "sudo pacman -S ") + " ".join(names)
+            names = [p.replace("python-", "") for p in lacking]
+            how = "; ".join(deps.install_commands([deps.Dep(n, "py") for n in names]))
             self.console_fail(T("Es fehlt: {0}. Installation: {1}").format(", ".join(names), how))
             return
         if method == "ssh" and vendor not in SSH_SOL_CMD:

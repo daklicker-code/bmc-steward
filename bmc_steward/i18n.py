@@ -403,6 +403,27 @@ TR = {
 "Aufnahme fehlgeschlagen.": ["Capture failed.", "L'enregistrement a échoué.", "Ufnahm fählgschlage."],
 "Bitte beide Ordner wählen.": ["Please choose both folders.", "Veuillez choisir les deux dossiers.", "Bitte beidi Ordner wähle."],
 "Textdatei": ["Text file", "Fichier texte", "Textdatei"],
+"<b>Was macht die Aufnahme?</b> Sie liest den kompletten Redfish-Baum eines Servers und verändert dabei nichts: Es werden nur Daten abgefragt, einzige Ausnahme ist die Anmeldung (am Ende wird wieder abgemeldet). Heraus kommt ein Ordner mit allen Antworten des BMC und ein Fähigkeitsbericht, z. B. ob Konten angelegt, SSH-Schlüssel hinterlegt oder das Netzwerk geändert werden kann. Seriennummern, Adressen und Zertifikate werden auf Wunsch geschwärzt.<br><b>Typischer Einsatz:</b> vor und nach einem Firmware-Update aufnehmen und beide Aufnahmen unten vergleichen. So fällt auf, wenn ein Update Funktionen wegnimmt, bevor es auf alle Server geht.": ["<b>What does a capture do?</b> It reads a server's complete Redfish tree and changes nothing: data is only queried, the sole exception is the login (which is logged out again at the end). The result is a folder with every answer from the BMC plus a capability report, e.g. whether accounts can be created, SSH keys stored or the network changed. Serial numbers, addresses and certificates are redacted on request.<br><b>Typical use:</b> capture before and after a firmware update and compare both captures below. That way you notice when an update takes features away, before it goes out to every server.", "<b>Que fait l'enregistrement ?</b> Il lit l'arborescence Redfish complète d'un serveur sans rien modifier : les données sont seulement interrogées, la seule exception est la connexion (déconnectée à la fin). Le résultat est un dossier contenant toutes les réponses du BMC et un rapport de capacités, p. ex. si des comptes peuvent être créés, des clés SSH déposées ou le réseau modifié. Numéros de série, adresses et certificats sont masqués sur demande.<br><b>Usage typique :</b> enregistrer avant et après une mise à jour du firmware et comparer les deux enregistrements ci-dessous. On voit ainsi si une mise à jour retire des fonctions, avant qu'elle ne soit déployée sur tous les serveurs.", "<b>Was macht d Ufnahm?</b> Si liest de ganz Redfish-Baum vomene Server und veränderet debi nüt: Es wärdet nur Date abgfrööget, einzigi Usnahm isch d Aamäldig (am Schluss wird wider abgmäldet). Use chunnt en Ordner mit allne Antworte vom BMC und en Fähigkeitsbricht, z. B. öb Konte aagleit, SSH-Schlüssel hinterleit oder s Netzwerk gänderet wärde chan. Seriennummere, Adresse und Zertifikat wärdet uf Wunsch gschwärzt.<br><b>Typische Iisatz:</b> vor und nach emne Firmware-Update ufnäh und beidi Ufnahme unde vergliiche. So gseht mer, wänn es Update Funktione wegnimmt, bevor s uf alli Server gaht."],
+"Befehl in die Zwischenablage kopieren": ["Copy command to the clipboard", "Copier la commande dans le presse-papiers", "Befehl i d Zwüscheablag kopiere"],
+"DHCP-Server unter Linux": ["DHCP server on Linux", "Serveur DHCP sous Linux", "DHCP-Server under Linux"],
+"Eingebettete HTML5-Konsole": ["Embedded HTML5 console", "Console HTML5 intégrée", "Iibetteti HTML5-Konsole"],
+"Nach der Installation BMC-Steward neu starten. Alles andere funktioniert auch ohne diese Pakete.": ["Restart BMC-Steward after installing. Everything else works without these packages.", "Redémarrer BMC-Steward après l'installation. Tout le reste fonctionne aussi sans ces paquets.", "Nach de Installation BMC-Steward neu starte. Alles anderi lauft au ohni die Pakete."],
+"Netze Konfigraum und Router": ["Staging room and router networks", "Réseaux salle de configuration et routeur", "Netz Konfigruum und Router"],
+"Optionale Pakete fehlen:": ["Optional packages missing:", "Paquets optionnels manquants :", "Optionali Pakete fähled:"],
+"Passwörter im Schlüsselbund": ["Passwords in the keyring", "Mots de passe dans le trousseau", "Passwörter im Schlüsselbund"],
+"Textkonsole (SOL/SSH)": ["Text console (SOL/SSH)", "Console texte (SOL/SSH)", "Textkonsole (SOL/SSH)"],
+"UEFI-Konsole der virtuellen Server": ["UEFI console of the virtual servers", "Console UEFI des serveurs virtuels", "UEFI-Konsole vo de virtuelle Server"],
+"Von Hand installieren und in den PATH legen: {0}": ["Install manually and add to PATH: {0}", "Installer manuellement et ajouter au PATH : {0}", "Vo Hand installiere und in PATH lege: {0}"],
+"Fehlt etwas? Installation:": ["Anything missing? Install with:", "Il manque quelque chose ? Installation :", "Fählt öppis? Installation:"],
+"{0} fehlt am PC. Installation: {1}": ["{0} is missing on this PC. Install: {1}", "{0} manque sur ce PC. Installation : {1}", "{0} fählt am PC. Installation: {1}"],
+"Tesseract meldet: {0} (Sprachdaten fehlen? {1})": ["Tesseract reports: {0} (language data missing? {1})", "Tesseract signale : {0} (données de langue manquantes ? {1})", "Tesseract meldet: {0} (Sprochdate fähled? {1})"],
+"(Für einen QR-Code: {0})": ["(For a QR code: {0})", "(Pour un code QR : {0})", "(Für en QR-Code: {0})"],
+"<b>Neuware</b> richtet frische Server ein: Für jede Zeile der Serverliste legt das Tool den neuen Administrator an, setzt den Hostnamen und stellt den BMC auf die feste Adresse um. Danach meldet es sich zur Kontrolle unter der neuen Adresse an und sperrt das Werkskonto.<br><b>Ablauf:</b> Server eintragen (oder aus „DHCP-Server“ übernehmen), oben den neuen Administrator eingeben, im Trockenlauf prüfen, dann scharf starten. Fertige Zeilen werden grün und beim nächsten Lauf übersprungen.": ["<b>New hardware</b> sets up fresh servers: for every row of the server list the tool creates the new administrator, sets the hostname and switches the BMC to the static address. It then logs in at the new address to verify and locks the factory account.<br><b>Steps:</b> enter servers (or take them over from “DHCP server”), enter the new administrator above, check with a dry run, then start live. Finished rows turn green and are skipped on the next run.", "<b>Matériel neuf</b> configure les serveurs neufs : pour chaque ligne de la liste, l'outil crée le nouvel administrateur, définit le nom d'hôte et passe le BMC sur l'adresse fixe. Il se reconnecte ensuite à la nouvelle adresse pour vérifier et verrouille le compte d'usine.<br><b>Étapes :</b> saisir les serveurs (ou les reprendre depuis « Serveur DHCP »), saisir le nouvel administrateur en haut, vérifier par un test à blanc, puis lancer en réel. Les lignes terminées passent au vert et sont ignorées au prochain passage.", "<b>Neuware</b> richtet frischi Server ii: Für jedi Ziile vo de Serverlischte leit s Tool de neu Administrator aa, setzt de Hostname und stellt de BMC uf di fescht Adrässe um. Dänn meldet es sich zur Kontrolle under de neue Adrässe aa und sperrt s Wärkskonto.<br><b>Ablauf:</b> Server iitrage (oder us „DHCP-Server“ übernäh), obe de neu Administrator iigäh, im Trockelauf prüefe, dänn scharf starte. Fertigi Ziile wärdet grüen und bim nächschte Lauf übersprunge."],
+"<b>Dienste</b> richtet auf allen Servern der Serverliste dieselben Verwaltungsdienste ein, z. B. Zeitserver (NTP), Syslog, LDAP/Active Directory, DNS und die Härtung (unsichere Dienste aus, Kontosperre, Sitzungs-Zeitlimit). Geändert wird nur, was angehakt ist; der Trockenlauf zeigt vorher jeden Aufruf.": ["<b>Services</b> sets up the same management services on every server of the server list, e.g. time server (NTP), syslog, LDAP/Active Directory, DNS and hardening (insecure services off, account lockout, session timeout). Only what is ticked is changed; the dry run shows every call beforehand.", "<b>Services</b> configure les mêmes services de gestion sur tous les serveurs de la liste, p. ex. serveur de temps (NTP), syslog, LDAP/Active Directory, DNS et durcissement (services non sûrs désactivés, verrouillage de compte, délai de session). Seul ce qui est coché est modifié ; le test à blanc montre chaque appel au préalable.", "<b>Dienscht</b> richtet uf allne Server vo de Serverlischte di gliiche Verwaltigsdienscht ii, z. B. Ziitserver (NTP), Syslog, LDAP/Active Directory, DNS und d Härtig (unsicheri Dienscht us, Kontosperri, Sitzigs-Ziitlimit). Gänderet wird nur, was aaghäklet isch; de Trockelauf zeigt vorher jede Ufruef."],
+"<b>Firmware</b> spielt ein Update auf alle Server der Serverliste: erst das Inventar eines Referenzgeräts lesen, dann eine Datei vom PC oder eine URL wählen. Der Trockenlauf ist voreingestellt; ein scharfer Lauf verlangt das Eintippen der Serverzahl. Tipp: vorher und nachher unter „Aufnahme“ aufnehmen und vergleichen.": ["<b>Firmware</b> rolls an update out to every server of the server list: first read the inventory of a reference device, then choose a file from the PC or a URL. Dry run is the default; a live run requires typing the number of servers. Tip: capture before and after under “Capture” and compare.", "<b>Firmware</b> déploie une mise à jour sur tous les serveurs de la liste : lire d'abord l'inventaire d'un appareil de référence, puis choisir un fichier sur le PC ou une URL. Le test à blanc est le réglage par défaut ; une exécution réelle demande de saisir le nombre de serveurs. Astuce : enregistrer avant et après sous « Enregistrement » et comparer.", "<b>Firmware</b> spielt es Update uf alli Server vo de Serverlischte: zerscht s Inventar vomene Referenzgrät läse, dänn e Datei vom PC oder e URL wähle. De Trockelauf isch voreigstellt; en scharfe Lauf verlangt, dass mer d Serverzahl iitippt. Tipp: vorher und nachher under „Ufnahm“ ufnäh und vergliiche."],
+"Hinweis: Unter dieser Adresse war bisher ein anderes Gerät gemerkt ({0}). Bei Werks- oder DHCP-Adressen ist das normal, sonst bitte prüfen.": ["Note: a different device was previously pinned at this address ({0}). That is normal for factory or DHCP addresses, otherwise please check.", "Remarque : un autre appareil était mémorisé à cette adresse ({0}). C'est normal pour des adresses d'usine ou DHCP, sinon veuillez vérifier.", "Hiwiis: Under dere Adrässe isch bis jetzt es anders Grät gmerkt gsi ({0}). Bi Wärks- oder DHCP-Adrässe isch das normal, suscht bitte prüefe."],
+"Unter dieser Adresse war bisher ein anderes Gerät mit anderem Zertifikat gemerkt (gemerkt {0}, jetzt {1}). Möglicher Angriff (Man-in-the-Middle) – es wurde kein Passwort gesendet. Wurde das Gerät getauscht, den alten Eintrag unter „Zertifikate“ (links unten) entfernen.": ["A different device with a different certificate was previously pinned at this address (pinned {0}, now {1}). Possible attack (man-in-the-middle) – no password was sent. If the device was swapped, remove the old entry under “Certificates” (bottom left).", "Un autre appareil avec un autre certificat était mémorisé à cette adresse (mémorisé {0}, maintenant {1}). Attaque possible (man-in-the-middle) – aucun mot de passe n'a été envoyé. Si l'appareil a été remplacé, supprimer l'ancienne entrée sous « Certificats » (en bas à gauche).", "Under dere Adrässe isch bis jetzt es anders Grät mit emne andere Zertifikat gmerkt gsi (gmerkt {0}, jetzt {1}). Mögliche Aagriff (Man-in-the-Middle) – es isch kei Passwort gschickt worde. Isch s Grät tuuscht worde, de alt Iitrag under „Zertifikat“ (links une) entferne."],
+"dnsmasq ist nicht installiert:": ["dnsmasq is not installed:", "dnsmasq n'est pas installé :", "dnsmasq isch nöd installiert:"],
 "Aufnahme gestartet ({0})": ["Capture started ({0})", "Enregistrement démarré ({0})", "Ufnahm gstartet ({0})"],
 "NICHT geschwärzt: Die Aufnahme enthält persönliche Daten des Geräts.": ["NOT redacted: the capture contains personal data of the device.", "NON masqué : l'enregistrement contient des données personnelles de l'appareil.", "NÖD gschwärzt: D Ufnahm enthaltet persönlichi Date vom Grät."],
 "Fertig: {0} Ressourcen gespeichert.": ["Done: {0} resources saved.", "Terminé : {0} ressources enregistrées.", "Fertig: {0} Ressource gspeicheret."],
@@ -590,11 +611,6 @@ TR = {
 "{0} servers added to the server list (“New hardware”), user “{1}” entered.",
 "{0} serveurs repris dans la liste (« Nouveau matériel »), utilisateur « {1} » saisi.",
 "{0} Server i d Serverlischte („Neuwar“) übernoh, Benutzer „{1}“ iitreit."
-],
-"Gerät": [
-"Device",
-"Appareil",
-"Grät"
 ],
 "Fingerabdruck (SHA-256)": [
 "Fingerprint (SHA-256)",
@@ -1660,11 +1676,6 @@ TR = {
 "Vraiment flasher le firmware ?",
 "Firmware würkli iispiele?"
 ],
-"Fehler: {0}": [
-"Error: {0}",
-"Erreur : {0}",
-"Fähler: {0}"
-],
 "Auf {0} Servern wird jetzt wirklich Firmware eingespielt.": [
 "Firmware will now really be flashed on {0} servers.",
 "Le firmware va maintenant réellement être flashé sur {0} serveurs.",
@@ -2087,11 +2098,6 @@ TR = {
 "Cet ordinateur n'a pas d'adresse réseau.",
 "Dä Rächner hät kei Netzwerkadrässe."
 ],
-"Start fehlgeschlagen: {0}": [
-"Start failed: {0}",
-"Échec du démarrage : {0}",
-"Start fählgschlage: {0}"
-],
 "Läuft. Link am Handy öffnen (QR-Code scannen), die Zertifikatswarnung einmal bestätigen, Kamera erlauben. Bei aktiver Firewall den Port {0} freigeben (ufw: sudo ufw allow {0}/tcp).": [
 "Running. Open the link on the phone (scan the QR code), confirm the certificate warning once, allow the camera. With an active firewall open port {0} (ufw: sudo ufw allow {0}/tcp).",
 "En cours. Ouvrir le lien sur le téléphone (scanner le code QR), confirmer l'avertissement de certificat une fois, autoriser la caméra. Pare-feu actif : ouvrir le port {0} (ufw : sudo ufw allow {0}/tcp).",
@@ -2352,11 +2358,6 @@ TR = {
 "pas de connexion",
 "kei Verbindig"
 ],
-"Benutzer": [
-"User",
-"Utilisateur",
-"Benutzer"
-],
 "  Benutzer {0} existierte schon, Passwort und Rolle gesetzt": [
 "  User {0} already existed, password and role set",
 "  L'utilisateur {0} existait déjà, mot de passe et rôle définis",
@@ -2542,11 +2543,6 @@ TR = {
 "Liste des serveurs",
 "Serverlischte"
 ],
-"Trockenlauf (nichts ändern)": [
-"Dry run (change nothing)",
-"Simulation (ne rien modifier)",
-"Trocheluuf (nüt ändere)"
-],
 "Mit Haken wird nichts geändert: Das Protokoll zeigt nur, welche Aufrufe\nan welches Gerät gingen. Ohne Haken werden die Geräte wirklich umgestellt.": [
 "When ticked, nothing is changed: the log only shows which calls\nwould go to which device. Unticked, the devices are really reconfigured.",
 "Coché, rien n'est modifié : le journal montre seulement quels appels\niraient à quel appareil. Décoché, les appareils sont réellement reconfigurés.",
@@ -2709,11 +2705,6 @@ TR = {
 "Used to read the reference device and, when the template is applied later,\nfor all rows of the server list without a password of their own.",
 "Sert à lire l'appareil de référence et, quand le modèle est appliqué ensuite,\npour toutes les lignes de la liste sans mot de passe propre.",
 "Gilt zum Läse vom Referänzgrät und, wenn d Vorlag spöter aagwändet wird,\nfür alli Ziile vo de Serverlischte ohni eigets Passwort."
-],
-"Adresse": [
-"Address",
-"Adresse",
-"Adrässe"
 ],
 "Attribut suchen …": [
 "Search attribute …",
@@ -3087,11 +3078,6 @@ TR = {
 "Gives the selected profile another name.",
 "Donne un autre nom au profil choisi.",
 "Git em gwählte Profil en andere Name."
-],
-"Löschen": [
-"Delete",
-"Supprimer",
-"Lösche"
 ],
 "Löscht das gewählte Profil. Die Einstellungen in der Maske bleiben stehen.": [
 "Deletes the selected profile. The settings in the form stay as they are.",
@@ -4220,11 +4206,6 @@ TR = {
 "Groupe LDAP",
 "LDAP-Gruppe"
 ],
-"Rolle": [
-"Role",
-"Rôle",
-"Rolle"
-],
 "Gruppen → Rolle": [
 "Groups → role",
 "Groupes → rôle",
@@ -4385,7 +4366,6 @@ TR = {
 "Vorgemerkt, Server startet neu und landet im UEFI-Setup. Das Bild erscheint nach etwa ein bis zwei Minuten.": ["Scheduled; the server restarts and lands in UEFI setup. The picture appears after about one to two minutes.", "Préparé ; le serveur redémarre et arrive dans la configuration UEFI. L'image apparaît après une à deux minutes environ.", "Vorgmerkt, de Server startet neu und landet im UEFI-Setup. S Bild chunnt nach öppe ein bis zwei Minute."],
 "Tasten:": ["Keys:", "Touches :", "Taschte:"],
 "„Verbinden“ öffnet die Anmeldeseite des BMC im Standardbrowser. Die Anmeldung erfolgt dort von Hand;\ndie HTML5-Konsole wird im BMC über „Remote Console“ bzw. „Virtual Console“ gestartet.": ["\"Connect\" opens the BMC login page in the default browser. You log in there by hand;\nthe HTML5 console is started in the BMC via \"Remote Console\" or \"Virtual Console\".", "« Connecter » ouvre la page de connexion du BMC dans le navigateur par défaut. La connexion se fait à la main ;\nla console HTML5 se lance dans le BMC via « Remote Console » ou « Virtual Console ».", "„Verbinde“ macht d Aamäldsiite vom BMC im Standardbrowser uf. D Aamäldig machsch det vo Hand;\nd HTML5-Konsole wird im BMC über „Remote Console“ bzw. „Virtual Console“ gstartet."],
-"Bitte eine Adresse eintragen.": ["Please enter an address.", "Veuillez saisir une adresse.", "Bitte e Adrässe iitrage."],
 "QtWebEngine fehlt, siehe Hinweis unten. Alternativ „Text“ oder „Standardbrowser“ wählen.": ["QtWebEngine is missing, see the note below. Alternatively choose \"Text\" or \"default browser\".", "QtWebEngine est absent, voir l'indication ci-dessous. Sinon choisir « Texte » ou « navigateur par défaut ».", "QtWebEngine fählt, lueg dr Hiiwiis unde. Alternativ „Text“ oder „Standardbrowser“ wähle."],
 "Dieser BMC kann nur TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). Die eingebettete Konsole geht damit nicht, bitte „Text“ wählen.": ["This BMC only speaks TLS 1.0/1.1 (e.g. iLO 3/4, iDRAC7/8 with old firmware). The embedded console cannot connect; please choose \"Text\".", "Ce BMC ne gère que TLS 1.0/1.1 (p. ex. iLO 3/4, iDRAC7/8 avec ancien firmware). La console intégrée ne fonctionne pas ; veuillez choisir « Texte ».", "Dä BMC cha nume TLS 1.0/1.1 (z. B. iLO 3/4, iDRAC7/8 mit alter Firmware). D iibettet Konsole goht demit nöd, bitte „Text“ wähle."],
 "Anmeldeseite nicht erkannt. Bitte im Fenster von Hand anmelden.": ["Login page not recognised. Please log in by hand in the window.", "Page de connexion non reconnue. Veuillez vous connecter à la main dans la fenêtre.", "Aamäldsiite nöd erkannt. Bitte im Fenschter vo Hand aamälde."],
@@ -4403,7 +4383,7 @@ TR = {
 "Start ins UEFI-Setup vormerken": ["Schedule boot into UEFI setup", "Préparer le démarrage dans la configuration UEFI", "Start is UEFI-Setup vormerke"],
 "Neustart auslösen": ["Trigger restart", "Déclencher le redémarrage", "Neustart uslöse"],
 "Im Browser geöffnet: {0}": ["Opened in browser: {0}", "Ouvert dans le navigateur : {0}", "Im Browser ufgmacht: {0}"],
-"Start fehlgeschlagen: {0}": ["Start failed: {0}", "Échec du démarrage : {0}", "Start fehlgschlage: {0}"],
+"Start fehlgeschlagen: {0}": ["Start failed: {0}", "Échec du démarrage : {0}", "Start fählgschlage: {0}"],
 "5 · UEFI-Konsole": ["5 · UEFI console", "5 · Console UEFI", "5 · UEFI-Konsole"],
 "6 · Hilfe": ["6 · Help", "6 · Aide", "6 · Hilf"],
 "Benötigte Pakete": ["Required packages", "Paquets requis", "Nötigi Pakete"],
@@ -4563,7 +4543,8 @@ TR = {
 "  Netzwerkport (Shared/Dedicated): bi däm Hersteller bitte in der Oberflächi umstelle."
 ],
 
-"Benutzer": ["Users", "Utilisateurs", "Benutzer"],
+"Benutzer": ["User", "Utilisateur", "Benutzer"],
+"Benutzerkonten": ["User accounts", "Comptes utilisateurs", "Benutzerkonte"],
 "Konten": ["Accounts", "Comptes", "Konte"],
 "Gesperrt": ["Locked", "Verrouillé", "Gsperrt"],
 "Aktiv": ["Active", "Actif", "Aktiv"],
@@ -4584,18 +4565,16 @@ TR = {
 "SSH-Keys entfernen": ["Remove SSH keys", "Supprimer les clés SSH", "SSH-Keys entferne"],
 "SSH-Keys entfernen?": ["Remove SSH keys?", "Supprimer les clés SSH ?", "SSH-Keys entferne?"],
 "SSH-Key löschen": ["Delete SSH key", "Supprimer la clé SSH", "SSH-Key lösche"],
-"Gerät": ["Device", "Appareil", "Gerät"],
-"Adresse": ["Address", "Adresse", "Adress"],
+"Gerät": ["Device", "Appareil", "Grät"],
+"Adresse": ["Address", "Adresse", "Adrässe"],
 "Konten laden": ["Load accounts", "Charger les comptes", "Konte lade"],
 "Lese Konten …": ["Reading accounts …", "Lecture des comptes …", "Les Konte …"],
-"Fehler: {0}": ["Error: {0}", "Erreur : {0}", "Fehler: {0}"],
+"Fehler: {0}": ["Error: {0}", "Erreur : {0}", "Fähler: {0}"],
 "{0} Konten gelesen ({1}).": [
 "{0} accounts read ({1}).", "{0} comptes lus ({1}).", "{0} Konte gläse ({1})."
 ],
 "Fehler, siehe Protokoll.": ["Error, see log.", "Erreur, voir le journal.", "Fehler, lueg s'Protokoll."],
-"Bitte eine Adresse eintragen.": [
-"Please enter an address.", "Veuillez saisir une adresse.", "Bitte e Adress iitraage."
-],
+"Bitte eine Adresse eintragen.": ["Please enter an address.", "Veuillez saisir une adresse.", "Bitte e Adrässe iitrage."],
 "Bitte ein Konto in der Tabelle wählen.": [
 "Please select an account in the table.", "Veuillez sélectionner un compte dans le tableau.",
 "Bitte es Konto in der Tabälle wähle."
@@ -4671,7 +4650,7 @@ TR = {
 "(lueg „Sicherige/Protokoll“) - d'Serverlischte danach bitte spiichere, sonst gönd si bim Beände verlore."
 ],
 "Trockenlauf (nichts ändern)": ["Dry run (change nothing)", "Essai à blanc (rien ne change)",
-                                "Tröckeloif (nüt ändere)"],
+                                "Trockelauf (nüt ändere)"],
 "Scharf: Passwörter jetzt rotieren": [
 "Live: rotate passwords now", "Réel : faire tourner les mots de passe maintenant",
 "Scharf: Passwörter jetzt rotiere"

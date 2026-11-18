@@ -52,11 +52,13 @@ class TestAvailable(unittest.TestCase):
         with patch.object(vault, "keyring", None):
             self.assertFalse(vault.available())
 
+    @unittest.skipIf(vault.keyring is None, "Paket keyring nicht installiert")
     def test_false_with_the_builtin_fail_backend(self):
         import keyring.backends.fail
         with patch.object(vault.keyring, "get_keyring", return_value=keyring.backends.fail.Keyring()):
             self.assertFalse(vault.available())
 
+    @unittest.skipIf(vault.keyring is None, "Paket keyring nicht installiert")
     def test_true_with_a_working_backend(self):
         with patch.object(vault.keyring, "get_keyring", return_value=FakeKeyring()):
             self.assertTrue(vault.available())
