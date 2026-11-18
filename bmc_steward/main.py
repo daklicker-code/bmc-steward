@@ -18,7 +18,7 @@ import tempfile
 import time
 from . import i18n
 from .i18n import HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
-from .core import ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
+from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
 from .branding import app_icon
 from .monitor import AnimatedLogo
 from .redfish import Engine, EngineThread, VendorProbeThread
@@ -507,6 +507,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.deps_footers = []                     # Randbereich je Seite: fehlende optionale Pakete
         dhcp_page = self.build_dhcp()
         self.tabs.addTab(dhcp_page, T("DHCP-Server"), accent=DHCP_YELLOW)
+        pl.insertWidget(0, intro_label(T(
+            "<b>Neuware</b> richtet frische Server ein: Für jede Zeile der Serverliste legt das Tool den neuen "
+            "Administrator an, setzt den Hostnamen und stellt den BMC auf die feste Adresse um. Danach meldet es sich "
+            "zur Kontrolle unter der neuen Adresse an und sperrt das Werkskonto.<br><b>Ablauf:</b> Server eintragen "
+            "(oder aus „DHCP-Server“ übernehmen), oben den neuen Administrator eingeben, im Trockenlauf prüfen, dann "
+            "scharf starten. Fertige Zeilen werden grün und beim nächsten Lauf übersprungen.")))
         self.tabs.addTab(page, T("Neuware"))
         self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
         con_page = self.build_console()
@@ -515,9 +521,19 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.deps_footers.append(deps.attach(widget, key))
         self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
         self.services_page = self.build_services()
+        self.services_page.layout().insertWidget(0, intro_label(T(
+            "<b>Dienste</b> richtet auf allen Servern der Serverliste dieselben Verwaltungsdienste ein, z. B. "
+            "Zeitserver (NTP), Syslog, LDAP/Active Directory, DNS und die Härtung (unsichere Dienste aus, Kontosperre, "
+            "Sitzungs-Zeitlimit). Geändert wird nur, was angehakt ist; der Trockenlauf zeigt vorher jeden Aufruf.")))
         self.tabs.addTab(self.services_page, T("Dienste"))
-        self.tabs.addTab(self.build_users(), T("Benutzer"))
-        self.tabs.addTab(self.build_firmware(), T("Firmware"))
+        self.tabs.addTab(self.build_users(), T("Benutzerkonten"))
+        fw_page = self.build_firmware()
+        fw_page.layout().insertWidget(0, intro_label(T(
+            "<b>Firmware</b> spielt ein Update auf alle Server der Serverliste: erst das Inventar eines Referenzgeräts "
+            "lesen, dann eine Datei vom PC oder eine URL wählen. Der Trockenlauf ist voreingestellt; ein scharfer Lauf "
+            "verlangt das Eintippen der Serverzahl. Tipp: vorher und nachher unter „Aufnahme“ aufnehmen und "
+            "vergleichen.")))
+        self.tabs.addTab(fw_page, T("Firmware"))
         self.tabs.addTab(self.build_capture(), T("Aufnahme"))
         vbmc_page = self.build_vbmc()
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
@@ -1502,7 +1518,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.worker.start()
 
     def show_line(self, line, kind=""):
-        self.say(line, {"err": "#d9534f", "ok": "#3fa45b"}.get(kind), bold=kind == "head")
+        self.say(line, {"err": "#d9534f", "ok": "#3fa45b", "warn": "#e08e0b"}.get(kind), bold=kind == "head")
 
     def abort(self):
         if self.running():

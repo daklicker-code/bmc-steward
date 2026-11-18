@@ -241,6 +241,15 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
   „beim ersten Kontakt merken“: Der SHA-256-Fingerabdruck wird je Gerät gespeichert, ein späterer Wechsel sperrt
   das Gerät, bevor ein Passwort gesendet wird. Der allererste Kontakt ist ungeschützt – deshalb nur im getrennten
   Staging-Netz arbeiten und bei Bestandsservern den Fingerabdruck einmal mit der BMC-Oberfläche vergleichen.
+- Meldet sich unter einer Adresse, an der schon ein anderes Gerät gemerkt ist, ein unbekanntes Gerät mit anderem
+  Zertifikat, wird es gesperrt (sonst könnte sich ein Angreifer einfach als „neues Gerät“ ausgeben). Nur bei
+  „Neuware“ gibt es dann bloß einen Hinweis, weil sich Werks- und DHCP-Adressen dort mit neuen Geräten wiederholen.
+  Nach einem Gerätetausch den alten Eintrag unter „Zertifikate“ entfernen.
+- DHCP-Server und Testlabor starten Programme aus dem Tool-Ordner per `pkexec` mit Root-Rechten. Der Tool-Ordner
+  sollte deshalb nur für den eigenen Benutzer schreibbar sein; wer ganz sicher gehen will, legt ihn root-eigen ab
+  (z. B. unter `/opt`) und startet BMC-Steward von dort.
+- Der Link des Handy-Scanners enthält einen zufälligen 128-Bit-Geheimwert und gilt nur, solange das Scanner-Fenster
+  läuft.
 - Arbeitsdaten (Fingerabdrücke `bmc-pins.json`, Sicherungen `sicherungen/`, Revisionsprotokoll `protokolle/`)
   liegen neben dem Tool, Rechte 0600/0700. Mit der Umgebungsvariable `BMC_STEWARD_DATA` lässt sich ein anderer
   Ordner wählen, z. B. ein verschlüsseltes Laufwerk.
