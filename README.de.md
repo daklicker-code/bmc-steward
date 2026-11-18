@@ -23,8 +23,8 @@ HPE-Server mit **iLO 3 und iLO 4** laufen über die XML-Schnittstelle RIBCL, äl
 | ![Bestandsserver](docs/screenshot-2b-existing.png) | ![UEFI-Einstellungen](docs/screenshot-3-uefi.png) |
 | **Dienste** | **UEFI-Konsole** |
 | ![Dienste](docs/screenshot-4-services.png) | ![UEFI-Konsole](docs/screenshot-5-console.png) |
-| **Hilfe** | |
-| ![Hilfe](docs/screenshot-6-help.png) | |
+| **Hilfe** | **Aufbauplaner** |
+| ![Hilfe](docs/screenshot-6-help.png) | ![Aufbauplaner](docs/screenshot-7-planner.png) |
 
 </details>
 
@@ -46,6 +46,7 @@ Seit Version 3.0 steht links statt der Reiterleiste ein **Menü**; die gewählte
 | **UEFI-Konsole** | Zeigt das UEFI/BIOS eines Servers über den BMC – als eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder im Standardbrowser. Mit Statusleiste, **Bildschirmtastatur** (Strg/Alt/Umschalt zum Einrasten, F-Tasten, Setup-/Boot-Menü-Taste je Hersteller, „Text tippen“), Kopieren/Einfügen, Verlauf, Farbschemata, Bildschirmfoto und automatischem Neuverbinden. |
 | **↳ Server suchen** | Findet BMCs, deren Adresse unbekannt ist (Knopf „🔍 Suchen …“ in der UEFI-Konsole und „Server suchen …“ bei „Neuware“): prüft einen Bereich (z. B. `192.168.1.0/24`) auf Weboberflächen, liest dort ohne Anmeldung Hersteller, Produkt und Seriennummer und findet per IPMI-Ping auch BMCs ohne Weboberfläche. Nur lesend, es werden keine Zugangsdaten gesendet. |
 | **Testlabor** | Stellt einen Cluster virtueller Dell/HPE/Lenovo/Supermicro-BMCs zusammen (`tools/vbmc/`) – je Server Firmware-Generation, Werks-Login, Werks-IP oder DHCP, Modell/Seriennummer, belegter Dell-Slot. Drei Netze: Loopback (ohne Root), **Konfigraum** (virtueller Staging-Switch, DHCP aus „DHCP-Server“) und **Router** (die Server hängen im echten LAN und erscheinen im Router). Szenarien lassen sich speichern und genau so wieder laden. |
+| **Aufbauplaner** | Plant Racks mit frei wählbarer Höhe: Server aus der Serverliste, Switches, Firewall, Patchpanel, PDU und Platzhalter per Drag & Drop einbauen, Ports verkabeln (Taste K). Prüft BMCs ohne Kabel, fehlende Redundanz und PDU-Last, vergibt Hostnamen und BMC-Adressen und übernimmt sie in „Neuware“, baut die Server im Testlabor virtuell nach, simuliert Kabel- und Switch-Ausfälle und erstellt eine Stückliste mit geschätzten Kabellängen. Pläne werden als JSON gespeichert. |
 | **Hilfe** | Erklärt jeden Schritt und die Besonderheiten je Hersteller, in der gewählten Sprache. |
 
 Dazu kommt:

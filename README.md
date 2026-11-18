@@ -23,8 +23,8 @@ with **iLO 3 and iLO 4** are handled through the RIBCL XML interface, older Dell
 | ![Existing servers](docs/screenshot-2b-existing.png) | ![UEFI settings](docs/screenshot-3-uefi.png) |
 | **Services** | **UEFI console** |
 | ![Services](docs/screenshot-4-services.png) | ![UEFI console](docs/screenshot-5-console.png) |
-| **Help** | |
-| ![Help](docs/screenshot-6-help.png) | |
+| **Help** | **Rack planner** |
+| ![Help](docs/screenshot-6-help.png) | ![Rack planner](docs/screenshot-7-planner.png) |
 
 </details>
 
@@ -46,6 +46,7 @@ Since version 3.0 the tab bar is replaced by a **menu** on the left; the selecte
 | **UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. With a status bar, an **on-screen keyboard** (locking Ctrl/Alt/Shift, F keys, vendor setup/boot-menu keys, “Type text”), copy/paste, history, colour schemes, screenshots and automatic reconnect. |
 | **↳ Find servers** | Finds BMCs whose address is unknown (“🔍 Search …” button in the UEFI console and “Find servers …” in “New hardware”): checks a range (e.g. `192.168.1.0/24`) for web interfaces, reads vendor, product and serial number there without logging in, and finds BMCs without a web interface via an IPMI ping. Read-only; no credentials are sent. |
 | **Test lab** | Builds a cluster of virtual Dell/HPE/Lenovo/Supermicro BMCs (`tools/vbmc/`) – per server firmware generation, factory login, static factory IP or DHCP, model/serial, occupied Dell slot. Three networks: loopback (no root), **config room** (virtual staging switch, DHCP from “DHCP server”) and **router** (the servers join the real LAN and show up in the router). Scenarios can be saved and restored exactly. |
+| **Rack planner** | Plans racks of any height: drag servers from the server list, switches, firewall, patch panel, PDU and placeholders into them, cable the ports (key K). Checks for BMCs without cable, missing redundancy and PDU load, assigns hostnames and BMC addresses and transfers them to “New hardware”, rebuilds the servers virtually in the test lab, simulates cable and switch failures and produces a bill of materials with estimated cable lengths. Plans are saved as JSON. |
 | **Help** | Explains every step and the per-vendor specifics, in the chosen language. |
 
 On top of that:
