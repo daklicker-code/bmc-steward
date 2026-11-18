@@ -25,10 +25,13 @@ ORIENTS = ("N", "S", "O", "W")             # Rackfront zeigt nach Norden, Süden
 TILE_M = 0.6                               # Bodenplatte 600 × 600 mm; ein Rack belegt 1 × 2 Platten
 CABLE_LENGTHS = (0.5, 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 30)
 PDU_RESERVE = 0.8                    # über 80 % Last bleibt keine Reserve für eine A/B-Einspeisung
-VENDORS = ("dell", "hpe", "lenovo", "smc", "gen")
-KINDS = ("server", "switch", "fw", "patch", "pdu", "blank")
-NETS = ("mgmt", "data", "storage", "uplink", "patch")
-PORT_KINDS = ("bmc", "data", "mgmt", "up", "patch")
+VENDORS = ("dell", "hpe", "lenovo", "smc", "gen", "netapp", "atto", "brocade")
+KINDS = ("server", "switch", "fw", "patch", "pdu", "blank", "storage", "shelf", "bridge")
+NETS = ("mgmt", "data", "storage", "uplink", "patch", "fc", "sas", "cluster")
+# Portarten: bmc = eigener Management-Port eines Geräts, mgmt = Port eines OOB-Switches, data/up = Ethernet,
+# fc = Fibre Channel, sas = SAS (Disk Shelves), cl = Cluster-Interconnect (NetApp)
+PORT_KINDS = ("bmc", "data", "mgmt", "up", "patch", "fc", "sas", "cl")
+RACK_SIZES = (24, 42, 47, 48)
 
 # Katalog: Schlüssel -> Bauplan. ports = [(Anzahl, Portart, Präfix der Port-Kennung)]
 CATALOG = {
@@ -48,6 +51,32 @@ CATALOG = {
     "blank":   dict(kind="blank", role="blank", u=1, w=0, model="1 HE", prefix="blende", ports=[]),
     "server1": dict(kind="server", role="server", u=1, w=450, model="", prefix="neu", ports=None),
     "server2": dict(kind="server", role="server", u=2, w=750, model="", prefix="neu", ports=None),
+    # NetApp MetroCluster FC: Controller-HA-Paar, Disk Shelves hinter ATTO FibreBridges, FC- und Cluster-Switches.
+    # Port-Bezeichnungen wie auf den Geräten; plist = [(Kennung, Portart, Beschriftung)].
+    "netapp_aff": dict(kind="storage", role="storage", vendor="netapp", u=4, w=1300, prefix="aff",
+                       model="NetApp AFF A400 (HA-Paar)", ports=[],
+                       plist=[(f"{n.lower()}_{pid}", kind, f"{n} {lab}") for n in ("A", "B") for pid, kind, lab in (
+                           ("e0m", "bmc", "e0M"), ("e3a", "cl", "e3a"), ("e3b", "cl", "e3b"),
+                           ("e0c", "data", "e0c"), ("e0d", "data", "e0d"), ("0a", "fc", "0a"), ("0b", "fc", "0b"),
+                           ("fcvi", "fc", "FC-VI"))]),
+    "netapp_ds224c": dict(kind="shelf", role="shelf", vendor="netapp", u=2, w=450, prefix="shelf",
+                          model="NetApp DS224C (24 SSD)", ports=[],
+                          plist=[("a1", "sas", "IOM-A 1"), ("a3", "sas", "IOM-A 3"),
+                                 ("b1", "sas", "IOM-B 1"), ("b3", "sas", "IOM-B 3")]),
+    "netapp_ds460c": dict(kind="shelf", role="shelf", vendor="netapp", u=4, w=1100, prefix="shelf",
+                          model="NetApp DS460C (60 HDD)", ports=[],
+                          plist=[("a1", "sas", "IOM-A 1"), ("a3", "sas", "IOM-A 3"),
+                                 ("b1", "sas", "IOM-B 1"), ("b3", "sas", "IOM-B 3")]),
+    "atto_7600n": dict(kind="bridge", role="bridge", vendor="atto", u=1, w=120, prefix="fb",
+                       model="ATTO FibreBridge 7600N", ports=[],
+                       plist=[("mgmt", "bmc", "Mgmt"), ("fc1", "fc", "FC 1"), ("fc2", "fc", "FC 2"),
+                              ("sasa", "sas", "SAS A"), ("sasb", "sas", "SAS B"), ("sasc", "sas", "SAS C"),
+                              ("sasd", "sas", "SAS D")]),
+    "brocade_g620": dict(kind="switch", role="fc", vendor="brocade", u=1, w=150, prefix="fcsw",
+                         model="Brocade G620 (FC 32G)", ports=[(24, "fc", "p")], plist=[("mgmt", "bmc", "Mgmt")]),
+    "netapp_bes53248": dict(kind="switch", role="cluster", vendor="netapp", u=1, w=200, prefix="clsw",
+                            model="NetApp BES-53248 Cluster-Switch", ports=[(16, "cl", "p"), (2, "up", "u")],
+                            plist=[("mgmt", "bmc", "Mgmt")]),
 }
 
 
@@ -64,6 +93,12 @@ def catalog_texts():
                               ("blank", T("Blindblende"), T("Luftführung"))]),
         (T("Geplante Server"), [("server1", T("Neuer Server (1 HE)"), T("Platzhalter, noch nicht geliefert")),
                                 ("server2", T("Neuer Server (2 HE)"), T("Platzhalter, noch nicht geliefert"))]),
+        (T("NetApp-Speicher"), [("netapp_aff", "NetApp AFF A400", T("Controller-HA-Paar, 2 Knoten")),
+                                ("netapp_ds224c", "NetApp DS224C", T("Disk Shelf, 24 SSD")),
+                                ("netapp_ds460c", "NetApp DS460C", T("Disk Shelf, 60 HDD")),
+                                ("atto_7600n", "ATTO FibreBridge 7600N", T("FC-auf-SAS-Bridge")),
+                                ("brocade_g620", "Brocade G620", T("FC-Switch 24 × 32G")),
+                                ("netapp_bes53248", "NetApp BES-53248", T("Cluster-Interconnect-Switch"))]),
     ]
 
 
@@ -74,6 +109,15 @@ def server_ports(u):
 
 def build_ports(spec):
     return [{"id": f"{pre}{i}", "k": kind} for n, kind, pre in spec for i in range(1, n + 1)]
+
+
+def port_name(d, pid):
+    """Beschriftung eines Ports: die des Geräts (z. B. „A e0M“, „SAS A“), sonst aus der Kennung."""
+    if d:
+        p = next((x for x in d["ports"] if x["id"] == pid), None)
+        if p and p.get("l"):
+            return p["l"]
+    return port_label(pid)
 
 
 def port_label(pid):
@@ -251,10 +295,14 @@ class Plan:
             self.cols, self.rows = cols, rows
         return out
 
-    def remove_rack(self, rid):
-        """Nur leere Racks lassen sich entfernen; gibt False zurück, wenn noch Geräte darin stehen."""
-        if any(d.get("rack") == rid for d in self.devs):
+    def remove_rack(self, rid, force=False):
+        """Entfernt ein Rack. Ohne force nur, wenn es leer ist (sonst False); mit force werden die Geräte
+        vorher ausgebaut (Server aus der Serverliste bleiben im Bestand)."""
+        inside = [d for d in self.devs if d.get("rack") == rid]
+        if inside and not force:
             return False
+        for d in inside:
+            self.unplace(d)
         self.racks = [r for r in self.racks if r["id"] != rid]
         return True
 
@@ -278,8 +326,9 @@ class Plan:
             n += 1
         d = {"id": self._id("d"), "cat": key, "prefix": c["prefix"], "kind": c["kind"], "role": c["role"],
              "name": f"{c['prefix']}-{n:02d}", "model": c["model"], "u": c["u"], "w": c["w"], "cap": c.get("cap", 0),
-             "vendor": "gen" if c["kind"] == "server" else "", "serial": "", "inv": False,
-             "ports": server_ports(c["u"]) if c["ports"] is None else build_ports(c["ports"]),
+             "vendor": c.get("vendor") or ("gen" if c["kind"] == "server" else ""), "serial": "", "inv": False,
+             "ports": server_ports(c["u"]) if c["ports"] is None else
+             [{"id": i, "k": k, "l": lab} for i, k, lab in c.get("plist", [])] + build_ports(c["ports"]),
              "rack": None, "pos": None}
         return d
 
@@ -374,6 +423,9 @@ class Plan:
         kinds = {ka, kb}
         if kinds & {"bmc", "mgmt"}:
             return "mgmt"
+        for kind, net in (("fc", "fc"), ("sas", "sas"), ("cl", "cluster")):
+            if kind in kinds:
+                return net
         if "patch" in kinds:
             return "patch"
         if "up" in kinds:
@@ -391,7 +443,7 @@ class Plan:
             return None, T("Beide Geräte müssen eingebaut sein.")
         for did, pid in ((a, ap), (b, bp)):
             if self.cable_at(did, pid):
-                return None, T("{0} · {1} ist schon belegt.").format(self.dev(did)["name"], port_label(pid))
+                return None, T("{0} · {1} ist schon belegt.").format(self.dev(did)["name"], port_name(self.dev(did), pid))
         c = {"id": self._id("c"), "a": [a, ap], "b": [b, bp],
              "net": net if net in NETS else self.auto_net(a, ap, b, bp)}
         self.cables.append(c)
@@ -418,7 +470,9 @@ class Plan:
 
     def medium(self, net):
         return {"mgmt": T("Cat6a-Patchkabel"), "patch": T("Cat6a-Patchkabel"), "data": T("DAC-Kabel 25G SFP28"),
-                "storage": T("DAC-Kabel 25G SFP28"), "uplink": T("AOC/LWL 100G QSFP28")}[net]
+                "storage": T("DAC-Kabel 25G SFP28"), "uplink": T("AOC/LWL 100G QSFP28"),
+                "fc": T("LWL OM4 LC/LC (FC 32G)"), "sas": T("Mini-SAS-HD-Kabel (SFF-8644)"),
+                "cluster": T("DAC-Kabel 100G QSFP28")}[net]
 
     def auto_cable(self):
         """Verkabelt offene Server: BMC an den ersten OOB-Switch, NIC 1/2 abwechselnd an Leaf/Access-Switches
@@ -430,6 +484,15 @@ class Plan:
             return next((p["id"] for p in sw["ports"] if p["k"] == kind and not self.cable_at(sw["id"], p["id"])), None)
 
         n = 0
+        if oob:                                          # Management-Ports von Storage, Bridges und Switches
+            for d in sorted(self.placed(), key=lambda d: (self.rack_index(d["rack"]), -d["pos"])):
+                if d["kind"] == "server":
+                    continue
+                for p in d["ports"]:
+                    if p["k"] == "bmc" and not self.cable_at(d["id"], p["id"]):
+                        q = free(oob, "mgmt")
+                        if q and self.connect(d["id"], p["id"], oob["id"], q)[0]:
+                            n += 1
         for s in sorted(self.placed("server"), key=lambda d: (self.rack_index(d["rack"]), -d["pos"])):
             if oob and not self.cable_at(s["id"], "bmc"):
                 p = free(oob, "mgmt")
@@ -449,6 +512,8 @@ class Plan:
         r = self.rack(rid)
         if r is None:
             return [], T("Zuerst ein Rack anlegen oder auswählen.")
+        if key == "metrocluster":
+            return self._metrocluster(rid)
         made = []
         for cat in {"head": ("patch", "oob"), "ha": ("leaf", "leaf")}[key]:
             d = self.new_device(cat)
@@ -468,6 +533,38 @@ class Plan:
         if key == "ha":
             self.connect(made[0]["id"], "u1", made[1]["id"], "u1")
             self.connect(made[0]["id"], "u2", made[1]["id"], "u2")
+        return made, None
+
+    def _metrocluster(self, rid):
+        """NetApp MetroCluster FC, ein Standort: zwei FC-Switches (je eine Fabric), zwei Cluster-Switches,
+        AFF-HA-Paar, zwei ATTO FibreBridges und zwei Shelves – fertig verkabelt."""
+        r = self.rack(rid)
+        order = ("brocade_g620", "brocade_g620", "netapp_bes53248", "netapp_bes53248", "netapp_aff",
+                 "atto_7600n", "atto_7600n", "netapp_ds224c", "netapp_ds224c")
+        need = sum(CATALOG[k]["u"] for k in order)
+        free_u = r["h"] - self.rack_load(rid)["used"]
+        if free_u < need:
+            return [], T("Im Rack {0} ist nicht genug Platz.").format(r["name"]) + " " + \
+                T("Die Vorlage braucht {0} HE, frei sind {1}.").format(need, free_u)
+        made = []
+        for key in order:
+            d = self.new_device(key)
+            pos = self.free_pos(rid, d["u"])
+            if pos is None:
+                for x in made:
+                    self.unplace(x)
+                return [], T("Im Rack {0} ist nicht genug Platz.").format(r["name"])
+            self.place(d, rid, pos)
+            made.append(d)
+        fc1, fc2, cl1, cl2, aff, fb1, fb2, sh1, sh2 = (d["id"] for d in made)
+        links = [(aff, "a_0a", fc1, "p1"), (aff, "a_0b", fc2, "p1"), (aff, "b_0a", fc1, "p2"), (aff, "b_0b", fc2, "p2"),
+                 (aff, "a_fcvi", fc1, "p3"), (aff, "b_fcvi", fc2, "p3"),
+                 (fb1, "fc1", fc1, "p5"), (fb2, "fc1", fc2, "p5"),
+                 (fb1, "sasa", sh1, "a1"), (sh1, "a3", sh2, "a1"), (sh1, "b3", sh2, "b1"), (fb2, "sasa", sh2, "b3"),
+                 (aff, "a_e3a", cl1, "p1"), (aff, "a_e3b", cl2, "p1"), (aff, "b_e3a", cl1, "p2"),
+                 (aff, "b_e3b", cl2, "p2"), (cl1, "u1", cl2, "u1"), (cl1, "u2", cl2, "u2")]
+        for a, ap, b, bp in links:
+            self.connect(a, ap, b, bp)
         return made, None
 
     # ------------------------------------------------------------ Auswertung
@@ -511,10 +608,12 @@ class Plan:
                          for c in nics}
                 if len(peers) == 1:
                     out.append(("info", T("{0}: beide Datenleitungen am selben Switch").format(d["name"]), d["id"]))
+        out += self._storage_checks()
         switches = self.placed("switch")
         if len(switches) > 1:
             for s in switches:
-                if not any(self.cable_at(s["id"], p["id"]) for p in s["ports"] if p["k"] == "up"):
+                ups = [p for p in s["ports"] if p["k"] == "up"]
+                if ups and not any(self.cable_at(s["id"], p["id"]) for p in ups):
                     out.append(("info", T("{0}: kein Uplink").format(s["name"]), s["id"]))
         open_inv = sum(1 for d in self.devs if d.get("inv") and not d.get("rack"))
         if open_inv:
@@ -523,6 +622,46 @@ class Plan:
             out.append(("err", T("Erste BMC-IP „{0}“ ist keine gültige Adresse").format(self.ip_start), None))
         order = {"err": 0, "warn": 1, "info": 2}
         return sorted(out, key=lambda x: order[x[0]])
+
+    def _links(self, d, kind):
+        """Kabel an den Ports einer Portart eines Geräts."""
+        return [c for c in (self.cable_at(d["id"], p["id"]) for p in d["ports"] if p["k"] == kind) if c]
+
+    def _peers(self, d, cables):
+        return {self.other_end(c, d["id"], c["a"][1] if c["a"][0] == d["id"] else c["b"][1])[0] for c in cables}
+
+    def _storage_checks(self):
+        out = []
+        for d in self.placed():
+            name, did = d["name"], d["id"]
+            if d["kind"] in ("storage", "bridge") or (d["kind"] == "switch" and d["role"] in ("fc", "cluster")):
+                if any(p["k"] == "bmc" and not self.cable_at(did, p["id"]) for p in d["ports"]):
+                    out.append(("warn", T("{0}: Management-Port nicht verkabelt").format(name), did))
+            if d["kind"] == "storage":
+                fc = self._links(d, "fc")
+                if not fc:
+                    out.append(("warn", T("{0}: keine FC-Verbindung").format(name), did))
+                elif len(self._peers(d, fc)) < 2:
+                    out.append(("warn", T("{0}: FC nur an einem Switch – die zweite Fabric fehlt").format(name), did))
+                cl = self._links(d, "cl")
+                if not cl:
+                    out.append(("warn", T("{0}: kein Cluster-Interconnect").format(name), did))
+                elif len(self._peers(d, cl)) < 2:
+                    out.append(("info", T("{0}: Cluster-Interconnect nur an einem Switch").format(name), did))
+            elif d["kind"] == "bridge":
+                if not self._links(d, "fc"):
+                    out.append(("warn", T("{0}: keine FC-Verbindung").format(name), did))
+                if not self._links(d, "sas"):
+                    out.append(("warn", T("{0}: kein Disk Shelf angeschlossen").format(name), did))
+            elif d["kind"] == "shelf":
+                sas = self._links(d, "sas")
+                if not sas:
+                    out.append(("warn", T("{0}: nicht angeschlossen").format(name), did))
+                elif not ({c["a"][1][:1] for c in sas if c["a"][0] == did} | {c["b"][1][:1] for c in sas
+                                                                             if c["b"][0] == did}) >= {"a", "b"}:
+                    out.append(("info", T("{0}: nur über ein IOM angeschlossen – kein zweiter SAS-Pfad").format(name),
+                                did))
+        return out
 
     def net_plan_ok(self):
         try:
@@ -551,7 +690,7 @@ class Plan:
             sp = None
             if c:
                 od, op = self.other_end(c, d["id"], "bmc")
-                sp = f"{self.dev(od)['name']} · {port_label(op)}"
+                sp = f"{self.dev(od)['name']} · {port_name(self.dev(od), op)}"
             ip = None
             if base is not None:
                 try:
@@ -579,6 +718,9 @@ class Plan:
         rows += [(T("Kabel"), m, f"{l:g} m".replace(".", ","), n) for (m, l), n in sorted(cab.items())]
         if trx:
             rows.append((T("Kabel"), T("Transceiver QSFP28"), "", trx))
+        sfp = 2 * sum(1 for c in self.cables if c["net"] == "fc")
+        if sfp:
+            rows.append((T("Kabel"), T("SFP-Optik FC 32G"), "", sfp))
         hu = sum(d["u"] for d in self.placed() if d["kind"] != "blank")
         if hu:
             rows.append((T("Montage"), T("Käfigmuttern und Schrauben"), "", hu * 4))
@@ -596,9 +738,21 @@ class Plan:
             return c["id"] not in broken and c["a"][0] not in failed and c["b"][0] not in failed
 
         state = {}
+
+        def fraction(links, ok=lambda c: True):
+            up = [c for c in links if alive(c) and ok(c)]
+            return "down" if links and not up else "degraded" if len(up) < len(links) else "ok"
+
         for d in self.placed():
             if d["id"] in failed:
                 state[d["id"]] = "down"
+            elif d["kind"] == "storage":           # Controller: Management wie ein Server, dazu FC und Cluster
+                fc, cl = self._links(d, "fc"), self._links(d, "cl")
+                worst = [fraction(fc), fraction(cl)]
+                state[d["id"]] = "down" if "down" in worst and fc else "degraded" if "degraded" in worst or \
+                    "down" in worst else "ok"
+            elif d["kind"] == "bridge":
+                state[d["id"]] = fraction(self._links(d, "fc")) if self._links(d, "fc") else "down"
             elif d["kind"] != "server":
                 state[d["id"]] = "ok"
             else:
@@ -609,6 +763,19 @@ class Plan:
                 links = [c for c in (self.cable_at(d["id"], p["id"]) for p in d["ports"] if p["k"] == "data") if c]
                 up = [c for c in links if alive(c)]
                 state[d["id"]] = "degraded" if links and len(up) < len(links) else "ok"
+        for d in self.placed("shelf"):              # Shelves hängen an Bridges: tot, wenn keine Bridge mehr lebt
+            if d["id"] in failed:
+                continue
+            sas = self._links(d, "sas")
+            to_bridge = [c for c in sas if self.dev(self.other_end(c, d["id"], c["a"][1] if c["a"][0] == d["id"]
+                                                                    else c["b"][1])[0])["kind"] == "bridge"]
+            via_shelf = [c for c in sas if c not in to_bridge]
+            paths = to_bridge or sas
+            st = fraction(paths, lambda c: state.get(self.other_end(
+                c, d["id"], c["a"][1] if c["a"][0] == d["id"] else c["b"][1])[0]) != "down")
+            if st == "down" and via_shelf and any(alive(c) for c in via_shelf):
+                st = "degraded"                    # noch über das Nachbar-Shelf erreichbar
+            state[d["id"]] = st if sas else "down"
         return state
 
     # ------------------------------------------------------------ Speichern / Laden
@@ -668,7 +835,8 @@ class Plan:
                 continue
             if did in ids or kind not in KINDS or not 1 <= u <= MAX_DEV_U:
                 continue
-            ports = [x for x in (d.get("ports") or []) if isinstance(x, dict) and isinstance(x.get("id"), str)
+            ports = [{"id": x["id"][:16], "k": x["k"], **({"l": x["l"][:16]} if isinstance(x.get("l"), str) else {})}
+                     for x in (d.get("ports") or []) if isinstance(x, dict) and isinstance(x.get("id"), str)
                      and x.get("k") in PORT_KINDS]
             if kind == "server":
                 ports = server_ports(u)
@@ -737,5 +905,38 @@ def demo_plan(inventory):
     p.connect(leafs[0]["id"], "u2", fw["id"], "u1")
     oob = next(d for d in p.placed("switch") if d["role"] == "oob")
     p.connect(oob["id"], "u1", fw["id"], "p1")
+    p.auto_cable()
+    return p
+
+
+def netapp_demo_plan(inventory):
+    """Beispiel NetApp MetroCluster FC (Standort A): Netzwerk-Rack mit OOB- und Leaf-Switches, daneben ein
+    Speicher-Rack mit AFF-HA-Paar, ATTO FibreBridges, Shelves, FC- und Cluster-Switches – fertig verkabelt."""
+    p = Plan()
+    p.name = T("Beispiel NetApp MetroCluster")
+    p.site, p.room, p.row = "FRA", T("Raum 2"), "C"
+    p.cols, p.rows = 20, 12
+    p.sync_inventory(inventory)
+    net = p.add_rack("C04", 42, at=(2, 3))
+    sto = p.add_rack("D04", 42, at=(3, 3))
+    p.add_rack("E04", 42, at=(4, 3))
+    pos = 42
+    for key in ("patch", "oob", "leaf", "leaf"):
+        p.place(p.new_device(key), net["id"], pos)
+        pos -= 1
+    for rid in (net["id"], sto["id"], sto["id"]):          # Speicher-Rack mit A- und B-Einspeisung
+        p.place(p.new_device("pdu"), rid, p.free_pos(rid, 1, top=False))
+    p.apply_template("metrocluster", sto["id"])
+    leafs = [d for d in p.placed("switch") if d["role"] == "leaf"]
+    p.connect(leafs[0]["id"], "u1", leafs[1]["id"], "u1")
+    oob = next(d for d in p.placed("switch") if d["role"] == "oob")
+    p.connect(oob["id"], "u1", leafs[0]["id"], "u3")
+    aff = p.placed("storage")[0]
+    for nic, sw, port in (("a_e0c", 0, "p20"), ("a_e0d", 1, "p20"), ("b_e0c", 0, "p19"), ("b_e0d", 1, "p19")):
+        p.connect(aff["id"], nic, leafs[sw]["id"], port)
+    for d in [x for x in p.devs if x.get("inv")][:2]:
+        spot = p.free_pos(net["id"], d["u"])
+        if spot:
+            p.place(d, net["id"], spot)
     p.auto_cable()
     return p

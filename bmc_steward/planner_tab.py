@@ -11,7 +11,7 @@ from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPalette, QPainterPath, QPainterPathStroker, QPen,
                          QShortcut)
 from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
-                             QHBoxLayout, QHeaderView, QStyle, QTreeWidget, QTreeWidgetItem,
+                             QHBoxLayout, QHeaderView, QInputDialog, QStyle, QTreeWidget, QTreeWidgetItem,
                              QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
                              QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
                              QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget)
@@ -20,9 +20,9 @@ from . import i18n
 from .applog import LOG
 from .core import WINDOWS, intro_label
 from .i18n import DATA, HERE, T, write_private
-from .planner import (CATALOG, MAX_COLS, MAX_DEV_U, MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, Plan,
-                      catalog_texts, col_name, coord_name, demo_plan, parse_coord, port_label, rack_tiles,
-                      vendor_of)
+from .planner import (CATALOG, MAX_COLS, MAX_DEV_U, MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES,
+                      Plan, catalog_texts, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord, port_name,
+                      rack_tiles, vendor_of)
 
 MIME = "application/x-bmc-steward-planner"
 PREFS = DATA / "bmc-planner.json"           # nur die Design-Wahl, keine Plandaten
@@ -53,16 +53,18 @@ THEMES = {
         BAR_BG=_C("#ffffff"), CHASSIS=_C("#374151"), CHASSIS_EDGE=_C("#1f2937"), NUM_MAJOR=_C("#f3f4f6"),
         NUM_MINOR=_C("#9ca3af"), LED_IDLE=_C("#9ca3af"), LED_RING=_C("#ffffff"), PORT_FILL=_C("#374151"),
         NET_COLOR={"mgmt": _C("#ca8a04"), "data": _C("#2563eb"), "storage": _C("#9333ea"), "uplink": _C("#059669"),
-                   "patch": _C("#64748b")},
+                   "patch": _C("#64748b"), "fc": _C("#ea580c"), "sas": _C("#0891b2"), "cluster": _C("#be185d")},
         PORT_EDGE={"bmc": _C("#a16207"), "mgmt": _C("#a16207"), "data": _C("#1e40af"), "up": _C("#047857"),
-                   "patch": _C("#475569")},
+                   "patch": _C("#475569"), "fc": _C("#c2410c"), "sas": _C("#0e7490"), "cl": _C("#9d174d")},
         KIND_FILL={"server": ("#e5e7eb", "#6b7280"), "switch": ("#dbe7f5", "#3b6ea5"), "fw": ("#f6dada", "#b45454"),
-                   "patch": ("#e2e5ea", "#6b7280"), "pdu": ("#f5e7c8", "#a87b2a"), "blank": ("#eef0f3", "#b6bcc6")},
+                   "patch": ("#e2e5ea", "#6b7280"), "pdu": ("#f5e7c8", "#a87b2a"), "blank": ("#eef0f3", "#b6bcc6"),
+                   "storage": ("#dde6f3", "#1f4f8f"), "shelf": ("#e6ebf2", "#51678a"), "bridge": ("#f3e2e2", "#9b3b3b")},
         STATE_COLOR={"ok": _C("#16a34a"), "degraded": _C("#d97706"), "down": _C("#dc2626")},
         FLOOR_BG=_C("#f4f6f9"), GRID=_C("#dde3ea"), GRID_MAJOR=_C("#b8c2cf"), HEAD_BG=_C("#e2e8f0"),
         HEAD_TEXT=_C("#334155"), TILE_SEL=_C("#bfdbfe"),
         LOAD_FILL=(("#dcfce7", "#16a34a"), ("#fef3c7", "#d97706"), ("#fee2e2", "#dc2626")),
-        LEGEND={"mgmt": "#facc15", "data": "#93c5fd", "storage": "#d8b4fe", "uplink": "#6ee7b7"},
+        LEGEND={"mgmt": "#facc15", "data": "#93c5fd", "storage": "#d8b4fe", "uplink": "#6ee7b7", "fc": "#fdba74",
+                "sas": "#67e8f9", "cluster": "#f9a8d4"},
         BAR_CSS=("QFrame#plBar { background: #1f3a5f; border-radius: 3px; }"
                  "QFrame#plBar QPushButton, QFrame#plBar QToolButton { color: #ffffff; background: transparent;"
                  " border: 1px solid #3d6491; border-radius: 3px; padding: 4px 10px; }"
@@ -73,6 +75,7 @@ THEMES = {
                  "QFrame#plBar QLabel { color: #ffffff; }"),
         CRUMB_CSS="QLabel#plCrumb { background: #eef2f7; color: #1f3a5f; border: 1px solid #c9d3df; padding: 3px 8px; }",
         SCROLL_CSS="QScrollArea { background: #e6eaef; border: 1px solid #c9d3df; }",
+        LIB_CSS="QListWidget { background: #ffffff; color: #111827; } QListWidget::item { padding: 3px 6px; }",
     ),
     "dark": dict(
         BG=_C("#0b1214"), RACK_BG=_C("#0a1012"), RACK_LINE=_C("#2a3c3f"), RAIL=_C("#2f4245"), STRIPE=_C("#111b1d"),
@@ -81,16 +84,18 @@ THEMES = {
         BAR_BG=_C("#0f191b"), CHASSIS=_C("#16201f"), CHASSIS_EDGE=_C("#2a3c3f"), NUM_MAJOR=_C("#8aa29e"),
         NUM_MINOR=_C("#3d5450"), LED_IDLE=_C("#2f4245"), LED_RING=_C("#0b1214"), PORT_FILL=_C("#0a1012"),
         NET_COLOR={"mgmt": _C("#facc15"), "data": _C("#60a5fa"), "storage": _C("#c084fc"), "uplink": _C("#34d399"),
-                   "patch": _C("#94a3b8")},
+                   "patch": _C("#94a3b8"), "fc": _C("#fb923c"), "sas": _C("#22d3ee"), "cluster": _C("#f472b6")},
         PORT_EDGE={"bmc": _C("#a68a16"), "mgmt": _C("#7a6512"), "data": _C("#2e5a8a"), "up": _C("#1f8f66"),
-                   "patch": _C("#3b5357")},
+                   "patch": _C("#3b5357"), "fc": _C("#9a3412"), "sas": _C("#155e75"), "cl": _C("#831843")},
         KIND_FILL={"server": ("#18262b", "#2f4a50"), "switch": ("#12293a", "#22506e"), "fw": ("#2e161b", "#5a2a32"),
-                   "patch": ("#1b2124", "#3a454b"), "pdu": ("#2b2113", "#5a4320"), "blank": ("#121b1d", "#2a3a3e")},
+                   "patch": ("#1b2124", "#3a454b"), "pdu": ("#2b2113", "#5a4320"), "blank": ("#121b1d", "#2a3a3e"),
+                   "storage": ("#13233a", "#2c4f80"), "shelf": ("#161f2b", "#34465e"), "bridge": ("#2a1717", "#5e2c2c")},
         STATE_COLOR={"ok": _C("#34d399"), "degraded": _C("#fbbf24"), "down": _C("#f87171")},
         FLOOR_BG=_C("#0b1214"), GRID=_C("#142024"), GRID_MAJOR=_C("#22363b"), HEAD_BG=_C("#0f191b"),
         HEAD_TEXT=_C("#8aa29e"), TILE_SEL=_C("#183631"),
         LOAD_FILL=(("#0f3a2c", "#34d399"), ("#3a2a08", "#fbbf24"), ("#3b1717", "#f87171")),
-        LEGEND={"mgmt": "#facc15", "data": "#60a5fa", "storage": "#c084fc", "uplink": "#34d399"},
+        LEGEND={"mgmt": "#facc15", "data": "#60a5fa", "storage": "#c084fc", "uplink": "#34d399", "fc": "#fb923c",
+                "sas": "#22d3ee", "cluster": "#f472b6"},
         BAR_CSS=("QFrame#plBar { background: #0f191b; border: 1px solid #1d2b2e; border-radius: 6px; }"
                  "QFrame#plBar QPushButton, QFrame#plBar QToolButton { color: #bcd0cd; background: #142124;"
                  " border: 1px solid #23363a; border-radius: 6px; padding: 4px 10px; }"
@@ -102,10 +107,14 @@ THEMES = {
                  "QFrame#plBar QLabel { color: #8aa29e; }"),
         CRUMB_CSS="QLabel#plCrumb { background: #101a1c; color: #8aa29e; border: 1px solid #1d2b2e; padding: 3px 8px; }",
         SCROLL_CSS="QScrollArea { background: #0b1214; border: 1px solid #1d2b2e; }",
+        LIB_CSS=("QListWidget { background: #0b1214; color: #d6e2e0; border: 1px solid #1d2b2e; }"
+                 "QListWidget::item { padding: 3px 6px; } QListWidget::item:selected { background: #1f6b52; }"),
     ),
 }
 STRIPE_COLOR = {"dell": "#2563eb", "hpe": "#01a982", "smc": "#9333ea", "lenovo": "#dc2626", "gen": "#6b7280",
-                "switch": "#0284c7", "fw": "#e11d48", "pdu": "#d97706", "patch": "#64748b", "blank": "#cbd5e1"}
+                "switch": "#0284c7", "fw": "#e11d48", "pdu": "#d97706", "patch": "#64748b", "blank": "#cbd5e1",
+                "netapp": "#0067c5", "atto": "#c8102e", "brocade": "#e35205", "storage": "#0067c5", "shelf": "#51678a",
+                "bridge": "#c8102e"}
 
 
 def apply_theme(name):
@@ -137,18 +146,18 @@ _L = THEMES["light"]
 (BG, RACK_BG, RACK_LINE, RAIL, STRIPE, TEXT, MUTED, DIM, ACCENT, TITLE_BG, TITLE_SEL, TITLE_TEXT, TITLE_SUB,
     BAR_EDGE, BAR_BG, CHASSIS, CHASSIS_EDGE, NUM_MAJOR, NUM_MINOR, LED_IDLE, LED_RING, PORT_FILL, NET_COLOR,
     PORT_EDGE, KIND_FILL, STATE_COLOR, FLOOR_BG, GRID, GRID_MAJOR, HEAD_BG, HEAD_TEXT, TILE_SEL, LOAD_FILL,
-    LEGEND, BAR_CSS, CRUMB_CSS, SCROLL_CSS) = (_L[k] for k in ('BG', 'RACK_BG', 'RACK_LINE', 'RAIL', 'STRIPE',
+    LEGEND, BAR_CSS, CRUMB_CSS, SCROLL_CSS, LIB_CSS) = (_L[k] for k in ('BG', 'RACK_BG', 'RACK_LINE', 'RAIL', 'STRIPE',
     'TEXT', 'MUTED', 'DIM', 'ACCENT', 'TITLE_BG', 'TITLE_SEL', 'TITLE_TEXT', 'TITLE_SUB', 'BAR_EDGE',
     'BAR_BG', 'CHASSIS', 'CHASSIS_EDGE', 'NUM_MAJOR', 'NUM_MINOR', 'LED_IDLE', 'LED_RING', 'PORT_FILL',
     'NET_COLOR', 'PORT_EDGE', 'KIND_FILL', 'STATE_COLOR', 'FLOOR_BG', 'GRID', 'GRID_MAJOR', 'HEAD_BG',
-    'HEAD_TEXT', 'TILE_SEL', 'LOAD_FILL', 'LEGEND', 'BAR_CSS', 'CRUMB_CSS', 'SCROLL_CSS'))
+    'HEAD_TEXT', 'TILE_SEL', 'LOAD_FILL', 'LEGEND', 'BAR_CSS', 'CRUMB_CSS', 'SCROLL_CSS', 'LIB_CSS'))
 LEVEL_COLOR = {"err": "#d9534f", "warn": "#c77700", "info": "#2f7fb5"}
 LEVEL_MARK = {"err": "✕", "warn": "!", "info": "i"}
 
 
 def net_names():
     return {"mgmt": T("Management (BMC)"), "data": T("Daten"), "storage": T("Storage"), "uplink": T("Uplink"),
-            "patch": T("Patch")}
+            "patch": T("Patch"), "fc": T("Fibre Channel"), "sas": T("SAS"), "cluster": T("Cluster")}
 
 
 def _group(title):
@@ -182,13 +191,100 @@ class PlannerLibrary(QListWidget):
         return md
 
 
-class RackCanvas(QWidget):
+class ZoomPan:
+    """Gemeinsames für Grundriss und Rack-Ansicht: das Mausrad vergrößert oder verkleinert um den Mauszeiger,
+    die mittlere Maustaste verschiebt die Ansicht, ein Rechtsklick fragt nach dem Kontextmenü. Gezeichnet und
+    gerechnet wird in Modellkoordinaten; `zoom` skaliert nur die Darstellung."""
+    ZMIN, ZMAX, ZSTEP = 0.3, 3.0, 1.15
+
+    def zp_init(self):
+        self.zoom = 1.0
+        self.scroll = None               # die umgebende QScrollArea (setzt die Seite)
+        self._pan = None
+
+    def _pt(self, e):
+        return QPointF(e.position()) / self.zoom
+
+    def relayout(self):
+        w, h = self.base_size()
+        self.setMinimumSize(int(w * self.zoom), int(h * self.zoom))
+        self.update()
+
+    def set_zoom(self, z, anchor=None):
+        """Zoom setzen; `anchor` (Widget-Koordinaten) bleibt dabei an derselben Stelle im Fenster."""
+        z = max(self.ZMIN, min(self.ZMAX, z))
+        if abs(z - self.zoom) < 1e-4:
+            return
+        sa = self.scroll
+        hb, vb = (sa.horizontalScrollBar(), sa.verticalScrollBar()) if sa else (None, None)
+        if anchor is None and sa:
+            anchor = QPointF(hb.value() + sa.viewport().width() / 2, vb.value() + sa.viewport().height() / 2)
+        model = QPointF(anchor) / self.zoom if anchor is not None else None
+        in_view = QPointF(anchor) - QPointF(hb.value(), vb.value()) if sa and anchor is not None else None
+        self.zoom = z
+        self.relayout()
+        if sa and model is not None:
+            vp = sa.viewport().size()
+            self.resize(max(self.minimumWidth(), vp.width()), max(self.minimumHeight(), vp.height()))
+            hb.setRange(0, max(0, self.width() - vp.width()))
+            vb.setRange(0, max(0, self.height() - vp.height()))
+            hb.setValue(int(model.x() * z - in_view.x()))
+            vb.setValue(int(model.y() * z - in_view.y()))
+        self.zoomChanged.emit(self.zoom)
+
+    def zoom_fit(self):
+        if not self.scroll:
+            return
+        vp = self.scroll.viewport().size()
+        w, h = self.base_size()
+        self.set_zoom(min(vp.width() / max(1, w), vp.height() / max(1, h)) * 0.98)
+
+    def wheelEvent(self, e):
+        steps = e.angleDelta().y() / 120
+        if not steps or e.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            super().wheelEvent(e)                # Umschalt + Rad: normal blättern
+            return
+        self.set_zoom(self.zoom * self.ZSTEP ** steps, e.position())
+        e.accept()
+
+    def zp_press(self, e):
+        if e.button() == Qt.MouseButton.MiddleButton and self.scroll:
+            self._pan = (e.globalPosition(), self.scroll.horizontalScrollBar().value(),
+                         self.scroll.verticalScrollBar().value())
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return True
+        return False
+
+    def zp_move(self, e):
+        if not self._pan:
+            return False
+        start, h0, v0 = self._pan
+        d = e.globalPosition() - start
+        self.scroll.horizontalScrollBar().setValue(int(h0 - d.x()))
+        self.scroll.verticalScrollBar().setValue(int(v0 - d.y()))
+        return True
+
+    def zp_release(self, e):
+        if self._pan and e.button() == Qt.MouseButton.MiddleButton:
+            self._pan = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            return True
+        return False
+
+    def contextMenuEvent(self, e):
+        kind, ident = self.hit_for_menu(QPointF(e.pos()) / self.zoom)
+        self.contextRequested.emit(kind, ident, e.globalPos())
+
+
+class RackCanvas(ZoomPan, QWidget):
     """Zeichnet die Racks samt Geräten, Ports und Kabeln und nimmt Maus und Drag & Drop entgegen."""
     changed = pyqtSignal()               # Plan geändert
     selectionChanged = pyqtSignal()
     message = pyqtSignal(str, bool)      # Text, Fehler?
     simClicked = pyqtSignal(str, str)    # ("cable"|"dev", id) im Simulationsmodus
     deleteRequested = pyqtSignal()
+    zoomChanged = pyqtSignal(float)
+    contextRequested = pyqtSignal(str, object, object)   # Art, Kennung, Bildschirmposition
 
     UH, RW, GAP, M, HEAD, NUM = 16, 300, 72, 14, 46, 24
 
@@ -204,6 +300,7 @@ class RackCanvas(QWidget):
         self.ghost = None                # (Rack-ID, Position, Höhe, passt?)
         self.drag = None
         self.view = "front"              # "front" (Gerätefronten) oder "rear" (Ports und Kabel)
+        self.zp_init()
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -211,11 +308,34 @@ class RackCanvas(QWidget):
         self.relayout()
 
     # ------------------------------------------------------------ Geometrie
-    def relayout(self):
+    def base_size(self):
         n = max(1, len(self.plan.racks))
         h = max([r["h"] for r in self.plan.racks] or [24])
-        self.setMinimumSize(2 * self.M + n * (self.RW + self.GAP), self.M + self.HEAD + h * self.UH + 2 * self.M)
-        self.update()
+        return 2 * self.M + n * (self.RW + self.GAP), self.M + self.HEAD + h * self.UH + 2 * self.M
+
+    def slot_at(self, pt):
+        """(Rack-ID, HE) der Höheneinheit unter dem Punkt oder None."""
+        for i, r in enumerate(self.plan.racks):
+            s = self.slot_rect(i)
+            if s.contains(pt):
+                return r["id"], r["h"] - int((pt.y() - s.y()) // self.UH)
+        return None
+
+    def hit_for_menu(self, pt):
+        hit = self.port_at(pt)
+        if hit:
+            return "port", hit
+        cid = self.cable_hit(pt)
+        if cid:
+            return "cable", cid
+        d = self.dev_at(pt)
+        if d:
+            return "dev", d["id"]
+        slot = self.slot_at(pt)
+        if slot:
+            return "slot", slot
+        rid = self.rack_at(pt)
+        return ("rack", rid) if rid else ("none", None)
 
     def rack_x(self, i):
         return self.M + i * (self.RW + self.GAP)
@@ -333,6 +453,7 @@ class RackCanvas(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), BG)
+        p.scale(self.zoom, self.zoom)
         if not self.plan.racks:
             p.setPen(MUTED)
             p.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter,
@@ -437,7 +558,8 @@ class RackCanvas(QWidget):
             p.setBrush(QColor(edge).lighter(125))
             p.drawRect(QRectF(rect.x() + 1, rect.y() + 2, 3, rect.height() - 4))
             p.drawRect(QRectF(rect.right() - 4, rect.y() + 2, 3, rect.height() - 4))
-        stripe = STRIPE_COLOR.get(d.get("vendor") or "gen" if d["kind"] == "server" else d["kind"], "#6b7280")
+        stripe = STRIPE_COLOR.get(d.get("vendor") or "gen" if d["kind"] == "server" else d.get("vendor") or d["kind"],
+                                  "#6b7280")
         x = rect.x() + 8
         if d["kind"] != "blank":
             led = STATE_COLOR[state] if state else LED_IDLE
@@ -448,7 +570,8 @@ class RackCanvas(QWidget):
         ports = self.port_rects(d, rect) if self.view == "rear" else []
         right = (ports[0][1].x() - 6) if ports else rect.right() - 8
         if self.view == "front" and d["kind"] != "blank":   # Herstellerkennung rechts an der Front
-            badge = {"dell": "DELL", "hpe": "HPE", "lenovo": "LENOVO", "smc": "SMC"}.get(d.get("vendor") or "")
+            badge = {"dell": "DELL", "hpe": "HPE", "lenovo": "LENOVO", "smc": "SMC", "netapp": "NETAPP",
+                     "atto": "ATTO", "brocade": "BROCADE"}.get(d.get("vendor") or "")
             badge = badge or {"switch": "SW", "fw": "FW", "pdu": "PDU", "patch": "PP"}.get(d["kind"], "")
             if badge:
                 f = QFont(self.font())
@@ -517,16 +640,16 @@ class RackCanvas(QWidget):
         self.selectionChanged.emit()
 
     def mousePressEvent(self, e):
-        if e.button() != Qt.MouseButton.LeftButton:
+        if self.zp_press(e) or e.button() != Qt.MouseButton.LeftButton:
             return
-        pt = e.position()
+        pt = self._pt(e)
         self.setFocus()
         if self.sim is not None:
             cid = self.cable_hit(pt)
             d = None if cid else self.dev_at(pt)
             if cid:
                 self.simClicked.emit("cable", cid)
-            elif d and d["kind"] in ("server", "switch", "fw", "patch"):
+            elif d and d["kind"] in ("server", "switch", "fw", "patch", "storage", "shelf", "bridge"):
                 self.simClicked.emit("dev", d["id"])
             return
         hit = self.port_at(pt)
@@ -552,7 +675,9 @@ class RackCanvas(QWidget):
         self.select(("rack", rid) if rid else None)
 
     def mouseMoveEvent(self, e):
-        pt = e.position()
+        if self.zp_move(e):
+            return
+        pt = self._pt(e)
         if self.drag:
             if not self.drag["active"] and (pt - self.drag["start"]).manhattanLength() < 5:
                 return
@@ -563,11 +688,43 @@ class RackCanvas(QWidget):
             self.ghost = (t[0], t[1], d["u"], self.plan.fits(t[0], t[1], d["u"], d["id"])) if t else None
             self.update()
             return
-        over_port = self.cable_mode and self.port_at(pt)
-        self.setCursor(Qt.CursorShape.PointingHandCursor if over_port or (self.sim is not None and (
+        port = self.port_at(pt)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if (self.cable_mode and port) or (self.sim is not None and (
             self.cable_hit(pt) or self.dev_at(pt))) else Qt.CursorShape.ArrowCursor)
+        self.setToolTip(self.tip_at(pt, port))
+
+    def tip_at(self, pt, port=None):
+        """Kurzinfo unter dem Mauszeiger: Port mit Gegenstelle, Kabel oder Gerät."""
+        plan = self.plan
+        if port:
+            d = plan.dev(port[0])
+            text = f"{d['name']} · {port_name(d, port[1])}"
+            c = plan.cable_at(*port)
+            if c:
+                od, op = plan.other_end(c, *port)
+                text += f"  →  {plan.dev(od)['name']} · {port_name(plan.dev(od), op)}  ({net_names()[c['net']]})"
+            else:
+                text += "  –  " + T("frei")
+            return text
+        cid = self.cable_hit(pt)
+        if cid:
+            c = plan.cable(cid)
+            A, B = plan.dev(c["a"][0]), plan.dev(c["b"][0])
+            return (f"{A['name']} · {port_name(A, c['a'][1])}  ↔  {B['name']} · {port_name(B, c['b'][1])}\n"
+                    f"{net_names()[c['net']]} · {plan.medium(c['net'])} · {plan.cable_length(c):g} m")
+        d = self.dev_at(pt)
+        if d:
+            used = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
+            span = f"{d['pos']}–{d['pos'] + d['u'] - 1}" if d["u"] > 1 else str(d["pos"])
+            lines = [f"<b>{d['name']}</b>", d.get("model") or "", f"{T('HE')} {span} · {d.get('w') or 0} W"]
+            if d["ports"]:
+                lines.append(T("{0} von {1} Anschlüssen belegt").format(used, len(d["ports"])))
+            return "<br>".join(x for x in lines if x)
+        return ""
 
     def mouseReleaseEvent(self, e):
+        if self.zp_release(e):
+            return
         drag, ghost = self.drag, self.ghost
         self.drag, self.ghost = None, None
         self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -589,7 +746,7 @@ class RackCanvas(QWidget):
             else:
                 self.pending = (did, pid)
                 self.message.emit(T("{0} · {1} gewählt – jetzt den Gegenport anklicken (Esc bricht ab).").format(
-                    self.plan.dev(did)["name"], port_label(pid)), False)
+                    self.plan.dev(did)["name"], port_name(self.plan.dev(did), pid)), False)
                 self.update()
             return
         if self.pending == (did, pid):
@@ -603,8 +760,8 @@ class RackCanvas(QWidget):
         self.pending = None
         self.select(("cable", c["id"]))
         self.message.emit(T("Kabel gezogen: {0} · {1} ↔ {2} · {3}").format(
-            self.plan.dev(c["a"][0])["name"], port_label(c["a"][1]), self.plan.dev(c["b"][0])["name"],
-            port_label(c["b"][1])), False)
+            self.plan.dev(c["a"][0])["name"], port_name(self.plan.dev(c["a"][0]), c["a"][1]),
+            self.plan.dev(c["b"][0])["name"], port_name(self.plan.dev(c["b"][0]), c["b"][1])), False)
         self.changed.emit()
 
     def keyPressEvent(self, e):
@@ -625,12 +782,12 @@ class RackCanvas(QWidget):
         return (kind, key, d["u"]) if d else (None, None, 1)
 
     def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(MIME) and self.sim is None:
+        if e.mimeData().hasFormat(MIME) and self.sim is None and self._payload_u(e.mimeData())[0]:
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):
         kind, key, u = self._payload_u(e.mimeData())
-        t = self.target(e.position(), u)
+        t = self.target(self._pt(e), u)
         if not kind or not t:
             self.ghost = None
             self.update()
@@ -646,7 +803,7 @@ class RackCanvas(QWidget):
 
     def dropEvent(self, e):
         kind, key, u = self._payload_u(e.mimeData())
-        t = self.target(e.position(), u)
+        t = self.target(self._pt(e), u)
         self.ghost = None
         if not kind or not t:
             self.update()
@@ -662,7 +819,7 @@ class RackCanvas(QWidget):
         self.selectionChanged.emit()
 
 
-class FloorCanvas(QWidget):
+class FloorCanvas(ZoomPan, QWidget):
     """Grundriss des Raums: Bodenplatten mit Koordinaten (Spalten A … Z, AA …, Reihen 01 …) und die Racks
     darauf. Racks lassen sich verschieben, ein Doppelklick öffnet sie in der Rack-Ansicht."""
     rackClicked = pyqtSignal(str)
@@ -670,6 +827,9 @@ class FloorCanvas(QWidget):
     tileClicked = pyqtSignal(int, int)
     moved = pyqtSignal()
     message = pyqtSignal(str, bool)
+    zoomChanged = pyqtSignal(float)
+    contextRequested = pyqtSignal(str, object, object)
+    rackDropped = pyqtSignal(int, int, int)        # Höhe, Spalte, Reihe
 
     TS, HEAD, LEFT, M, FOOT = 42, 24, 30, 10, 30
 
@@ -678,8 +838,10 @@ class FloorCanvas(QWidget):
         self.rv = racks_view             # die Rack-Ansicht hält Plan und Auswahl
         self.tile_sel = None
         self.drag = None
-        self.ghost = None                # (x, y, passt?)
+        self.ghost = None                # (x, y, passt?, Ausrichtung)
+        self.zp_init()
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(T("Grundriss"))
         self.relayout()
@@ -688,11 +850,16 @@ class FloorCanvas(QWidget):
     def plan(self):
         return self.rv.plan
 
-    def relayout(self):
+    def base_size(self):
         p = self.plan
-        self.setMinimumSize(2 * self.M + self.LEFT + p.cols * self.TS,
-                            2 * self.M + self.HEAD + p.rows * self.TS + self.FOOT)
-        self.update()
+        return 2 * self.M + self.LEFT + p.cols * self.TS, 2 * self.M + self.HEAD + p.rows * self.TS + self.FOOT
+
+    def hit_for_menu(self, pt):
+        r = self.rack_at(pt)
+        if r:
+            return "rack", r["id"]
+        t = self.tile_at(pt)
+        return ("tile", t) if t else ("none", None)
 
     def tile_rect(self, x, y):
         return QRectF(self.M + self.LEFT + x * self.TS, self.M + self.HEAD + y * self.TS, self.TS, self.TS)
@@ -723,22 +890,9 @@ class FloorCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         plan = self.plan
         p.fillRect(self.rect(), FLOOR_BG)
+        p.scale(self.zoom, self.zoom)
         x0, y0 = self.M + self.LEFT, self.M + self.HEAD
         w, h = plan.cols * self.TS, plan.rows * self.TS
-        small = QFont(self.font())
-        small.setPointSizeF(7)
-        p.setFont(small)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(HEAD_BG)
-        p.drawRect(QRectF(x0, self.M, w, self.HEAD - 2))
-        p.drawRect(QRectF(self.M, y0, self.LEFT - 2, h))
-        p.setPen(HEAD_TEXT)
-        for x in range(plan.cols):
-            p.drawText(QRectF(x0 + x * self.TS, self.M, self.TS, self.HEAD - 2), Qt.AlignmentFlag.AlignCenter,
-                       col_name(x))
-        for y in range(plan.rows):
-            p.drawText(QRectF(self.M, y0 + y * self.TS, self.LEFT - 6, self.TS),
-                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{y + 1:02d}")
         if self.tile_sel and self.tile_sel[0] < plan.cols and self.tile_sel[1] < plan.rows:
             p.fillRect(self.tile_rect(*self.tile_sel), TILE_SEL)
         for x in range(plan.cols + 1):
@@ -752,15 +906,38 @@ class FloorCanvas(QWidget):
             if r.get("x") is not None:
                 self._paint_rack(p, r, sel == ("rack", r["id"]))
         if self.ghost:
-            r = plan.rack(self.drag["id"])
-            gx, gy, ok = self.ghost
+            gx, gy, ok, orient = self.ghost
             col = QColor(STATE_COLOR["ok"] if ok else STATE_COLOR["down"])
             fill = QColor(col)
             fill.setAlpha(70)
             p.setBrush(fill)
             p.setPen(QPen(col, 1.5, Qt.PenStyle.DashLine))
-            p.drawRect(self.rack_rect(r, gx, gy))
+            p.drawRect(self.rack_rect({"orient": orient}, gx, gy))
         self._paint_legend(p, y0 + h + 8)
+        self._paint_axes(p, x0, y0, w, h)
+
+    def _paint_axes(self, p, x0, y0, w, h):
+        """Spalten- und Reihenbeschriftung; sie bleibt beim Zoomen und Blättern am Rand des Fensters stehen."""
+        plan = self.plan
+        vis = QRectF(self.visibleRegion().boundingRect())
+        vis = QRectF(vis.x() / self.zoom, vis.y() / self.zoom, vis.width() / self.zoom, vis.height() / self.zoom)
+        top = max(self.M, vis.top())
+        left = max(self.M, vis.left())
+        small = QFont(self.font())
+        small.setPointSizeF(7)
+        p.setFont(small)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(HEAD_BG)
+        p.drawRect(QRectF(x0, top, w, self.HEAD - 2))
+        p.drawRect(QRectF(left, y0, self.LEFT - 2, h))
+        p.drawRect(QRectF(left, top, self.LEFT - 2, self.HEAD - 2))
+        p.setPen(HEAD_TEXT)
+        for x in range(plan.cols):
+            p.drawText(QRectF(x0 + x * self.TS, top, self.TS, self.HEAD - 2), Qt.AlignmentFlag.AlignCenter,
+                       col_name(x))
+        for y in range(plan.rows):
+            p.drawText(QRectF(left, y0 + y * self.TS, self.LEFT - 6, self.TS),
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{y + 1:02d}")
 
     def _paint_rack(self, p, r, selected):
         rect = self.rack_rect(r)
@@ -823,10 +1000,10 @@ class FloorCanvas(QWidget):
 
     # ------------------------------------------------------------ Maus
     def mousePressEvent(self, e):
-        if e.button() != Qt.MouseButton.LeftButton:
+        if self.zp_press(e) or e.button() != Qt.MouseButton.LeftButton:
             return
         self.setFocus()
-        pt = e.position()
+        pt = self._pt(e)
         r = self.rack_at(pt)
         if r:
             t = self.tile_at(pt)
@@ -843,9 +1020,17 @@ class FloorCanvas(QWidget):
         self.update()
 
     def mouseMoveEvent(self, e):
-        pt = e.position()
+        if self.zp_move(e):
+            return
+        pt = self._pt(e)
         t = self.tile_at(pt)
-        self.setToolTip(coord_name(*t) if t else "")
+        r = self.rack_at(pt)
+        if r:
+            L = self.plan.rack_load(r["id"])
+            self.setToolTip(f"<b>{r['name']}</b> · {self.plan.coord(r)}<br>"
+                            + T("{0} von {1} HE belegt · {2} W").format(L["used"], r["h"], L["w"]))
+        else:
+            self.setToolTip(coord_name(*t) if t else "")
         if not self.drag:
             self.setCursor(Qt.CursorShape.OpenHandCursor if self.rack_at(pt) else Qt.CursorShape.ArrowCursor)
             return
@@ -856,10 +1041,12 @@ class FloorCanvas(QWidget):
         if t:
             gx, gy = t[0] - self.drag["off"][0], t[1] - self.drag["off"][1]
             r = self.plan.rack(self.drag["id"])
-            self.ghost = (gx, gy, self.plan.can_stand(r["id"], gx, gy, r["orient"]))
+            self.ghost = (gx, gy, self.plan.can_stand(r["id"], gx, gy, r["orient"]), r["orient"])
         self.update()
 
     def mouseReleaseEvent(self, e):
+        if self.zp_release(e):
+            return
         drag, ghost = self.drag, self.ghost
         self.drag = self.ghost = None
         self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -874,9 +1061,43 @@ class FloorCanvas(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):
-        r = self.rack_at(e.position())
+        r = self.rack_at(self._pt(e))
         if r:
             self.rackOpened.emit(r["id"])
+
+    # ------------------------------------------------------------ Racks aus dem Katalog ziehen
+    @staticmethod
+    def _rack_payload(md):
+        kind, _, val = bytes(md.data(MIME)).decode("utf-8", "replace").partition(":")
+        return int(val) if kind == "rack" and val.isdigit() else None
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat(MIME) and self._rack_payload(e.mimeData()):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        t = self.tile_at(self._pt(e))
+        if not t or not self._rack_payload(e.mimeData()):
+            self.ghost = None
+            self.update()
+            e.ignore()
+            return
+        self.ghost = (t[0], t[1], self.plan.can_stand(None, t[0], t[1], "S"), "S")
+        self.update()
+        e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self.ghost = None
+        self.update()
+
+    def dropEvent(self, e):
+        h = self._rack_payload(e.mimeData())
+        t = self.tile_at(self._pt(e))
+        self.ghost = None
+        self.update()
+        if h and t:
+            e.acceptProposedAction()
+            self.rackDropped.emit(h, t[0], t[1])
 
 
 class PlannerTabMixin:
@@ -913,11 +1134,20 @@ class PlannerTabMixin:
         fm.addAction(T("Plan speichern …"), self.planner_save)
         fm.addSeparator()
         fm.addAction(T("Beispielaufbau laden"), self.planner_demo)
+        fm.addAction(T("Beispiel NetApp MetroCluster laden"), self.planner_demo_netapp)
         file_btn.setMenu(fm)
         tb.addWidget(file_btn)
+        self.pl_undo_btn = QPushButton("↶")
+        self.pl_undo_btn.setToolTip(T("Rückgängig (Strg+Z)"))
+        self.pl_undo_btn.clicked.connect(self.planner_undo)
+        self.pl_redo_btn = QPushButton("↷")
+        self.pl_redo_btn.setToolTip(T("Wiederholen (Strg+Y)"))
+        self.pl_redo_btn.clicked.connect(self.planner_redo)
+        tb.addWidget(self.pl_undo_btn)
+        tb.addWidget(self.pl_redo_btn)
         add_rack = QPushButton(T("＋ Rack"))
         add_rack.setToolTip(T("Neues Rack mit 42 HE anlegen; die Höhe lässt sich danach rechts ändern."))
-        add_rack.clicked.connect(self.planner_add_rack)
+        add_rack.clicked.connect(lambda: self.planner_add_rack())
         tb.addWidget(add_rack)
         tpl_btn = QToolButton()
         tpl_btn.setText(T("Vorlagen"))
@@ -926,7 +1156,10 @@ class PlannerTabMixin:
         tm.addAction(T("Management-Kopf (Patchpanel, OOB-Switch, PDU)"), lambda: self.planner_template("head"))
         tm.addAction(T("HA-Paar (zwei Leaf-Switches mit Querverbindung)"), lambda: self.planner_template("ha"))
         tm.addSeparator()
-        tm.addAction(T("Offene Server automatisch verkabeln"), self.planner_auto_cable)
+        tm.addAction(T("NetApp MetroCluster FC (FC-Switches, Cluster-Switches, AFF, ATTO-Bridges, Shelves)"),
+                     lambda: self.planner_template("metrocluster"))
+        tm.addSeparator()
+        tm.addAction(T("Offene Geräte automatisch verkabeln"), self.planner_auto_cable)
         tpl_btn.setMenu(tm)
         tb.addWidget(tpl_btn)
         tb.addSpacing(12)
@@ -966,12 +1199,26 @@ class PlannerTabMixin:
                                      "ob sie erreichbar bleiben. Ändert nichts am Plan."))
         self.pl_sim_btn.toggled.connect(self.planner_sim_toggle)
         tb.addWidget(self.pl_sim_btn)
+        tb.addSpacing(12)
+        zoom_out = QPushButton("−")
+        zoom_out.setToolTip(T("Verkleinern (Mausrad zurück, Strg+Minus)"))
+        zoom_out.clicked.connect(lambda: self.planner_zoom(1 / ZoomPan.ZSTEP))
+        self.pl_zoom_label = QPushButton("100 %")
+        self.pl_zoom_label.setToolTip(T("Auf 100 % zurücksetzen (Strg+0)"))
+        self.pl_zoom_label.clicked.connect(lambda: self.planner_zoom(None))
+        zoom_in = QPushButton("+")
+        zoom_in.setToolTip(T("Vergrößern (Mausrad vor, Strg+Plus)"))
+        zoom_in.clicked.connect(lambda: self.planner_zoom(ZoomPan.ZSTEP))
+        fit = QPushButton(T("Einpassen"))
+        fit.setToolTip(T("Alles ins Fenster einpassen"))
+        fit.clicked.connect(self.planner_zoom_fit)
+        for b in (zoom_out, self.pl_zoom_label, zoom_in, fit):
+            b.setObjectName("seg")
+            tb.addWidget(b)
         tb.addStretch(1)
         legend = QLabel()
         legend.setObjectName("legend")
         self.pl_legend = legend
-        tb.addWidget(legend)
-        tb.addSpacing(10)
         self.pl_theme = QComboBox()
         self.pl_theme.addItem(T("Design: automatisch"), "auto")
         self.pl_theme.addItem(T("Design: hell"), "light")
@@ -980,24 +1227,33 @@ class PlannerTabMixin:
                                    "Tool in bmc-planner.json (ohne Plandaten)."))
         self.pl_theme.setCurrentIndex(max(0, self.pl_theme.findData(load_theme_choice())))
         self.pl_theme.currentIndexChanged.connect(self.planner_theme_changed)
-        tb.addWidget(self.pl_theme)
         self.pl_bar = bar
         v.addWidget(bar)
 
-        # Pfad zum gewählten Objekt
+        # Pfad zum gewählten Objekt, rechts daneben die Kabelfarben und das Design
         self.pl_crumb = QLabel()
         self.pl_crumb.setObjectName("plCrumb")
-        v.addWidget(self.pl_crumb)
+        crumb_row = QHBoxLayout()
+        crumb_row.setSpacing(10)
+        crumb_row.addWidget(self.pl_crumb, 1)
+        crumb_row.addWidget(legend)
+        crumb_row.addWidget(self.pl_theme)
+        v.addLayout(crumb_row)
 
         # Links: Navigator (Standort › Raum › Reihe › Rack › Gerät) und Katalog
         self.pl_tree = QTreeWidget()
         self.pl_tree.setHeaderHidden(True)
         self.pl_tree.itemClicked.connect(self.planner_tree_clicked)
+        self.pl_lib_filter = QLineEdit()
+        self.pl_lib_filter.setPlaceholderText(T("Katalog durchsuchen …"))
+        self.pl_lib_filter.setClearButtonEnabled(True)
+        self.pl_lib_filter.textChanged.connect(self.planner_filter_lib)
         self.pl_lib = PlannerLibrary()
         self.pl_lib.itemDoubleClicked.connect(self.planner_lib_double)
         lib_box = QWidget()
         ll = QVBoxLayout(lib_box)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(self.pl_lib_filter)
         ll.addWidget(self.pl_lib, 1)
         hint = QLabel(T("In ein Rack ziehen oder doppelklicken."))
         hint.setWordWrap(True)
@@ -1015,18 +1271,27 @@ class PlannerTabMixin:
         self.pl_canvas.message.connect(self.planner_say)
         self.pl_canvas.simClicked.connect(self.planner_sim_click)
         self.pl_canvas.deleteRequested.connect(self.planner_delete_selected)
+        self.pl_canvas.contextRequested.connect(self.planner_context)
+        self.pl_canvas.zoomChanged.connect(self.planner_zoom_shown)
         self.pl_scroll = QScrollArea()
         self.pl_scroll.setWidget(self.pl_canvas)
         self.pl_scroll.setWidgetResizable(True)
+        self.pl_canvas.scroll = self.pl_scroll
         self.pl_floor = FloorCanvas(self.pl_canvas)
         self.pl_floor.rackClicked.connect(lambda rid: self.planner_select("rack", rid, scroll=False))
         self.pl_floor.rackOpened.connect(self.planner_open_rack)
         self.pl_floor.tileClicked.connect(self.planner_tile_clicked)
         self.pl_floor.moved.connect(self.planner_changed)
         self.pl_floor.message.connect(self.planner_say)
+        self.pl_floor.contextRequested.connect(self.planner_context)
+        self.pl_floor.zoomChanged.connect(self.planner_zoom_shown)
+        self.pl_floor.rackDropped.connect(lambda h, x, y: self.planner_add_rack(h=h, at=(x, y)))
         self.pl_floor_scroll = QScrollArea()
         self.pl_floor_scroll.setWidget(self.pl_floor)
         self.pl_floor_scroll.setWidgetResizable(True)
+        self.pl_floor.scroll = self.pl_floor_scroll
+        for bar_ in (self.pl_floor_scroll.horizontalScrollBar(), self.pl_floor_scroll.verticalScrollBar()):
+            bar_.valueChanged.connect(lambda *_: self.pl_floor.update())
         self.pl_views = QStackedWidget()
         self.pl_views.addWidget(self.pl_floor_scroll)
         self.pl_views.addWidget(self.pl_scroll)
@@ -1086,8 +1351,16 @@ class PlannerTabMixin:
         self.pl_status.setWordWrap(True)
         v.addWidget(self.pl_status)
 
-        QShortcut(QKeySequence("K"), page, self.pl_cable_btn.toggle,
-                  context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for keys, slot in (("K", self.pl_cable_btn.toggle), ("Ctrl+Z", self.planner_undo),
+                           ("Ctrl+Y", self.planner_redo), ("Ctrl+Shift+Z", self.planner_redo),
+                           ("Ctrl+S", self.planner_save), ("Ctrl++", lambda: self.planner_zoom(ZoomPan.ZSTEP)),
+                           ("Ctrl+=", lambda: self.planner_zoom(ZoomPan.ZSTEP)),
+                           ("Ctrl+-", lambda: self.planner_zoom(1 / ZoomPan.ZSTEP)),
+                           ("Ctrl+0", lambda: self.planner_zoom(None)), ("F", lambda: self.planner_set_view("floor")),
+                           ("V", lambda: self.planner_set_view("front")), ("R", lambda: self.planner_set_view("rear"))):
+            QShortcut(QKeySequence(keys), page, slot, context=ctx)
+        self.pl_undo, self.pl_redo, self.pl_snap = [], [], None
         self.planner_page = page
         page.setAutoFillBackground(True)
         self.planner_apply_theme()
@@ -1303,13 +1576,17 @@ class PlannerTabMixin:
     def plan(self):
         return self.pl_canvas.plan
 
-    def planner_set_plan(self, plan, dirty=True):
+    def planner_set_plan(self, plan, dirty=True, keep_history=False):
+        if not keep_history and hasattr(self, "pl_undo"):
+            self.pl_undo, self.pl_redo = [], []
         self.planner_sim_stop()
         self.pl_canvas.plan = plan
         self.pl_canvas.sel = None
         self.pl_canvas.pending = None
         plan.sync_inventory(self.planner_inventory())
         self.plan_dirty = dirty
+        if hasattr(self, "pl_undo"):
+            self.pl_snap = json.dumps(plan.to_dict(), sort_keys=True)
         self.planner_refresh()
 
     def planner_inventory(self):
@@ -1333,8 +1610,47 @@ class PlannerTabMixin:
         self.plan.sync_inventory(self.planner_inventory())
         self.planner_refresh()
 
+    def planner_record(self):
+        """Merkt den Stand für Rückgängig; wird nach jeder Änderung am Plan aufgerufen."""
+        now = json.dumps(self.plan.to_dict(), sort_keys=True)
+        if self.pl_snap is not None and now != self.pl_snap:
+            self.pl_undo.append(self.pl_snap)
+            del self.pl_undo[:-100]
+            self.pl_redo.clear()
+        self.pl_snap = now
+        self.planner_update_history()
+
+    def planner_update_history(self):
+        self.pl_undo_btn.setEnabled(bool(self.pl_undo))
+        self.pl_redo_btn.setEnabled(bool(self.pl_redo))
+
+    def _planner_restore(self, snap):
+        sel = self.pl_canvas.sel
+        self.pl_snap = snap
+        view = self.planner_current_view()
+        self.planner_set_plan(Plan.from_dict(json.loads(snap)), dirty=True, keep_history=True)
+        self.pl_snap = snap
+        if sel and ((sel[0] == "dev" and self.plan.dev(sel[1])) or (sel[0] == "rack" and self.plan.rack(sel[1]))
+                    or (sel[0] == "cable" and self.plan.cable(sel[1]))):
+            self.pl_canvas.select(sel)
+        self.planner_set_view(view)
+        self.planner_update_history()
+
+    def planner_undo(self):
+        if self.pl_undo and self.pl_canvas.sim is None:
+            self.pl_redo.append(self.pl_snap)
+            self._planner_restore(self.pl_undo.pop())
+            self.planner_say(T("Rückgängig gemacht."))
+
+    def planner_redo(self):
+        if self.pl_redo and self.pl_canvas.sim is None:
+            self.pl_undo.append(self.pl_snap)
+            self._planner_restore(self.pl_redo.pop())
+            self.planner_say(T("Wiederholt."))
+
     def planner_changed(self):
         self.plan_dirty = True
+        self.planner_record()
         if self.pl_canvas.sim is not None:
             self.planner_sim_recompute(log=False)
         self.planner_refresh()
@@ -1370,13 +1686,16 @@ class PlannerTabMixin:
             self.pl_cable_btn.setChecked(False)
         self.pl_canvas.update()
         self.pl_floor.update()
+        self.planner_zoom_shown()
+        if not self.pl_canvas.cable_mode and self.pl_canvas.sim is None:
+            self.planner_say(T("Grundriss: Mausrad zoomt, mittlere Maustaste verschiebt, Rechtsklick öffnet das Menü, "
+                               "Doppelklick öffnet ein Rack.") if view == "floor" else
+                             T("Racks: Geräte aus dem Katalog hineinziehen, Rechtsklick für weitere Möglichkeiten, "
+                               "Mausrad zoomt."))
 
     def planner_current_view(self):
         return "floor" if self.pl_views.currentIndex() == 0 else self.pl_canvas.view
 
-    def planner_open_rack(self, rid):
-        self.planner_set_view("front")
-        self.planner_select("rack", rid)
 
     def planner_tile_clicked(self, x, y):
         self.pl_canvas.select(None)
@@ -1397,7 +1716,9 @@ class PlannerTabMixin:
         self.pl_crumb.setStyleSheet(CRUMB_CSS)
         self.pl_scroll.setStyleSheet(SCROLL_CSS)
         self.pl_floor_scroll.setStyleSheet(SCROLL_CSS)
-        self.pl_legend.setText(" ".join(f"<span style='color:{LEGEND[k]}'>━</span> {n}"
+        self.pl_lib.setStyleSheet(LIB_CSS)
+        self.planner_fill_lib()
+        self.pl_legend.setText(" ".join(f"<span style='color:{NET_COLOR[k].name()}'>━━</span> {n}"
                                         for k, n in net_names().items() if k != "patch"))
         self.pl_canvas.update()
         self.pl_floor.update()
@@ -1411,6 +1732,7 @@ class PlannerTabMixin:
         if getattr(self.plan, key) != val:
             setattr(self.plan, key, val)
             self.plan_dirty = True
+            self.planner_record()
             self.planner_fill_tree()
             self.planner_fill_crumb()
 
@@ -1485,24 +1807,33 @@ class PlannerTabMixin:
         if kind == "rack" and self.planner_current_view() == "floor" and self.plan.rack(ident) \
                 and self.plan.rack(ident).get("x") is not None:
             r = self.pl_floor.rack_rect(self.plan.rack(ident))
-            self.pl_floor_scroll.ensureVisible(int(r.center().x()), int(r.center().y()), 80, 80)
+            z = self.pl_floor.zoom
+            self.pl_floor_scroll.ensureVisible(int(r.center().x() * z), int(r.center().y() * z), int(80 * z),
+                                               int(80 * z))
             self.pl_tabs.setCurrentIndex(0)
             return
         if kind == "dev" and self.planner_current_view() == "floor":
             self.planner_set_view("front")
         if kind == "dev" and self.plan.dev(ident) and self.plan.dev(ident).get("rack"):
-            r = cv.dev_rect(self.plan.dev(ident))
+            d = self.plan.dev(ident)
+            r = cv.dev_rect(d)
+            i = self.plan.rack_index(d["rack"])
         elif kind == "rack" and self.plan.rack(ident):
             i = self.plan.rack_index(ident)
             r = QRectF(cv.rack_x(i), cv.M, cv.RW, cv.HEAD)
         else:
             return
-        self.pl_scroll.ensureVisible(int(r.center().x()), int(r.center().y()), 120, 140)
+        z = cv.zoom                                  # ganzes Rack in der Breite zeigen, Kabel rechts daneben
+        x = cv.rack_x(i) + cv.RW / 2 + 20
+        self.pl_scroll.ensureVisible(int(x * z), int(r.center().y() * z), int((cv.RW / 2 + 50) * z), int(140 * z))
         self.pl_tabs.setCurrentIndex(0)
 
     def planner_kind_name(self, d):
+        if d["kind"] == "switch" and d.get("role") == "fc":
+            return T("FC-Switch")
         return {"server": T("Server"), "switch": T("Switch"), "fw": T("Firewall"), "patch": T("Patchpanel"),
-                "pdu": T("PDU"), "blank": T("Blindblende")}.get(d["kind"], d["kind"])
+                "pdu": T("PDU"), "blank": T("Blindblende"), "storage": T("Storage-Controller"),
+                "shelf": T("Disk Shelf"), "bridge": T("FC-Bridge")}.get(d["kind"], d["kind"])
 
     def planner_fill_objects(self):
         plan = self.plan
@@ -1560,7 +1891,8 @@ class PlannerTabMixin:
             f.setBold(True)
             it.setFont(f)
             it.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            it.setBackground(self.palette().alternateBase())
+            it.setBackground(QBrush(HEAD_BG))
+            it.setForeground(QBrush(TEXT))
             lib.addItem(it)
 
         inv = [d for d in self.plan.devs if d.get("inv")]
@@ -1575,18 +1907,49 @@ class PlannerTabMixin:
             it.setData(Qt.ItemDataRole.UserRole, f"inv:{d['id']}")
             it.setToolTip(T("In ein Rack ziehen; die Einbauhöhe lässt sich danach rechts ändern."))
             lib.addItem(it)
+        header(T("Racks"))
+        for h in RACK_SIZES:
+            it = QListWidgetItem(T("Rack {0} HE").format(h) + "\n" + T("600 × 1200 mm · auf den Grundriss ziehen"))
+            it.setData(Qt.ItemDataRole.UserRole, f"rack:{h}")
+            it.setToolTip(T("Auf eine freie Bodenplatte im Grundriss ziehen oder doppelklicken."))
+            lib.addItem(it)
         for group, entries in catalog_texts():
             header(group)
             for key, name, sub in entries:
                 it = QListWidgetItem(f"{name}\n{sub} · {CATALOG[key]['u']} " + T("HE"))
                 it.setData(Qt.ItemDataRole.UserRole, f"cat:{key}")
+                it.setToolTip(CATALOG[key]["model"] or name)
                 lib.addItem(it)
+        self.planner_filter_lib(self.pl_lib_filter.text())
+
+    def planner_filter_lib(self, text):
+        """Katalog eingrenzen; eine Überschrift bleibt sichtbar, solange darunter etwas passt."""
+        text = (text or "").strip().lower()
+        lib = self.pl_lib
+        head, seen = None, False
+        for i in range(lib.count()):
+            it = lib.item(i)
+            is_head = bool(it.flags() & Qt.ItemFlag.ItemIsEnabled) and not it.data(Qt.ItemDataRole.UserRole) \
+                and it.font().bold()
+            if is_head:
+                if head is not None:
+                    head.setHidden(bool(text) and not seen)
+                head, seen = it, False
+                continue
+            hit = not text or text in it.text().lower() or text in (it.toolTip() or "").lower()
+            it.setHidden(not hit)
+            seen = seen or (hit and bool(it.data(Qt.ItemDataRole.UserRole)))
+        if head is not None:
+            head.setHidden(bool(text) and not seen)
 
     def planner_lib_double(self, item):
         payload = item.data(Qt.ItemDataRole.UserRole)
         if not payload:
             return
         kind, _, key = payload.partition(":")
+        if kind == "rack":
+            self.planner_add_rack(h=int(key))
+            return
         rid = self.planner_target_rack()
         if rid is None:
             self.planner_say(T("Zuerst ein Rack anlegen."), True)
@@ -1611,8 +1974,8 @@ class PlannerTabMixin:
         return self.plan.racks[0]["id"] if self.plan.racks else None
 
     # ================================================================ Werkzeugleiste
-    def planner_add_rack(self):
-        r = self.plan.add_rack(h=42, at=self.pl_floor.tile_sel)
+    def planner_add_rack(self, h=42, at=None):
+        r = self.plan.add_rack(h=h, at=at or self.pl_floor.tile_sel)
         self.pl_floor.tile_sel = None
         if r.get("x") is None:
             self.planner_say(T("Rack {0} angelegt, aber im Grundriss ist kein Platz mehr frei.").format(r["name"]),
@@ -1703,7 +2066,9 @@ class PlannerTabMixin:
                     "2. Gerät oder Rack anklicken: Name, Einbauhöhe, Rackhöhe hier ändern.<br>"
                     "3. „Verkabeln“ (Taste K): Port anklicken, dann den Gegenport.<br>"
                     "4. „Prüfung“ zeigt Lücken, „Netze“ vergibt Hostnamen und Adressen.<br>"
-                    "5. „Ausfall simulieren“ zeigt, welche Server ein gezogenes Kabel trifft.</p>").format(
+                    "5. „Ausfall simulieren“ zeigt, welche Server ein gezogenes Kabel trifft.<br>"
+                    "6. Mausrad zoomt, mittlere Maustaste verschiebt, Rechtsklick öffnet ein Menü, "
+                    "Strg+Z macht rückgängig.</p>").format(
                     len(plan.racks), len(devs), len(plan.cables), warn))
                 self.pl_props.setCurrentIndex(0)
         finally:
@@ -1734,8 +2099,8 @@ class PlannerTabMixin:
             peer = ""
             if c:
                 od, op = plan.other_end(c, d["id"], p["id"])
-                peer = f"{plan.dev(od)['name']} · {port_label(op)}"
-            a = QTableWidgetItem(port_label(p["id"]))
+                peer = f"{plan.dev(od)['name']} · {port_name(plan.dev(od), op)}"
+            a = QTableWidgetItem(port_name(d, p["id"]))
             if c:
                 a.setForeground(NET_COLOR[c["net"]].darker(115))
             self.pl_d_ports.setItem(i, 0, a)
@@ -1745,12 +2110,12 @@ class PlannerTabMixin:
     def _planner_fill_cable(self, c):
         plan = self.plan
         A, B = plan.dev(c["a"][0]), plan.dev(c["b"][0])
-        self.pl_c_from.setText(f"{A['name']} · {port_label(c['a'][1])}")
-        self.pl_c_to.setText(f"{B['name']} · {port_label(c['b'][1])}")
+        self.pl_c_from.setText(f"{A['name']} · {port_name(A, c['a'][1])}")
+        self.pl_c_to.setText(f"{B['name']} · {port_name(B, c['b'][1])}")
         self.pl_c_net.setCurrentIndex(max(0, self.pl_c_net.findData(c["net"])))
         self.pl_c_med.setText(plan.medium(c["net"]))
         self.pl_c_len.setText(T("{0} m (geschätzt)").format(f"{plan.cable_length(c):g}".replace(".", ",")))
-        tag = lambda d, pid: f"{d['name']}/{port_label(pid).replace(' ', '')}"
+        tag = lambda d, pid: f"{d['name']}/{port_name(d, pid).replace(' ', '')}"
         self.pl_c_tag.setText(f"{tag(A, c['a'][1])} ↔ {tag(B, c['b'][1])}")
         self.pl_props.setCurrentIndex(2)
 
@@ -1783,6 +2148,7 @@ class PlannerTabMixin:
         elif field == "w":
             d["cap" if d["kind"] == "pdu" else "w"] = self.pl_d_w.value()
             self.plan_dirty = True
+            self.planner_record()
             self.pl_canvas.update()
             self.planner_fill_checks()
 
@@ -1840,6 +2206,276 @@ class PlannerTabMixin:
                 ", ".join(r["name"] for r in out)), True)
         self.planner_changed()
 
+    # ================================================================ Zoom
+    def planner_active_canvas(self):
+        return self.pl_floor if self.planner_current_view() == "floor" else self.pl_canvas
+
+    def planner_zoom(self, factor):
+        cv = self.planner_active_canvas()
+        cv.set_zoom(1.0 if factor is None else cv.zoom * factor)
+
+    def planner_zoom_fit(self):
+        self.planner_active_canvas().zoom_fit()
+
+    def planner_zoom_shown(self, *_):
+        self.pl_zoom_label.setText(f"{round(self.planner_active_canvas().zoom * 100)} %")
+
+    # ================================================================ Kontextmenüs (Rechtsklick)
+    def planner_context(self, kind, ident, gpos):
+        menu = self.planner_context_menu(kind, ident)
+        if menu is not None and not menu.isEmpty():
+            menu.exec(gpos)
+
+    def planner_context_menu(self, kind, ident):
+        """Menü zum Objekt unter dem Mauszeiger. Getrennt von planner_context, damit es sich prüfen lässt."""
+        plan = self.plan
+        menu = QMenu(self.planner_page)
+        if self.pl_canvas.sim is not None:
+            menu.addAction(T("Simulation beenden"), lambda: self.pl_sim_btn.setChecked(False))
+            return menu
+        if kind == "tile":
+            x, y = ident
+            menu.addSection(T("Bodenplatte {0}").format(coord_name(x, y)))
+            sub = menu.addMenu(T("Rack hier aufstellen"))
+            free = plan.can_stand(None, x, y, "S")
+            sub.setEnabled(free)
+            for h in RACK_SIZES:
+                sub.addAction(T("Rack {0} HE").format(h), lambda h=h: self.planner_add_rack(h=h, at=(x, y)))
+            act = menu.addAction(T("Rackreihe ab hier aufstellen …"), lambda: self.planner_add_row(x, y))
+            act.setEnabled(free)
+            menu.addSeparator()
+            menu.addAction(T("Alles einpassen"), self.planner_zoom_fit)
+        elif kind == "rack":
+            r = plan.rack(ident)
+            self.pl_canvas.select(("rack", ident))
+            menu.addSection(T("Rack {0}").format(r["name"]))
+            menu.addAction(T("Vorderseite öffnen"), lambda: self.planner_open_rack(ident))
+            menu.addAction(T("Rückseite öffnen"), lambda: self.planner_open_rack(ident, "rear"))
+            menu.addSeparator()
+            menu.addAction(T("Umbenennen …"), lambda: self.planner_rename_rack(ident))
+            if r.get("x") is not None and plan.coord(r) != r["name"]:
+                menu.addAction(T("Nach Stellplatz benennen ({0})").format(plan.coord(r)),
+                               lambda: self.planner_rack_set(ident, name=plan.coord(r)))
+            hm = menu.addMenu(T("Höhe"))
+            for h in sorted(set(RACK_SIZES) | {r["h"]}):
+                a = hm.addAction(T("{0} HE").format(h), lambda h=h: self.planner_rack_set(ident, h=h))
+                a.setCheckable(True)
+                a.setChecked(h == r["h"])
+            om = menu.addMenu(T("Front ausrichten"))
+            for key, text in (("S", T("Front nach Süden")), ("N", T("Front nach Norden")),
+                              ("O", T("Front nach Osten")), ("W", T("Front nach Westen"))):
+                a = om.addAction(text, lambda k=key: self.planner_rack_set(ident, orient=k))
+                a.setCheckable(True)
+                a.setChecked(key == r["orient"])
+            tm = menu.addMenu(T("Vorlage einsetzen"))
+            for key, text in (("head", T("Management-Kopf (Patchpanel, OOB-Switch, PDU)")),
+                              ("ha", T("HA-Paar (zwei Leaf-Switches mit Querverbindung)")),
+                              ("metrocluster", T("NetApp MetroCluster FC (FC-Switches, Cluster-Switches, AFF, "
+                                                 "ATTO-Bridges, Shelves)"))):
+                tm.addAction(text, lambda k=key: (self.pl_canvas.select(("rack", ident)), self.planner_template(k)))
+            menu.addSeparator()
+            menu.addAction(T("Rack löschen …"), lambda: self.planner_delete_rack(ident))
+        elif kind == "slot":
+            rid, pos = ident
+            r = plan.rack(rid)
+            menu.addSection(T("Rack {0} · HE {1}").format(r["name"], pos))
+            sub = menu.addMenu(T("Hier einbauen"))
+            inv = [d for d in plan.devs if d.get("inv") and not d.get("rack")]
+            if inv:
+                im = sub.addMenu(T("Server aus der Serverliste"))
+                for d in inv:
+                    a = im.addAction(f"{d['name']} ({d['u']} {T('HE')})",
+                                     lambda d=d: self.planner_insert(rid, pos, inv=d["id"]))
+                    a.setEnabled(self._planner_slot_for(rid, pos, d["u"]) is not None)
+            for group, entries in catalog_texts():
+                gm = sub.addMenu(group)
+                for key, name, _ in entries:
+                    u = CATALOG[key]["u"]
+                    a = gm.addAction(f"{name} ({u} {T('HE')})", lambda k=key: self.planner_insert(rid, pos, cat=k))
+                    a.setEnabled(self._planner_slot_for(rid, pos, u) is not None)
+            menu.addSeparator()
+            menu.addAction(T("Rack-Eigenschaften"), lambda: self.planner_select("rack", rid))
+        elif kind == "dev":
+            d = plan.dev(ident)
+            self.pl_canvas.select(("dev", ident))
+            menu.addSection(d["name"])
+            menu.addAction(T("Eigenschaften"), lambda: self.pl_tabs.setCurrentIndex(0))
+            if not d.get("inv"):
+                menu.addAction(T("Umbenennen …"), lambda: self.planner_rename_dev(ident))
+            hm = menu.addMenu(T("Einbauhöhe"))
+            for u in sorted({1, 2, 3, 4, d["u"]}):
+                a = hm.addAction(T("{0} HE").format(u), lambda u=u: self.planner_dev_height(ident, u))
+                a.setCheckable(True)
+                a.setChecked(u == d["u"])
+                a.setEnabled(u == d["u"] or plan.fits(d["rack"], d["pos"], u, d["id"]))
+            if not d.get("inv") and d.get("cat"):
+                menu.addAction(T("Duplizieren"), lambda: self.planner_duplicate(ident))
+            n = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
+            if n:
+                menu.addAction(T("Alle Kabel abziehen ({0})").format(n), lambda: self.planner_unplug(ident))
+            menu.addSeparator()
+            menu.addAction(T("Ausbauen") if d.get("inv") else T("Entfernen"),
+                           lambda: (self.pl_canvas.select(("dev", ident)), self.planner_delete_selected()))
+        elif kind == "port":
+            did, pid = ident
+            d = plan.dev(did)
+            c = plan.cable_at(did, pid)
+            menu.addSection(f"{d['name']} · {port_name(d, pid)}")
+            if c:
+                od, op = plan.other_end(c, did, pid)
+                menu.addAction(T("Gegenstelle zeigen: {0}").format(f"{plan.dev(od)['name']} · "
+                                                                  f"{port_name(plan.dev(od), op)}"),
+                               lambda: self.planner_select("dev", od))
+                menu.addAction(T("Kabel entfernen"), lambda: self.planner_remove_cable(c["id"]))
+            else:
+                menu.addAction(T("Kabel von hier ziehen"), lambda: self.planner_start_cable(did, pid))
+        elif kind == "cable":
+            c = plan.cable(ident)
+            self.pl_canvas.select(("cable", ident))
+            A, B = plan.dev(c["a"][0]), plan.dev(c["b"][0])
+            menu.addSection(f"{A['name']} ↔ {B['name']}")
+            nm = menu.addMenu(T("Netz"))
+            for k, name in net_names().items():
+                a = nm.addAction(name, lambda k=k: self.planner_set_cable_net(ident, k))
+                a.setCheckable(True)
+                a.setChecked(k == c["net"])
+            menu.addAction(T("Kabel entfernen"), lambda: self.planner_remove_cable(ident))
+        else:
+            menu.addAction(T("＋ Rack"), lambda: self.planner_add_rack())
+            menu.addAction(T("Alles einpassen"), self.planner_zoom_fit)
+        return menu
+
+    def _planner_slot_for(self, rid, he, u):
+        """Unterste HE für ein Gerät mit `u` HE, das an HE `he` sitzen soll (oben bündig, sonst unten bündig)."""
+        for pos in (he - u + 1, he):
+            if self.plan.fits(rid, pos, u):
+                return pos
+        return None
+
+    def planner_insert(self, rid, he, cat=None, inv=None):
+        d = self.plan.new_device(cat) if cat else self.plan.dev(inv)
+        pos = self._planner_slot_for(rid, he, d["u"])
+        if pos is None or not self.plan.place(d, rid, pos):
+            self.planner_say(T("Dort ist kein Platz: {0} HE ab HE {1} sind belegt.").format(d["u"], he), True)
+            return
+        self.pl_canvas.sel = ("dev", d["id"])
+        self.planner_changed()
+
+    def planner_open_rack(self, rid, view="front"):
+        self.planner_set_view(view)
+        self.planner_select("rack", rid)
+
+    def planner_add_row(self, x, y):
+        n, ok = QInputDialog.getInt(self, T("Rackreihe aufstellen"), T("Wie viele Racks nebeneinander (42 HE)?"),
+                                    4, 1, 30)
+        if not ok:
+            return
+        made = 0
+        for i in range(n):
+            if not self.plan.can_stand(None, x + i, y, "S"):
+                break
+            r = self.plan.add_rack(coord_name(x + i, y), 42, at=(x + i, y))
+            made += 1 if r.get("x") is not None else 0
+        self.pl_floor.tile_sel = None
+        self.planner_say(T("{0} Racks aufgestellt.").format(made) + ("" if made == n else " " + T(
+            "Weiter rechts war kein Platz mehr.")), made < n)
+        self.planner_changed()
+
+    def planner_rename_rack(self, rid):
+        r = self.plan.rack(rid)
+        name, ok = QInputDialog.getText(self, T("Rack umbenennen"), T("Neuer Name:"), text=r["name"])
+        if ok and name.strip():
+            self.planner_rack_set(rid, name=name.strip()[:20])
+
+    def planner_rack_set(self, rid, name=None, h=None, orient=None):
+        r = self.plan.rack(rid)
+        if name:
+            r["name"] = name
+        if h and h != r["h"]:
+            over = self.plan.set_rack_height(rid, h)
+            if over:
+                self.planner_say(T("{0} sitzt über HE {1} – erst umsetzen.").format(
+                    ", ".join(d["name"] for d in over), h), True)
+        if orient and orient != r["orient"] and r.get("x") is not None:
+            if not self.plan.move_rack(rid, r["x"], r["y"], orient):
+                self.planner_say(T("Gedreht passt Rack {0} hier nicht hin.").format(r["name"]), True)
+        self.pl_canvas.sel = ("rack", rid)
+        self.planner_changed()
+
+    def planner_delete_rack(self, rid):
+        r = self.plan.rack(rid)
+        inside = [d for d in self.plan.devs if d.get("rack") == rid]
+        if inside:
+            box = QMessageBox(QMessageBox.Icon.Question, T("Rack löschen"),
+                              T("Rack {0} enthält {1} Geräte. Trotzdem löschen?").format(r["name"], len(inside)),
+                              parent=self)
+            box.setInformativeText(T("Server aus der Serverliste kommen zurück in den Katalog, alle anderen Geräte "
+                                     "und ihre Kabel fallen weg. Strg+Z macht es rückgängig."))
+            ok = box.addButton(T("Löschen"), QMessageBox.ButtonRole.DestructiveRole)
+            cancel = box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(cancel)
+            box.exec()
+            if box.clickedButton() is not ok:
+                return
+        self.plan.remove_rack(rid, force=True)
+        self.pl_canvas.sel = None
+        self.planner_say(T("Rack {0} gelöscht.").format(r["name"]))
+        self.planner_changed()
+
+    def planner_rename_dev(self, did):
+        d = self.plan.dev(did)
+        name, ok = QInputDialog.getText(self, T("Gerät umbenennen"), T("Neuer Name:"), text=d["name"])
+        if ok and name.strip():
+            d["name"] = name.strip()[:40]
+            self.planner_changed()
+
+    def planner_dev_height(self, did, u):
+        d = self.plan.dev(did)
+        if u != d["u"] and not self.plan.set_height(d, u):
+            self.planner_say(T("{0} HE passen hier nicht – darüber ist belegt. Erst umsetzen.").format(u), True)
+            return
+        self.planner_changed()
+
+    def planner_duplicate(self, did):
+        d = self.plan.dev(did)
+        new = self.plan.new_device(d["cat"])
+        new.update(model=d["model"], w=d["w"], cap=d.get("cap", 0))
+        if new["u"] != d["u"]:
+            self.plan.set_height(new, d["u"])
+        pos = next((p for p in range(d["pos"] - new["u"], 0, -1) if self.plan.fits(d["rack"], p, new["u"])), None)
+        pos = pos or self.plan.free_pos(d["rack"], new["u"])
+        if pos is None:
+            self.planner_say(T("Im Rack {0} ist nicht genug Platz.").format(self.plan.rack(d["rack"])["name"]), True)
+            return
+        self.plan.place(new, d["rack"], pos)
+        self.pl_canvas.sel = ("dev", new["id"])
+        self.planner_changed()
+
+    def planner_unplug(self, did):
+        self.plan.cables = [c for c in self.plan.cables if c["a"][0] != did and c["b"][0] != did]
+        self.planner_changed()
+
+    def planner_remove_cable(self, cid):
+        self.plan.disconnect(cid)
+        if self.pl_canvas.sel == ("cable", cid):
+            self.pl_canvas.sel = None
+        self.planner_changed()
+
+    def planner_set_cable_net(self, cid, net):
+        c = self.plan.cable(cid)
+        if c and net in NETS:
+            c["net"] = net
+            self.planner_changed()
+
+    def planner_start_cable(self, did, pid):
+        if not self.pl_cable_btn.isChecked():
+            self.pl_cable_btn.setChecked(True)
+        self.pl_canvas.pending = (did, pid)
+        self.pl_canvas.update()
+        d = self.plan.dev(did)
+        self.planner_say(T("{0} · {1} gewählt – jetzt den Gegenport anklicken (Esc bricht ab).").format(
+            d["name"], port_name(d, pid)))
+
     # ================================================================ Prüfung, Netze, Stückliste
     def planner_fill_checks(self):
         checks = self.plan.checks()
@@ -1884,6 +2520,7 @@ class PlannerTabMixin:
         if getattr(self.plan, key) != val:
             setattr(self.plan, key, val)
             self.plan_dirty = True
+            self.planner_record()
             self.planner_fill_nets()
             self.planner_fill_checks()
 
@@ -2047,7 +2684,9 @@ class PlannerTabMixin:
             words = {"ok": T("wieder voll erreichbar"), "degraded": T("eingeschränkt – Redundanz greift"),
                      "down": T("nicht mehr erreichbar")}
             changed = False
-            for d in self.plan.placed("server"):
+            for d in self.plan.placed():
+                if d["kind"] not in ("server", "storage", "shelf", "bridge"):
+                    continue
                 s = cv.sim.get(d["id"])
                 if before.get(d["id"]) != s:
                     self.planner_sim_log(f"  → {d['name']}: {words[s]}")
@@ -2059,10 +2698,10 @@ class PlannerTabMixin:
 
     def planner_sim_summary(self):
         cv = self.pl_canvas
-        servers = self.plan.placed("server")
+        servers = [d for d in self.plan.placed() if d["kind"] in ("server", "storage", "shelf", "bridge")]
         up = sum(1 for d in servers if cv.sim.get(d["id"]) != "down")
         deg = sum(1 for d in servers if cv.sim.get(d["id"]) == "degraded")
-        self.planner_say(T("Simulation: {0} von {1} Servern erreichbar, {2} davon eingeschränkt.").format(
+        self.planner_say(T("Simulation: {0} von {1} Geräten erreichbar, {2} davon eingeschränkt.").format(
             up, len(servers), deg), up < len(servers))
 
     def planner_sim_click(self, kind, ident):
@@ -2070,7 +2709,7 @@ class PlannerTabMixin:
         if kind == "cable":
             c = self.plan.cable(ident)
             A, B = self.plan.dev(c["a"][0]), self.plan.dev(c["b"][0])
-            what = f"{A['name']} · {port_label(c['a'][1])} ↔ {B['name']} · {port_label(c['b'][1])}"
+            what = f"{A['name']} · {port_name(A, c['a'][1])} ↔ {B['name']} · {port_name(B, c['b'][1])}"
             if ident in cv.broken:
                 cv.broken.discard(ident)
                 self.planner_sim_log(T("Kabel wieder gesteckt: {0}").format(what))
@@ -2112,6 +2751,14 @@ class PlannerTabMixin:
         self.plan_path = None
         self.planner_set_plan(plan, dirty=False)
         self.planner_say(T("Neuer Plan mit einem 42-HE-Rack."))
+
+    def planner_demo_netapp(self):
+        if not self.planner_confirm_discard():
+            return
+        self.plan_path = None
+        self.planner_set_plan(netapp_demo_plan(self.planner_inventory()), dirty=False)
+        self.planner_say(T("Beispiel NetApp MetroCluster geladen: Rack D04 enthält AFF-HA-Paar, ATTO-Bridges, Shelves, "
+                           "FC- und Cluster-Switches."))
 
     def planner_demo(self):
         if not self.planner_confirm_discard():
