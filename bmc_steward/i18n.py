@@ -1938,6 +1938,14 @@ TR = {
 ],
 "UEFI-Konsole": ["UEFI console", "Console UEFI", "UEFI-Konsole"],
 "Hilfe": ["Help", "Aide", "Hilf"],
+"{0} waren schon in der Liste.": [
+"{0} were already in the list.",
+"{0} étaient déjà dans la liste.",
+"{0} sind scho i de Liste gsi."],
+"Nichts übernommen: Alle {0} Server stehen schon in der Liste (gleiche aktuelle IP). Zeilen in „Neuware“ entfernen, wenn sie neu angelegt werden sollen.": [
+"Nothing adopted: all {0} servers are already in the list (same current IP). Remove the rows in \u201cNew hardware\u201d if they should be created again.",
+"Rien repris : les {0} serveurs sont déjà dans la liste (même IP actuelle). Supprimer les lignes dans « Matériel neuf » pour les recréer.",
+"Nüt übernoh: Alli {0} Server sind scho i de Liste (gliichi aktuelli IP). Zile i de „Neuware“ entferne, wänn si neu agleit werde söll."],
 "Testlabor": [
 "Test lab",
 "Labo de test",

@@ -1909,6 +1909,10 @@ def _excepthook(kind, err, tb):
     """PyQt6 bricht bei unbehandelten Fehlern in Slots ab; stattdessen nur melden."""
     import traceback
     traceback.print_exception(kind, err, tb)
+    try:        # unter Windows gibt es keine Konsole: Fehler auch ins Protokoll, sonst bleibt ein Klick wirkungslos
+        LOG.error("Interner Fehler: " + "".join(traceback.format_exception(kind, err, tb)).strip())
+    except Exception:
+        pass
 
 def run():
     set_language(load_lang())
