@@ -2603,7 +2603,7 @@ class PlannerTabMixin:
         self.update_count()
         self.touch()
         self.planner_page_shown()
-        LOG.info(T("Aufbauplaner: {0} Zeilen in „Neuware“ aktualisiert, {1} neu angelegt.").format(updated, added))
+        LOG.debug(T("Aufbauplaner: {0} Zeilen in „Neuware“ aktualisiert, {1} neu angelegt.").format(updated, added))
         self.tabs.setCurrentIndex(1)
 
     def planner_to_lab(self):
@@ -2781,7 +2781,7 @@ class PlannerTabMixin:
         self.plan_path = path
         self.plan_dirty = False
         self.planner_say(T("Plan gespeichert: {0}").format(path))
-        LOG.info(T("Aufbauplan gespeichert: {0}").format(path))
+        LOG.debug(T("Aufbauplan gespeichert: {0}").format(path))
         return True
 
     def planner_load(self, path=None):

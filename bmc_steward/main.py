@@ -640,7 +640,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
     def page_logged(self, i):
         item = self.tabs.menu.item(i)
         if item is not None:
-            LOG.info(T("Seite: {0}").format(item.text()))
+            LOG.debug(T("Seite: {0}").format(item.text()))
 
     # ---------- Hilfen ----------
     @staticmethod
