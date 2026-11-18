@@ -194,7 +194,8 @@ def _label(widget):
 
 
 class ActionLogger(QObject):
-    """Protokolliert jede Bedienung: Knopfdruck, Haken, Auswahl, Seitenwechsel. Eingaben in Textfeldern nicht."""
+    """Protokolliert jede Bedienung: Knopfdruck, Haken, Auswahl, Seitenwechsel – nur auf Stufe Debug, damit das
+    Info-Protokoll die Arbeitsschritte zeigt und nicht jeden Klick. Eingaben in Textfeldern nie."""
 
     def eventFilter(self, obj, ev):
         t = ev.type()
@@ -215,21 +216,21 @@ class ActionLogger(QObject):
             return
         if isinstance(b, (QCheckBox, QRadioButton)) or b.isCheckable():
             # Der neue Zustand steht erst nach dem Klick fest.
-            QTimer.singleShot(0, lambda: LOG.info(
+            QTimer.singleShot(0, lambda: LOG.debug(
                 T("Haken „{0}“: {1}").format(label, T("an") if b.isChecked() else T("aus"))))
         else:
-            LOG.info(T("Knopf: {0}").format(label))
+            LOG.debug(T("Knopf: {0}").format(label))
 
 
 def watch(root):
     """Hängt sich an Auswahlfelder, Zahlfelder und Reiter unterhalb von root."""
     for cb in root.findChildren(QComboBox):
         if not isinstance(cb, LevelCombo):
-            cb.activated.connect(lambda _i, cb=cb: LOG.info(T("Auswahl: {0}").format(cb.currentText())))
+            cb.activated.connect(lambda _i, cb=cb: LOG.debug(T("Auswahl: {0}").format(cb.currentText())))
     for sp in root.findChildren(QAbstractSpinBox):
         sp.editingFinished.connect(lambda sp=sp: LOG.debug(T("Zahl geändert: {0}").format(sp.text())))
     for tw in root.findChildren(QTabWidget):
-        tw.currentChanged.connect(lambda i, tw=tw: LOG.info(T("Reiter: {0}").format(tw.tabText(i))))
+        tw.currentChanged.connect(lambda i, tw=tw: LOG.debug(T("Reiter: {0}").format(tw.tabText(i))))
 
 
 _logger = None

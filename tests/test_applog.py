@@ -185,9 +185,12 @@ class TestMainWindow(unittest.TestCase):
         self.assertIn("Testlabor: [12:00:00] Server CN123 gestartet", texts())
         self.assertFalse([t for t in texts() if "@@STATE" in t])
 
-    def test_page_change_is_logged(self):
+    def test_page_change_is_logged_only_in_debug(self):
         self.w.tabs.setCurrentIndex(2)
         name = self.w.tabs.menu.item(2).text()
+        self.assertNotIn(f"Seite: {name}", texts())          # Bedienung flutet das Info-Protokoll nicht
+        LOG.set_level(DEBUG)
+        self.addCleanup(LOG.set_level, INFO)
         self.assertIn(f"Seite: {name}", texts())
 
     def test_debug_window_line_only_in_debug(self):
@@ -221,12 +224,18 @@ class TestActionLogger(unittest.TestCase):
         b = QPushButton("Scharf starten", self.w)
         b.resize(100, 30)
         self._click(b)
+        self.assertEqual(texts(), [])                         # Info: keine Klickmeldungen
+        LOG.set_level(DEBUG)
+        self.addCleanup(LOG.set_level, INFO)
         self.assertEqual(texts(), ["Knopf: Scharf starten"])
 
     def test_checkbox_state_is_logged(self):
         self.w.dry.setChecked(True)
         self._click(self.w.dry)
         app.processEvents()
+        self.assertFalse([t for t in texts() if t.startswith("Haken „")])
+        LOG.set_level(DEBUG)
+        self.addCleanup(LOG.set_level, INFO)
         self.assertTrue([t for t in texts() if t.startswith("Haken „")])
 
     def test_disabled_button_is_not_logged(self):
