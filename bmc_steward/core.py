@@ -9,7 +9,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "3.3.4"
+__version__ = "3.3.5"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -73,9 +73,16 @@ def local_ipv4():
 
 def _run(cmd):
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=4).stdout
+        raw = subprocess.run(cmd, capture_output=True, timeout=4).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+    # Unter Windows liefert ipconfig die OEM-Codepage (z. B. cp850), nicht UTF-8: nie an Umlauten scheitern
+    for enc in (("oem", "utf-8") if WINDOWS else ("utf-8",)):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
 
 
 def _default_gateway(prefix):
@@ -122,11 +129,14 @@ def _netmask_for(ip):
 
 def local_network():
     """Erkennt das aktive Netz: {ip, prefix, mask, gateway} oder None (z. B. nur Loopback)."""
-    ip = local_ipv4()
-    if not ip:
+    try:
+        ip = local_ipv4()
+        if not ip:
+            return None
+        prefix = ip.rsplit(".", 1)[0]
+        return {"ip": ip, "prefix": prefix, "mask": _netmask_for(ip), "gateway": _default_gateway(prefix)}
+    except Exception:       # Netzerkennung darf nie eine Bedienung blockieren; dann wie „kein Netz erkannt“
         return None
-    prefix = ip.rsplit(".", 1)[0]
-    return {"ip": ip, "prefix": prefix, "mask": _netmask_for(ip), "gateway": _default_gateway(prefix)}
 
 
 def ipv4_port(text):

@@ -986,6 +986,39 @@ class TestTestlabTab(unittest.TestCase):
         self.assertEqual(w.cell(0, 6), "CN7K2", "Seriennummer geht mit in die Serverliste")
         w.vbmc_show_state([])
 
+    def test_adopt_twice_says_so(self):
+        w = self.w
+        w.vbmc_run_mode = "rz"
+        w.vbmc_rz_addrs.setText("192.168.0.1/24")
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "192.168.0.101", "ip": "192.168.0.101",
+                            "factory_pass": "x", "mask": "255.255.255.0"}])
+        w.table.setRowCount(0)
+        w.vbmc_adopt()
+        w.vbmc_adopt()
+        self.assertEqual(w.table.rowCount(), 1)
+        self.assertIn("schon in der Liste", w.status.text(), "stille Übernahme ohne Wirkung ist verboten")
+        w.vbmc_show_state([])
+
+    def test_adopt_net_mode_survives_broken_network_detection(self):
+        """Windows: ipconfig-Ausgabe mit Umlaut-Bytes darf die Übernahme im Netz-Modus nicht still scheitern lassen."""
+        from unittest import mock
+        import bmc_steward.core as core
+        w = self.w
+        w.vbmc_run_mode = "loopback"
+        w.vbmc_adopt_mode.setCurrentIndex(w.vbmc_adopt_mode.findData("net"))
+        w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "127.9.0.11:8443", "ip": "127.9.0.11",
+                            "factory_pass": "calvin"}])
+        w.table.setRowCount(0)
+        fake = mock.Mock(stdout="Subnetzmaske . : 255.255.0.0\n".encode("cp850") + b"\x81\x84\x94")
+        with mock.patch.object(core, "WINDOWS", True), mock.patch.object(core, "local_ipv4", return_value="10.1.2.3"), \
+                mock.patch.object(core.subprocess, "run", return_value=fake):
+            net = core.local_network()
+        self.assertEqual(net["ip"], "10.1.2.3")
+        with mock.patch.object(core, "local_ipv4", side_effect=UnicodeDecodeError("cp1252", b"\x81", 0, 1, "x")):
+            w.vbmc_adopt()          # Netzerkennung kaputt: Übernahme läuft trotzdem (wie Loopback)
+        self.assertEqual(w.table.rowCount(), 1)
+        w.vbmc_show_state([])
+
     def _done_row(self):
         w = self.w
         w.table.setRowCount(0)

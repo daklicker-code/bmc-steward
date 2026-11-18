@@ -969,9 +969,15 @@ class VbmcTabMixin:
         self.update_count()
         self.touch()
         self.tabs.setCurrentIndex(1)
+        skipped = len(servers) - added
+        LOG.info(T("Testlabor") + f": übernommen {added}, schon in der Liste {skipped}")
         if added:
             self.status.setText(T("{0} Server übernommen, Werks-Passwörter stehen schon in der Liste.").format(added)
+                                + (" " + T("{0} waren schon in der Liste.").format(skipped) if skipped else "")
                                 + (" " + note if note else ""))
+        else:
+            self.status.setText(T("Nichts übernommen: Alle {0} Server stehen schon in der Liste (gleiche aktuelle "
+                                  "IP). Zeilen in „Neuware“ entfernen, wenn sie neu angelegt werden sollen.").format(skipped))
 
     def vbmc_shutdown(self):
         """Beim Schließen des Programms der Cluster mitnehmen (räumt Netzlabor und Leases auf)."""
