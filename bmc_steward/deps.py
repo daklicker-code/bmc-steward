@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFontDatabase, QGuiApplication
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from .i18n import T
+from .ossl import find_openssl
 
 WINDOWS = sys.platform.startswith("win")
 
@@ -106,7 +107,7 @@ def groups():
             Dep("dnsmasq", "bin", check=lambda: bool(shutil.which("dnsmasq")) or any(
                 os.path.exists(p) for p in ("/usr/bin/dnsmasq", "/usr/sbin/dnsmasq")), linux_only=True),
             Dep("pkexec", "bin", linux_only=True, need=lambda: not _is_root())])],
-        "new": [(T("Handy-Scanner"), [Dep("openssl", "bin"), Dep("zbarimg", "bin"), Dep("tesseract", "bin"),
+        "new": [(T("Handy-Scanner"), [Dep("openssl", "bin", check=lambda: bool(find_openssl())), Dep("zbarimg", "bin"), Dep("tesseract", "bin"),
                                        Dep("qrencode", "bin")]),
                 (T("Passwörter im Schlüsselbund"), [Dep("keyring", "py")])],
         "console": [(T("Eingebettete HTML5-Konsole"), [Dep("PyQt6-WebEngine", "py", check=_webengine)]),

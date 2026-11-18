@@ -5,21 +5,23 @@ PEM-Umrahmung geprüft und CSRs nicht erzeugt."""
 import calendar
 import os
 import re
-import shutil
 import subprocess
 import time
+
+from .ossl import find_openssl
 
 
 def _run(args, stdin=None):
     try:
-        r = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=20)
+        r = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=20,
+                           env={**os.environ, "MSYS2_ARG_CONV_EXCL": "*", "MSYS_NO_PATHCONV": "1"})
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
 
 
 def have_openssl():
-    return shutil.which("openssl") is not None
+    return find_openssl() is not None
 
 
 def _date(s):
@@ -48,7 +50,7 @@ def parse_pem(pem):
     if not have_openssl():
         return {"subject": "unknown", "issuer": "unknown", "not_before": 0, "not_after": 0, "serial": "",
                 "fingerprint": ""}
-    out = _run(["openssl", "x509", "-noout", "-subject", "-issuer", "-startdate", "-enddate", "-serial",
+    out = _run([find_openssl(), "x509", "-noout", "-subject", "-issuer", "-startdate", "-enddate", "-serial",
                 "-fingerprint", "-sha256", "-nameopt", "RFC2253"], pem)
     if not out:
         return None
@@ -69,5 +71,5 @@ def make_csr(common_name, org="", country="", state="", city=""):
         return None
     subj = "".join(f"/{k}={v}" for k, v in (("C", _clean(country)[:2]), ("ST", _clean(state)), ("L", _clean(city)),
                                              ("O", _clean(org)), ("CN", cn)) if v)
-    out = _run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", os.devnull, "-subj", subj])
+    out = _run([find_openssl(), "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", os.devnull, "-subj", subj])
     return out if out and "BEGIN CERTIFICATE REQUEST" in out else None

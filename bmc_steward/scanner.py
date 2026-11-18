@@ -18,6 +18,7 @@ import threading
 import time
 import zipfile
 from . import i18n
+from .ossl import find_openssl
 from . import deps
 from .i18n import T
 from .core import WINDOWS, __version__, mask
@@ -186,7 +187,8 @@ class ScanBridge(QObject):
 
 def scan_tools():
     """Welche Hilfsprogramme am PC vorhanden sind."""
-    return {name: bool(shutil.which(name)) for name in ("openssl", "zbarimg", "tesseract", "qrencode")}
+    return {name: bool(find_openssl() if name == "openssl" else shutil.which(name))
+            for name in ("openssl", "zbarimg", "tesseract", "qrencode")}
 
 
 
@@ -566,14 +568,15 @@ class ScanServer:
         return f"https://{self.ip}:{self.port}/{self.token}/"
 
     def start(self):
-        openssl = shutil.which("openssl")
+        openssl = find_openssl()
         if not openssl:
             raise RuntimeError(T("openssl fehlt am PC (wird für das Zertifikat gebraucht)."))
         self.tmp = tempfile.mkdtemp(prefix="bmc-scan-cert-")
         crt, key = os.path.join(self.tmp, "c.pem"), os.path.join(self.tmp, "k.pem")
         subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", crt,
                         "-days", "2", "-subj", "/CN=bmc-steward", "-addext", f"subjectAltName=IP:{self.ip}"],
-                       check=True, capture_output=True, timeout=60)
+                       check=True, capture_output=True, timeout=60,
+                       env={**os.environ, "MSYS2_ARG_CONV_EXCL": "*", "MSYS_NO_PATHCONV": "1"})
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(crt, key)
