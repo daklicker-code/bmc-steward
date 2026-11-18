@@ -18,6 +18,7 @@ import threading
 import time
 import zipfile
 from . import i18n
+from . import deps
 from .i18n import T
 from .core import WINDOWS, __version__, mask
 def _win():
@@ -853,8 +854,6 @@ class ScannerDialog(QDialog):
                  "zbarimg": T("Barcode (Paket „zbar“)"),
                  "tesseract": T("Texterkennung (OCR)"),
                  "qrencode": T("QR-Code zum Verbinden")}
-        pkg = {"openssl": "openssl", "zbarimg": "zbar",
-               "tesseract": "tesseract tesseract-data-eng", "qrencode": "qrencode"}
         order = ("openssl", "zbarimg", "tesseract", "qrencode")
         t = scan_tools()
         rows = []
@@ -865,8 +864,9 @@ class ScannerDialog(QDialog):
         text = "<b>" + html.escape(T("Hilfsprogramme am PC")) + "</b><br>" + "<br>".join(rows)
         missing = [k for k in order if not t.get(k)]
         if missing:
-            cmd = "sudo pacman -S " + " ".join(dict.fromkeys(pkg[k] for k in missing))
-            text += "<br><br>" + html.escape(T("Fehlt etwas? Unter CachyOS:")) + f"<br><code>{html.escape(cmd)}</code>"
+            cmds = deps.install_commands([deps.Dep(k, "bin") for k in missing])
+            text += "<br><br>" + html.escape(T("Fehlt etwas? Installation:")) + "".join(
+                f"<br><code>{html.escape(c)}</code>" for c in cmds)
         self.tools_lbl.setText(text)
 
     def say(self, text):

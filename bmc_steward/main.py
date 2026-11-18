@@ -25,6 +25,7 @@ from .redfish import Engine, EngineThread, VendorProbeThread
 from .dhcp import stop_leftover_dhcp
 from .console import ConsoleMixin
 from .sidenav import SideNav
+from . import deps
 from .firmware_tab import FirmwareTabMixin
 from .users_tab import UsersTabMixin
 from .capture_tab import CaptureTabMixin
@@ -503,17 +504,24 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         pl.addWidget(split, 1)
         monitor_block = self.build_monitor()       # Monitor links oben; muss vor build_console existieren
         self.tabs = SideNav()                      # Menü links, Seiten rechts (statt Reiterleiste)
-        self.tabs.addTab(self.build_dhcp(), T("DHCP-Server"), accent=DHCP_YELLOW)
+        self.deps_footers = []                     # Randbereich je Seite: fehlende optionale Pakete
+        dhcp_page = self.build_dhcp()
+        self.tabs.addTab(dhcp_page, T("DHCP-Server"), accent=DHCP_YELLOW)
         self.tabs.addTab(page, T("Neuware"))
         self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
-        self.tabs.addTab(self.build_console(), T("UEFI-Konsole"))
+        con_page = self.build_console()
+        self.tabs.addTab(con_page, T("UEFI-Konsole"))
+        for widget, key in ((dhcp_page, "dhcp"), (page, "new"), (con_page, "console")):
+            self.deps_footers.append(deps.attach(widget, key))
         self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
         self.services_page = self.build_services()
         self.tabs.addTab(self.services_page, T("Dienste"))
         self.tabs.addTab(self.build_users(), T("Benutzer"))
         self.tabs.addTab(self.build_firmware(), T("Firmware"))
         self.tabs.addTab(self.build_capture(), T("Aufnahme"))
-        self.tabs.addTab(self.build_vbmc(), T("Testlabor"))
+        vbmc_page = self.build_vbmc()
+        self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
+        self.tabs.addTab(vbmc_page, T("Testlabor"))
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[i18n.LANG] + ABOUT)
