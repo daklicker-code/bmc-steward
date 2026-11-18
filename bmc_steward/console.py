@@ -810,20 +810,41 @@ class ConsoleMixin:
     def console_fullscreen_label(self):
         self.con_full.setText(T("✕ Vollbild beenden") if self.con_is_full else T("⛶ Vollbild"))
 
+    def console_fs_bar(self, show):
+        """Im Vollbild die Leiste (Trennen, Vollbild beenden, Werkzeuge) ein- oder ausklappen. Ausgeklappt ist
+        nur der schmale Streifen oben zu sehen, die Konsole füllt den Rest des Bildschirms."""
+        self.con_fs_bar_on = show
+        for w in (self.con_disconnect, self.con_full, self.con_tools):
+            w.setVisible(show)
+        self.con_fs_handle.setText(T("▴ Leiste einklappen") if show else T("▾ Leiste einblenden (Vollbild beenden, Trennen, Tastatur …)"))
+        self.con_fs_handle.setToolTip(T("Klappt die Leiste mit „Vollbild beenden“, „Trennen“ und den Werkzeugen ein oder aus."))
+        self.term_scroll.refit()
+
     def console_fullscreen(self, on):
-        """Vollbild: Das Fenster füllt den Bildschirm, es bleiben nur die Konsole und eine schmale Leiste
-        (Trennen, Vollbild beenden, bei der Textkonsole die Tastenleiste). Menü, Monitor, Statuszeile,
-        Verbindungsangaben und Hinweise sind so lange ausgeblendet; beim Beenden kommt alles so zurück,
-        wie es vorher sichtbar war. Ohne laufende Konsole geschieht nichts."""
+        """Vollbild: Das Fenster füllt den Bildschirm und die Konsole bekommt die ganze Fläche. Oben bleibt nur ein
+        schmaler Streifen, der die Leiste (Trennen, Vollbild beenden, Werkzeuge) auf Klick ein- und ausklappt;
+        bei der Textkonsole bleibt die Tastenleiste. Menü, Monitor, Statuszeile, Verbindungsangaben und Hinweise
+        sind so lange ausgeblendet; beim Beenden kommt alles so zurück, wie es vorher sichtbar war. Ohne laufende
+        Konsole geschieht nichts."""
         if on == self.con_is_full or (on and self.console_source() is None):
             return
         hidden = [self.con_panel, self.con_warn, self.con_copy, self.con_connect, self.con_start,
-                  self.con_setup, self.con_fold, self.con_strip, self.con_head, self.nav_side, self.status]
+                  self.con_setup, self.con_fold, self.con_strip, self.con_head, self.con_status, self.nav_side, self.status]
+        bar = [self.con_disconnect, self.con_full, self.con_tools]      # Leiste: im Vollbild ein- und ausklappbar
         if on:
-            self.con_fs_saved = {w: not w.isHidden() for w in hidden}
+            self.con_fs_saved = {w: not w.isHidden() for w in hidden + bar}
+            frame_lay = self.con_frame.layout()
+            self.con_fs_margins = [(lay.contentsMargins(), lay.spacing())
+                                   for lay in (self.con_lay, self.main_lay, self.main_body, frame_lay)]
             self.tabs.setCurrentIndex(self.tabs.indexOf(self.con_page))
             for w in hidden:
                 w.setVisible(False)
+            for lay in (self.con_lay, self.main_lay, self.main_body, frame_lay):      # keine Ränder: Konsole füllt alles
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.setSpacing(0)
+            self.con_frame.setStyleSheet(FRAME_CSS + "QFrame#conframe { border: none; border-radius: 0; }")
+            self.con_fs_handle.setVisible(True)
+            self.console_fs_bar(self.con_fs_bar_on)
             self.con_fs_max = self.isMaximized()
             self.showFullScreen()
         else:
@@ -831,9 +852,15 @@ class ConsoleMixin:
                 self.showMaximized()
             else:
                 self.showNormal()
+            self.con_fs_handle.setVisible(False)
             for w, was_visible in self.con_fs_saved.items():
                 w.setVisible(was_visible)
             self.con_fs_saved = {}
+            frame_lay = self.con_frame.layout()
+            for lay, (margins, spacing) in zip((self.con_lay, self.main_lay, self.main_body, frame_lay), self.con_fs_margins):
+                lay.setContentsMargins(margins)
+                lay.setSpacing(spacing)
+            self.con_frame.setStyleSheet(FRAME_CSS)
         self.con_is_full = on
         self.console_fullscreen_label()
         self.term_scroll.auto_fit = on          # Textkonsole: Schrift an den Platz anpassen bzw. zurücksetzen
@@ -964,10 +991,19 @@ class ConsoleMixin:
         self.con_is_full = False            # Vollbild aktiv (muss vor dem ersten console_busy stehen)
         self.con_fs_saved = {}              # Sichtbarkeit der im Vollbild versteckten Teile, zum Wiederherstellen
         self.con_fs_max = False
+        self.con_fs_bar_on = False          # Leiste im Vollbild: aus = die Konsole bekommt die ganze Fläche
+        self.con_fs_handle = QPushButton()  # schmaler Streifen oben im Vollbild, klappt die Leiste ein und aus
+        self.con_fs_handle.setFlat(True)
+        self.con_fs_handle.setFixedHeight(18)
+        self.con_fs_handle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.con_fs_handle.setStyleSheet("QPushButton { background: #1c2430; color: #9fb0c3; border: 0; font-size: 11px; }"
+                                         "QPushButton:hover { background: #2b3a4d; color: #ffffff; }")
+        self.con_fs_handle.clicked.connect(lambda: self.console_fs_bar(not self.con_fs_bar_on))
+        self.con_fs_handle.hide()
         self.con_full = QPushButton()
         self.con_full.setEnabled(False)
-        self.con_full.setToolTip(T("Die Konsole füllt den ganzen Bildschirm. Beenden mit dem Knopf oben „Vollbild beenden“,\n"
-                                   "denn Esc und F11 gehören dem Server."))
+        self.con_full.setToolTip(T("Die Konsole füllt den ganzen Bildschirm. Beenden über den Streifen oben (Leiste einblenden)\n"
+                                   "und dort „Vollbild beenden“, denn Esc und F11 gehören dem Server."))
         self.con_full.clicked.connect(lambda: self.console_fullscreen(not self.con_is_full))
         self.console_fullscreen_label()
         btns = QHBoxLayout()
@@ -1054,6 +1090,8 @@ class ConsoleMixin:
         self.con_osk.fkeys_as_esc.connect(lambda on: setattr(self, "con_fkeys_esc", on))
         self.con_osk.layout_box.currentTextChanged.connect(lambda *_: self.console_save_state())
         lay = QVBoxLayout()
+        self.con_lay = lay
+        lay.addWidget(self.con_fs_handle)
         lay.addWidget(self.con_panel)
         lay.addLayout(btns)
         lay.addWidget(self.con_tools)

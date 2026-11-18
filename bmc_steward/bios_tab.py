@@ -35,6 +35,8 @@ class BiosTabMixin:
         ref_refresh.clicked.connect(self.bios_refresh_ips)
         self.bios_ref = QComboBox()
         self.bios_ref.setEditable(True)
+        self.bios_pws = {}                 # Adresse -> Passwort der Zeile aus „Neuware“ (nur zum Vorbefüllen)
+        self.bios_user_auto = ""
         self.bios_ref.setToolTip(T("Adresse des Geräts, von dem die Attribute gelesen werden.\n"
                                  "Vorschläge kommen aus der Serverliste in „Neuware“, es geht aber jede\n"
                                  "erreichbare Adresse."))
@@ -123,6 +125,10 @@ class BiosTabMixin:
         lay.addLayout(actions)
         lay.addWidget(self.bios_log)
         lay.addWidget(self.bios_status)
+        self.bios_ref.activated.connect(self.bios_pick_ip)
+        self.bios_ref.currentTextChanged.connect(self.bios_pick_ip)     # Zugangsdaten folgen der Adresse automatisch
+        for w in (self.new_user, self.new_pass):                         # neuer Administrator oben geändert: Felder nachziehen
+            w.textChanged.connect(lambda *_: self.bios_pick_ip(only_done=True))
         self.bios_refresh_ips()
         self.bios_read_profiles()
         return page
@@ -131,14 +137,40 @@ class BiosTabMixin:
         keep = self.bios_ref.currentText()
         self.bios_ref.blockSignals(True)
         self.bios_ref.clear()
-        for ip, _ in self.reachable_rows():
+        self.bios_pws = {}
+        for ip, pw in self.reachable_rows():
+            self.bios_pws[ip] = pw
             self.bios_ref.addItem(ip)
         idx = self.bios_ref.findText(keep) if keep else -1
         if idx >= 0:
             self.bios_ref.setCurrentIndex(idx)
         elif keep:
             self.bios_ref.setEditText(keep)
+        elif self.bios_pws:                                # ohne bisherige Eingabe: erste fertig umgestellte, sonst erste Zeile
+            first = next((ip for ip in self.bios_pws if self.row_login(ip)[0]), next(iter(self.bios_pws)))
+            self.bios_ref.setCurrentIndex(self.bios_ref.findText(first))
         self.bios_ref.blockSignals(False)
+        self.bios_pick_ip()
+
+    def bios_pick_ip(self, *_, only_done=False):
+        """Übernimmt Benutzer und Passwort der Zeile aus „Neuware“ (nur in die Felder, gespeichert wird nichts),
+        wie auf der Seite „UEFI-Konsole“. Fertig umgestellte Zeilen kennen nur noch den neuen Benutzer mit dem
+        neuen Passwort. Von Hand getippte Adressen und laufendes Lesen bleiben unangetastet."""
+        ip = self.bios_ref.currentText().strip()
+        if ip not in self.bios_pws or not self.bios_read_btn.isEnabled():
+            return
+        user, pw = self.row_login(ip)
+        if only_done and not user:
+            return
+        pw = pw or self.cur_pass.text()
+        if user:
+            self.bios_user.setText(user)
+            self.bios_user_auto = user
+        elif self.bios_user_auto and self.bios_user.text().strip() == self.bios_user_auto:
+            self.bios_user.clear()                         # frühere automatische Vorgabe nicht auf andere Geräte mitnehmen
+            self.bios_user_auto = ""
+        if pw:
+            self.bios_pass.setText(pw)
 
     def bios_read(self):
         ip = self.bios_ref.currentText().strip()
