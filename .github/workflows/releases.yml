@@ -1,0 +1,51 @@
+name: Releases
+
+# Legt fehlende GitHub-Releases aus .github/release-notes/ an – nur von Hand gestartet (Reiter „Actions“).
+# Je Datei vX.Y.Z.md: erste Zeile „# Titel“, der Rest ist der Release-Text. Vorhandene Releases bleiben
+# unverändert. Fehlt der Tag noch, legt GitHub ihn beim Anlegen des Releases auf „ziel“ an (Vorgabe: main).
+# Die neueste Version wird „Latest“. Laut Konvention ohne Anhänge.
+on:
+  workflow_dispatch:
+    inputs:
+      ziel:
+        description: "Branch oder Commit für Tags, die es noch nicht gibt"
+        default: "main"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  releases:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write                 # nur dieser Job: Releases und fehlende Tags anlegen
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Fehlende Releases anlegen (älteste zuerst)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIEL: ${{ inputs.ziel }}
+        run: |
+          set -euo pipefail
+          files=$(ls .github/release-notes/v*.md | sort -V)
+          newest=$(basename "$(echo "$files" | tail -1)" .md)
+          for f in $files; do
+            tag=$(basename "$f" .md)
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "schon vorhanden: $tag"
+              continue
+            fi
+            title=$(head -1 "$f" | sed 's/^# //')
+            tail -n +2 "$f" > notes.md
+            latest=false
+            [ "$tag" = "$newest" ] && latest=true
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              gh release create "$tag" --verify-tag --title "$title" --notes-file notes.md --latest="$latest"
+            else
+              gh release create "$tag" --target "$ZIEL" --title "$title" --notes-file notes.md --latest="$latest"
+            fi
+            echo "angelegt: $tag"
+          done
