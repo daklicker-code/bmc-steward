@@ -14,6 +14,7 @@ import socket
 import ssl
 import struct
 import sys
+import shutil
 import time
 import tempfile
 import unittest
@@ -204,7 +205,25 @@ class _WebBase(unittest.TestCase):
         cls.cctx.check_hostname = False
         cls.cctx.verify_mode = ssl.CERT_NONE
 
+    def _isolate_data(self):
+        """Eigener Datenordner (Zertifikats-Fingerabdrücke …) je Test: Das OS vergibt freie Ports mehrfach, und
+        ein neuer virtueller BMC unter einer Adresse, an der schon ein anderes Gerät gemerkt ist, wird zu Recht
+        gesperrt. Tests mit eigenem Datenordner (self.data) behalten ihn."""
+        if getattr(self, "data", None) or getattr(self, "_data_isolated", False):
+            return
+        try:
+            from bmc_steward import i18n
+        except ImportError:                          # PyQt6 fehlt
+            return
+        import pathlib
+        tmp = tempfile.mkdtemp(prefix="bmc-steward-vbmc-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        self.addCleanup(setattr, i18n, "DATA", i18n.DATA)
+        i18n.DATA = pathlib.Path(tmp)
+        self._data_isolated = True
+
     def _start(self, vendor, idx=1, gen=None):
+        self._isolate_data()
         fleet = vbmc.Fleet(self.ctx, [0])            # Port 0: das OS wählt einen freien
         b = vbmc.BMC(vendor, "127.0.0.1", 0, idx=idx, gen=gen)
         fleet.start(b)
