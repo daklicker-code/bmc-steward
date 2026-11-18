@@ -8,9 +8,10 @@ import json
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QPainter, QPainterPath, QPainterPathStroker, QPen,
+from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen,
                          QShortcut)
-from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView,
+from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+                             QHBoxLayout, QHeaderView, QStyle, QTreeWidget, QTreeWidgetItem,
                              QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
                              QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
                              QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget)
@@ -24,24 +25,37 @@ from .planner import CATALOG, MAX_DEV_U, MAX_RACK_U, MIN_RACK_U, NETS, Plan, cat
 
 MIME = "application/x-bmc-steward-planner"
 
-# Farben der Zeichenfläche (dunkel wie die Konsole, unabhängig vom System-Thema)
-BG = QColor("#0b1214")
-RACK_BG = QColor("#0a1012")
-RACK_LINE = QColor("#2a3c3f")
-STRIPE = QColor("#111b1d")
-TEXT = QColor("#d6e2e0")
-MUTED = QColor("#8aa29e")
-DIM = QColor("#3d5450")
-ACCENT = QColor("#34d399")
-NET_COLOR = {"mgmt": QColor("#facc15"), "data": QColor("#60a5fa"), "storage": QColor("#c084fc"),
-             "uplink": QColor("#34d399"), "patch": QColor("#94a3b8")}
-PORT_EDGE = {"bmc": QColor("#a68a16"), "mgmt": QColor("#7a6512"), "data": QColor("#2e5a8a"),
-             "up": QColor("#1f8f66"), "patch": QColor("#3b5357")}
-KIND_FILL = {"server": ("#16242a", "#2a3c3f"), "switch": ("#122633", "#1f3f55"), "fw": ("#2a1418", "#4a2228"),
-             "patch": ("#1a1f22", "#2c3438"), "pdu": ("#2a1f12", "#4a3519"), "blank": ("#101719", "#24323a")}
-STRIPE_COLOR = {"dell": "#3b82f6", "hpe": "#01a982", "smc": "#a855f7", "lenovo": "#ef4444", "gen": "#94a3b8",
-                "switch": "#0ea5e9", "fw": "#f43f5e", "pdu": "#f59e0b", "patch": "#64748b", "blank": "#2f4245"}
-STATE_COLOR = {"ok": ACCENT, "degraded": QColor("#fbbf24"), "down": QColor("#f87171")}
+# Farben der Zeichenfläche: helle Rack-Ansicht im Stil üblicher DCIM-Werkzeuge, unabhängig vom System-Thema
+BG = QColor("#e6eaef")
+RACK_BG = QColor("#f8fafc")
+RACK_LINE = QColor("#4b5563")
+RAIL = QColor("#9ca3af")
+STRIPE = QColor("#e5e7eb")
+TEXT = QColor("#111827")
+MUTED = QColor("#4b5563")
+DIM = QColor("#9ca3af")
+ACCENT = QColor("#2563eb")
+TITLE_BG = QColor("#1f3a5f")
+TITLE_SEL = QColor("#2563eb")
+NET_COLOR = {"mgmt": QColor("#ca8a04"), "data": QColor("#2563eb"), "storage": QColor("#9333ea"),
+             "uplink": QColor("#059669"), "patch": QColor("#64748b")}
+PORT_EDGE = {"bmc": QColor("#a16207"), "mgmt": QColor("#a16207"), "data": QColor("#1e40af"),
+             "up": QColor("#047857"), "patch": QColor("#475569")}
+PORT_FILL = QColor("#374151")
+KIND_FILL = {"server": ("#e5e7eb", "#6b7280"), "switch": ("#dbe7f5", "#3b6ea5"), "fw": ("#f6dada", "#b45454"),
+             "patch": ("#e2e5ea", "#6b7280"), "pdu": ("#f5e7c8", "#a87b2a"), "blank": ("#eef0f3", "#b6bcc6")}
+STRIPE_COLOR = {"dell": "#2563eb", "hpe": "#01a982", "smc": "#9333ea", "lenovo": "#dc2626", "gen": "#6b7280",
+                "switch": "#0284c7", "fw": "#e11d48", "pdu": "#d97706", "patch": "#64748b", "blank": "#cbd5e1"}
+STATE_COLOR = {"ok": QColor("#16a34a"), "degraded": QColor("#d97706"), "down": QColor("#dc2626")}
+LEGEND = {"mgmt": "#facc15", "data": "#93c5fd", "storage": "#d8b4fe", "uplink": "#6ee7b7"}
+BAR_CSS = ("QFrame#plBar { background: #1f3a5f; border-radius: 3px; }"
+           "QFrame#plBar QPushButton, QFrame#plBar QToolButton { color: #ffffff; background: transparent;"
+           " border: 1px solid #3d6491; border-radius: 3px; padding: 4px 10px; }"
+           "QFrame#plBar QPushButton:hover, QFrame#plBar QToolButton:hover { background: #2b4d78; }"
+           "QFrame#plBar QPushButton:checked { background: #2563eb; border-color: #93c5fd; }"
+           "QFrame#plBar QPushButton#seg { border-radius: 0; padding: 4px 12px; }"
+           "QFrame#plBar QComboBox { background: #ffffff; color: #111827; border-radius: 3px; padding: 3px 8px; }"
+           "QFrame#plBar QLabel#legend { color: #ffffff; }")
 LEVEL_COLOR = {"err": "#d9534f", "warn": "#c77700", "info": "#2f7fb5"}
 LEVEL_MARK = {"err": "✕", "warn": "!", "info": "i"}
 
@@ -49,6 +63,14 @@ LEVEL_MARK = {"err": "✕", "warn": "!", "info": "i"}
 def net_names():
     return {"mgmt": T("Management (BMC)"), "data": T("Daten"), "storage": T("Storage"), "uplink": T("Uplink"),
             "patch": T("Patch")}
+
+
+def _group(title):
+    """Attributgruppe der Eigenschaften: Rahmen mit Titel und Formular darin."""
+    box = QGroupBox(title)
+    form = QFormLayout(box)
+    form.setContentsMargins(8, 6, 8, 6)
+    return box, form
 
 
 class PlannerLibrary(QListWidget):
@@ -82,7 +104,7 @@ class RackCanvas(QWidget):
     simClicked = pyqtSignal(str, str)    # ("cable"|"dev", id) im Simulationsmodus
     deleteRequested = pyqtSignal()
 
-    UH, RW, GAP, M, HEAD, NUM = 16, 300, 72, 18, 44, 26
+    UH, RW, GAP, M, HEAD, NUM = 16, 300, 72, 14, 46, 24
 
     def __init__(self):
         super().__init__()
@@ -95,6 +117,7 @@ class RackCanvas(QWidget):
         self.broken, self.failed = set(), set()
         self.ghost = None                # (Rack-ID, Position, Höhe, passt?)
         self.drag = None
+        self.view = "front"              # "front" (Gerätefronten) oder "rear" (Ports und Kabel)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -178,6 +201,8 @@ class RackCanvas(QWidget):
 
     # ------------------------------------------------------------ Treffer
     def port_at(self, pt):
+        if self.view != "rear":
+            return None
         for d in self.plan.placed():
             r = self.dev_rect(d)
             if r.adjusted(0, -1, 0, 1).contains(pt):
@@ -190,6 +215,8 @@ class RackCanvas(QWidget):
         return next((d for d in self.plan.placed() if self.dev_rect(d).contains(pt)), None)
 
     def cable_hit(self, pt):
+        if self.view != "rear":
+            return None
         st = QPainterPathStroker()
         st.setWidth(8)
         for c in reversed(self.plan.cables):
@@ -233,8 +260,9 @@ class RackCanvas(QWidget):
             self._paint_rack(p, i, r, small, bold)
         for d in self.plan.placed():
             self._paint_dev(p, d)
-        for c in self.plan.cables:
-            self._paint_cable(p, c)
+        if self.view == "rear":
+            for c in self.plan.cables:
+                self._paint_cable(p, c)
         if self.ghost:
             rid, pos, u, ok = self.ghost
             i = self.plan.rack_index(rid)
@@ -242,72 +270,113 @@ class RackCanvas(QWidget):
                 s = self.slot_rect(i)
                 h = self.plan.racks[i]["h"]
                 g = QRectF(s.x(), s.y() + (h - (pos + u - 1)) * self.UH, s.width(), u * self.UH)
-                col = QColor(ACCENT if ok else QColor("#f87171"))
+                col = QColor("#16a34a" if ok else "#dc2626")
                 fill = QColor(col)
                 fill.setAlpha(60)
                 p.setBrush(fill)
                 p.setPen(QPen(col, 1, Qt.PenStyle.DashLine))
-                p.drawRoundedRect(g, 3, 3)
+                p.drawRect(g)
 
     def _paint_rack(self, p, i, r, small, bold):
         x = self.rack_x(i)
         L = self.plan.rack_load(r["id"])
         sel = self.sel == ("rack", r["id"])
+        # Titelleiste: Name, Höhe, Ansicht
+        title = QRectF(x, self.M, self.RW, 22)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(TITLE_SEL if sel else TITLE_BG)
+        p.drawRect(title)
         p.setFont(bold)
-        p.setPen(ACCENT if sel else TEXT)
-        p.drawText(QRectF(x, self.M, self.RW / 2, 22), Qt.AlignmentFlag.AlignVCenter, f"{r['name']}  ·  {r['h']} " + T("HE"))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(title.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter,
+                   f"{r['name']}  ·  {r['h']} " + T("HE"))
         p.setFont(small)
+        p.setPen(QColor("#c7d2fe"))
+        p.drawText(title.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                   T("Vorderseite") if self.view == "front" else T("Rückseite"))
+        # Belegung und Last
         p.setPen(MUTED)
         load = f"{L['used']}/{r['h']} {T('HE')} · {L['w'] / 1000:.1f}".replace(".", ",") + \
                (f"/{L['cap'] / 1000:.1f} kW".replace(".", ",") if L["cap"] else " kW")
-        p.drawText(QRectF(x + self.RW / 2, self.M, self.RW / 2, 22),
-                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, load)
-        bar = QRectF(x, self.M + 26, self.RW, 4)
+        p.drawText(QRectF(x, self.M + 23, self.RW, 16), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                   load)
+        bar = QRectF(x, self.M + 28, self.RW / 2, 5)
+        p.setPen(QPen(QColor("#9ca3af"), 0.8))
+        p.setBrush(QColor("#ffffff"))
+        p.drawRect(bar)
+        share = L["used"] / r["h"]
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#162326"))
-        p.drawRoundedRect(bar, 2, 2)
-        p.setBrush(QColor("#2f9a82"))
-        p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * min(1, L["used"] / r["h"]), 4), 2, 2)
-        frame = QRectF(x, self.top() - 3, self.RW, r["h"] * self.UH + 6)
-        p.setBrush(RACK_BG)
-        p.setPen(QPen(ACCENT if sel else RACK_LINE, 2))
-        p.drawRoundedRect(frame, 5, 5)
+        p.setBrush(QColor("#dc2626" if share > 0.9 else "#2563eb"))
+        p.drawRect(QRectF(bar.x(), bar.y(), bar.width() * min(1, share), bar.height()))
+        # Gehäuse mit Holmen, Einbaufläche, HE-Zählung
+        frame = QRectF(x, self.top() - 4, self.RW, r["h"] * self.UH + 8)
+        p.setBrush(QColor("#374151"))
+        p.setPen(QPen(TITLE_SEL if sel else QColor("#1f2937"), 2 if sel else 1))
+        p.drawRect(frame)
         s = self.slot_rect(i)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(RACK_BG)
+        p.drawRect(s)
+        p.setBrush(RAIL)
+        p.drawRect(QRectF(s.x() - 3, s.y(), 3, s.height()))
+        p.drawRect(QRectF(s.right(), s.y(), 3, s.height()))
         p.setPen(QPen(STRIPE, 1))
         for u in range(1, r["h"]):
             y = s.y() + u * self.UH - 0.5
             p.drawLine(QPointF(s.x(), y), QPointF(s.right(), y))
         for u in range(1, r["h"] + 1):
             y = s.y() + (r["h"] - u) * self.UH
-            p.setPen(MUTED if u % 5 == 0 or u == 1 else DIM)
-            p.drawText(QRectF(x, y, self.NUM, self.UH), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+            p.setPen(QColor("#f3f4f6") if u % 5 == 0 or u == 1 else QColor("#9ca3af"))
+            p.drawText(QRectF(x, y, self.NUM - 2, self.UH), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
                        str(u))
 
     def _paint_dev(self, p, d):
         rect = self.dev_rect(d)
         fill, edge = KIND_FILL.get(d["kind"], KIND_FILL["server"])
         state = self.sim.get(d["id"]) if self.sim else None
-        p.setBrush(QColor(fill))
         if d["kind"] == "blank":
-            p.setBrush(QBrush(QColor(fill), Qt.BrushStyle.BDiagPattern))
+            p.setBrush(QBrush(QColor(edge), Qt.BrushStyle.BDiagPattern))
+        else:
+            grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+            grad.setColorAt(0, QColor(fill).lighter(106))
+            grad.setColorAt(1, QColor(fill).darker(106))
+            p.setBrush(QBrush(grad))
         border = QColor(edge)
         if state and state != "ok":
             border = STATE_COLOR[state]
-        p.setPen(QPen(border, 1))
-        p.drawRoundedRect(rect, 3, 3)
-        stripe = STRIPE_COLOR.get(d.get("vendor") or "", STRIPE_COLOR.get(d["kind"], "#4b5b59"))
-        if d["kind"] == "server":
-            stripe = STRIPE_COLOR.get(d.get("vendor") or "gen", "#94a3b8")
-        p.fillRect(QRectF(rect.x(), rect.y(), 3, rect.height()), QColor(stripe))
+        p.setPen(QPen(border, 1.4 if state and state != "ok" else 1))
+        p.drawRect(rect)
+        if d["kind"] != "blank":                     # Griffe links und rechts wie an der Gerätefront
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(edge).lighter(125))
+            p.drawRect(QRectF(rect.x() + 1, rect.y() + 2, 3, rect.height() - 4))
+            p.drawRect(QRectF(rect.right() - 4, rect.y() + 2, 3, rect.height() - 4))
+        stripe = STRIPE_COLOR.get(d.get("vendor") or "gen" if d["kind"] == "server" else d["kind"], "#6b7280")
         x = rect.x() + 8
         if d["kind"] != "blank":
-            led = STATE_COLOR[state] if state else QColor("#2f4245")
+            led = STATE_COLOR[state] if state else QColor("#9ca3af")
             p.setBrush(led)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPointF(x + 2, rect.center().y() if d["u"] == 1 else rect.y() + 8), 2.6, 2.6)
+            p.setPen(QPen(QColor("#ffffff"), 0.6))
+            p.drawEllipse(QPointF(x + 2, rect.center().y() if d["u"] == 1 else rect.y() + 8), 2.8, 2.8)
             x += 9
-        ports = self.port_rects(d, rect)
-        right = (ports[0][1].x() - 6) if ports else rect.right() - 6
+        ports = self.port_rects(d, rect) if self.view == "rear" else []
+        right = (ports[0][1].x() - 6) if ports else rect.right() - 8
+        if self.view == "front" and d["kind"] != "blank":   # Herstellerkennung rechts an der Front
+            badge = {"dell": "DELL", "hpe": "HPE", "lenovo": "LENOVO", "smc": "SMC"}.get(d.get("vendor") or "")
+            badge = badge or {"switch": "SW", "fw": "FW", "pdu": "PDU", "patch": "PP"}.get(d["kind"], "")
+            if badge:
+                f = QFont(self.font())
+                f.setPointSizeF(6.5)
+                f.setBold(True)
+                p.setFont(f)
+                w = max(22, len(badge) * 6 + 8)
+                br = QRectF(rect.right() - 8 - w, rect.center().y() - 6 if d["u"] == 1 else rect.y() + 3, w, 12)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(stripe))
+                p.drawRoundedRect(br, 2, 2)
+                p.setPen(QColor("#ffffff"))
+                p.drawText(br, Qt.AlignmentFlag.AlignCenter, badge)
+                right = br.x() - 6
         f = QFont(self.font())
         f.setPointSizeF(7.5)
         f.setBold(True)
@@ -327,16 +396,16 @@ class RackCanvas(QWidget):
             kind = self.plan.port(d, pid)["k"]
             c = self.plan.cable_at(d["id"], pid)
             p.setPen(QPen(PORT_EDGE.get(kind, RACK_LINE), 1))
-            p.setBrush(NET_COLOR[c["net"]] if c else RACK_BG)
-            p.drawRoundedRect(rc, 1.2, 1.2)
+            p.setBrush(NET_COLOR[c["net"]] if c else PORT_FILL)
+            p.drawRect(rc)
             if self.pending == (d["id"], pid):
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.setPen(QPen(QColor("#ffffff"), 1.5))
-                p.drawRoundedRect(rc.adjusted(-2, -2, 2, 2), 2, 2)
+                p.setPen(QPen(ACCENT, 1.6))
+                p.drawRect(rc.adjusted(-2, -2, 2, 2))
         if self.sel == ("dev", d["id"]):
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor("#e2fff4"), 2))
-            p.drawRoundedRect(rect, 3, 3)
+            p.setPen(QPen(ACCENT, 2))
+            p.drawRect(rect.adjusted(-1, -1, 1, 1))
 
     def _paint_cable(self, p, c):
         path = self.cable_path(c)
@@ -346,12 +415,10 @@ class RackCanvas(QWidget):
         dead = self.sim is not None and (c["id"] in self.broken or c["a"][0] in self.failed
                                          or c["b"][0] in self.failed)
         if self.sel == ("cable", c["id"]):
-            p.setPen(QPen(QColor(255, 255, 255, 140), 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.setPen(QPen(QColor(37, 99, 235, 90), 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawPath(path)
-        col = QColor("#f87171") if dead else QColor(NET_COLOR[c["net"]])
-        if not dead:
-            col.setAlpha(220)
-        pen = QPen(col, 2, Qt.PenStyle.DotLine if dead else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        col = QColor("#dc2626") if dead else QColor(NET_COLOR[c["net"]])
+        pen = QPen(col, 1.8, Qt.PenStyle.DotLine if dead else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         p.drawPath(path)
 
@@ -526,7 +593,12 @@ class PlannerTabMixin:
             "„Neuware“, „Ins Testlabor“ baut die Server als virtuelle BMCs nach. Gespeichert wird nur auf "
             "Knopfdruck.")))
 
-        tb = QHBoxLayout()
+        # Werkzeugleiste (dunkelblau wie die Kopfzeile üblicher DCIM-Werkzeuge)
+        bar = QFrame()
+        bar.setObjectName("plBar")
+        bar.setStyleSheet(BAR_CSS)
+        tb = QHBoxLayout(bar)
+        tb.setContentsMargins(8, 5, 8, 5)
         tb.setSpacing(6)
         file_btn = QToolButton()
         file_btn.setText(T("Plan"))
@@ -543,6 +615,31 @@ class PlannerTabMixin:
         add_rack.setToolTip(T("Neues Rack mit 42 HE anlegen; die Höhe lässt sich danach rechts ändern."))
         add_rack.clicked.connect(self.planner_add_rack)
         tb.addWidget(add_rack)
+        tpl_btn = QToolButton()
+        tpl_btn.setText(T("Vorlagen"))
+        tpl_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        tm = QMenu(tpl_btn)
+        tm.addAction(T("Management-Kopf (Patchpanel, OOB-Switch, PDU)"), lambda: self.planner_template("head"))
+        tm.addAction(T("HA-Paar (zwei Leaf-Switches mit Querverbindung)"), lambda: self.planner_template("ha"))
+        tm.addSeparator()
+        tm.addAction(T("Offene Server automatisch verkabeln"), self.planner_auto_cable)
+        tpl_btn.setMenu(tm)
+        tb.addWidget(tpl_btn)
+        tb.addSpacing(12)
+        self.pl_view_btns = {}
+        group = QButtonGroup(bar)
+        group.setExclusive(True)
+        for key, text in (("front", T("Vorderseite")), ("rear", T("Rückseite"))):
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setObjectName("seg")
+            btn.clicked.connect(lambda _=False, k=key: self.planner_set_view(k))
+            group.addButton(btn)
+            tb.addWidget(btn)
+            self.pl_view_btns[key] = btn
+        self.pl_view_btns["front"].setToolTip(T("Gerätefronten mit Namen und Hersteller"))
+        self.pl_view_btns["rear"].setToolTip(T("Rückseite mit Ports und Kabeln"))
+        tb.addSpacing(12)
         self.pl_cable_btn = QPushButton(T("Verkabeln (K)"))
         self.pl_cable_btn.setCheckable(True)
         self.pl_cable_btn.setToolTip(T("Port anklicken, dann den Gegenport. Ein belegter Port zeigt sein Kabel. "
@@ -557,16 +654,6 @@ class PlannerTabMixin:
         self.pl_net.currentIndexChanged.connect(lambda *_: setattr(self.pl_canvas, "net_choice",
                                                                    self.pl_net.currentData()))
         tb.addWidget(self.pl_net)
-        tpl_btn = QToolButton()
-        tpl_btn.setText(T("Vorlagen"))
-        tpl_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        tm = QMenu(tpl_btn)
-        tm.addAction(T("Management-Kopf (Patchpanel, OOB-Switch, PDU)"), lambda: self.planner_template("head"))
-        tm.addAction(T("HA-Paar (zwei Leaf-Switches mit Querverbindung)"), lambda: self.planner_template("ha"))
-        tm.addSeparator()
-        tm.addAction(T("Offene Server automatisch verkabeln"), self.planner_auto_cable)
-        tpl_btn.setMenu(tm)
-        tb.addWidget(tpl_btn)
         self.pl_sim_btn = QPushButton(T("Ausfall simulieren"))
         self.pl_sim_btn.setCheckable(True)
         self.pl_sim_btn.setToolTip(T("Kabel oder Geräte anklicken, um sie ausfallen zu lassen; die Server zeigen, "
@@ -574,46 +661,82 @@ class PlannerTabMixin:
         self.pl_sim_btn.toggled.connect(self.planner_sim_toggle)
         tb.addWidget(self.pl_sim_btn)
         tb.addStretch(1)
-        legend = QLabel(" ".join(f"<span style='color:{NET_COLOR[k].name()}'>━</span> {n}"
+        legend = QLabel(" ".join(f"<span style='color:{LEGEND[k]}'>━</span> {n}"
                                  for k, n in net_names().items() if k != "patch"))
+        legend.setObjectName("legend")
         tb.addWidget(legend)
-        v.addLayout(tb)
+        v.addWidget(bar)
 
-        # Bibliothek
+        # Pfad zum gewählten Objekt
+        self.pl_crumb = QLabel()
+        self.pl_crumb.setObjectName("plCrumb")
+        self.pl_crumb.setStyleSheet("QLabel#plCrumb { background: #eef2f7; color: #1f3a5f; border: 1px solid #c9d3df;"
+                                    " padding: 3px 8px; }")
+        v.addWidget(self.pl_crumb)
+
+        # Links: Navigator (Standort › Raum › Reihe › Rack › Gerät) und Katalog
+        self.pl_tree = QTreeWidget()
+        self.pl_tree.setHeaderHidden(True)
+        self.pl_tree.itemClicked.connect(self.planner_tree_clicked)
         self.pl_lib = PlannerLibrary()
         self.pl_lib.itemDoubleClicked.connect(self.planner_lib_double)
         lib_box = QWidget()
         ll = QVBoxLayout(lib_box)
         ll.setContentsMargins(0, 0, 0, 0)
-        ll.addWidget(QLabel("<b>" + T("Bibliothek") + "</b>"))
         ll.addWidget(self.pl_lib, 1)
         hint = QLabel(T("In ein Rack ziehen oder doppelklicken."))
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid);")
         ll.addWidget(hint)
+        self.pl_left = QTabWidget()
+        self.pl_left.addTab(self.pl_tree, T("Navigator"))
+        self.pl_left.addTab(lib_box, T("Katalog"))
+        self.pl_left.setCurrentIndex(1)
 
-        # Racks
+        # Mitte: Rack-Ansicht, darunter Objektliste und Simulationsprotokoll
         self.pl_canvas = RackCanvas()
         self.pl_canvas.changed.connect(self.planner_changed)
-        self.pl_canvas.selectionChanged.connect(self.planner_fill_props)
+        self.pl_canvas.selectionChanged.connect(self.planner_selection_changed)
         self.pl_canvas.message.connect(self.planner_say)
         self.pl_canvas.simClicked.connect(self.planner_sim_click)
         self.pl_canvas.deleteRequested.connect(self.planner_delete_selected)
         self.pl_scroll = QScrollArea()
         self.pl_scroll.setWidget(self.pl_canvas)
         self.pl_scroll.setWidgetResizable(True)
-        self.pl_scroll.setStyleSheet("QScrollArea { background: #0b1214; border: 1px solid palette(mid); }")
+        self.pl_scroll.setStyleSheet("QScrollArea { background: #e6eaef; border: 1px solid #c9d3df; }")
+        objects = QWidget()
+        ol = QVBoxLayout(objects)
+        ol.setContentsMargins(0, 4, 0, 0)
+        self.pl_filter = QLineEdit()
+        self.pl_filter.setPlaceholderText(T("Objekte filtern (Name, Typ, Modell, Rack) …"))
+        self.pl_filter.setClearButtonEnabled(True)
+        self.pl_filter.textChanged.connect(self.planner_filter_objects)
+        ol.addWidget(self.pl_filter)
+        self.pl_objects = QTableWidget(0, 9)
+        self.pl_objects.setHorizontalHeaderLabels([T("Name"), T("Typ"), T("Modell"), T("Rack"), T("HE"),
+                                                   T("Höhe"), T("Leistung"), T("Anschlüsse"), T("Status")])
+        self.pl_objects.verticalHeader().setVisible(False)
+        self.pl_objects.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.pl_objects.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.pl_objects.setAlternatingRowColors(True)
+        self.pl_objects.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.pl_objects.horizontalHeader().setStretchLastSection(True)
+        self.pl_objects.cellClicked.connect(self.planner_object_clicked)
+        ol.addWidget(self.pl_objects, 1)
         self.pl_simlog = QPlainTextEdit()
         self.pl_simlog.setReadOnly(True)
-        self.pl_simlog.setMaximumHeight(130)
-        self.pl_simlog.setVisible(False)
-        center = QWidget()
-        cl = QVBoxLayout(center)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.addWidget(self.pl_scroll, 1)
-        cl.addWidget(self.pl_simlog)
+        self.pl_bottom = QTabWidget()
+        self.pl_bottom.addTab(objects, T("Objekte"))
+        self.pl_bottom.addTab(self.pl_simlog, T("Simulation"))
+        center = QSplitter(Qt.Orientation.Vertical)
+        center.addWidget(self.pl_scroll)
+        center.addWidget(self.pl_bottom)
+        center.setStretchFactor(0, 3)
+        center.setStretchFactor(1, 1)
+        center.setSizes([560, 190])
+        center.setChildrenCollapsible(False)
 
-        # Rechte Leiste
+        # Rechts: Eigenschaften, Prüfung, Netze, Stückliste
         self.pl_tabs = QTabWidget()
         self.pl_tabs.addTab(self._planner_props(), T("Eigenschaften"))
         self.pl_checks = QListWidget()
@@ -624,13 +747,13 @@ class PlannerTabMixin:
         self.pl_tabs.addTab(self._planner_bom(), T("Stückliste"))
 
         split = QSplitter(Qt.Orientation.Horizontal)
-        split.addWidget(lib_box)
+        split.addWidget(self.pl_left)
         split.addWidget(center)
         split.addWidget(self.pl_tabs)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
-        split.setSizes([230, 760, 340])
+        split.setSizes([240, 760, 340])
         split.setChildrenCollapsible(False)
         v.addWidget(split, 1)
         self.pl_status = QLabel()
@@ -640,6 +763,7 @@ class PlannerTabMixin:
         QShortcut(QKeySequence("K"), page, self.pl_cable_btn.toggle,
                   context=Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.planner_page = page
+        self.planner_set_view("front")
         plan = Plan()
         plan.add_rack("R01", 42)
         self.planner_set_plan(plan, dirty=False)
@@ -647,14 +771,28 @@ class PlannerTabMixin:
 
     def _planner_props(self):
         self.pl_props = QStackedWidget()
-        # 0: Übersicht
+        # 0: Übersicht mit Standort
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        box, f = _group(T("Standort"))
+        self.pl_loc = {}
+        for key, label in (("site", T("Standort")), ("room", T("Raum")), ("row", T("Reihe"))):
+            edit = QLineEdit()
+            edit.setMaxLength(40)
+            edit.editingFinished.connect(lambda k=key, e=edit: self.planner_loc_edit(k, e))
+            f.addRow(label, edit)
+            self.pl_loc[key] = edit
+        lay.addWidget(box)
         self.pl_summary = QLabel()
         self.pl_summary.setWordWrap(True)
         self.pl_summary.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.pl_props.addWidget(self.pl_summary)
-        # 1: Gerät
+        lay.addWidget(self.pl_summary, 1)
+        self.pl_props.addWidget(w)
+        # 1: Gerät, gegliedert in Allgemein, Einbau, Strom, Anschlüsse
         w = QWidget()
-        f = QFormLayout(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
         self.pl_d_name = QLineEdit()
         self.pl_d_name.editingFinished.connect(lambda: self.planner_dev_edit("name"))
         self.pl_d_model = QLineEdit()
@@ -681,25 +819,37 @@ class PlannerTabMixin:
         self.pl_d_ports.horizontalHeader().setStretchLastSection(True)
         self.pl_d_ports.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.pl_d_ports.setMinimumHeight(160)
+        box, f = _group(T("Allgemein"))
         f.addRow(T("Name"), self.pl_d_name)
         f.addRow(T("Modell"), self.pl_d_model)
-        f.addRow(T("Einbauhöhe"), self.pl_d_u)
-        f.addRow(self.pl_d_w_label, self.pl_d_w)
-        f.addRow(T("Position"), self.pl_d_pos)
         f.addRow(T("Seriennummer"), self.pl_d_serial)
         f.addRow(self.pl_d_note)
+        lay.addWidget(box)
+        box, f = _group(T("Einbau"))
+        f.addRow(T("Position"), self.pl_d_pos)
+        f.addRow(T("Einbauhöhe"), self.pl_d_u)
+        lay.addWidget(box)
+        box, f = _group(T("Strom"))
+        f.addRow(self.pl_d_w_label, self.pl_d_w)
+        lay.addWidget(box)
+        box, f = _group(T("Anschlüsse"))
         f.addRow(self.pl_d_ports)
+        lay.addWidget(box, 1)
         row = QHBoxLayout()
         self.pl_d_unplace = QPushButton(T("Ausbauen"))
         self.pl_d_unplace.setToolTip(T("Nimmt das Gerät aus dem Rack und zieht seine Kabel ab (Entf)."))
         self.pl_d_unplace.clicked.connect(self.planner_delete_selected)
         row.addWidget(self.pl_d_unplace)
         row.addStretch(1)
-        f.addRow(row)
+        lay.addLayout(row)
         self.pl_props.addWidget(w)
         # 2: Kabel
         w = QWidget()
-        f = QFormLayout(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        box, f = _group(T("Verbindung"))
+        lay.addWidget(box)
+        lay.addStretch(1)
         self.pl_c_from, self.pl_c_to, self.pl_c_med, self.pl_c_len, self.pl_c_tag = (QLabel() for _ in range(5))
         self.pl_c_tag.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.pl_c_net = QComboBox()
@@ -718,7 +868,11 @@ class PlannerTabMixin:
         self.pl_props.addWidget(w)
         # 3: Rack
         w = QWidget()
-        f = QFormLayout(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        box, f = _group(T("Rack"))
+        lay.addWidget(box)
+        lay.addStretch(1)
         self.pl_r_name = QLineEdit()
         self.pl_r_name.setMaxLength(20)
         self.pl_r_name.editingFinished.connect(self.planner_rack_edit)
@@ -837,7 +991,149 @@ class PlannerTabMixin:
         self.planner_fill_checks()
         self.planner_fill_nets()
         self.planner_fill_bom()
+        self.planner_fill_tree()
+        self.planner_fill_objects()
+        self.planner_selection_changed()
+
+    def planner_selection_changed(self):
         self.planner_fill_props()
+        self.planner_fill_crumb()
+
+    # ================================================================ Ansicht, Navigator, Objektliste
+    def planner_set_view(self, view):
+        self.pl_canvas.view = view
+        self.pl_canvas.pending = None
+        for key, btn in self.pl_view_btns.items():
+            btn.setChecked(key == view)
+        if view == "front" and self.pl_cable_btn.isChecked():
+            self.pl_cable_btn.setChecked(False)
+        self.pl_canvas.update()
+
+    def planner_loc_edit(self, key, edit):
+        val = edit.text().strip()
+        if getattr(self.plan, key) != val:
+            setattr(self.plan, key, val)
+            self.plan_dirty = True
+            self.planner_fill_tree()
+            self.planner_fill_crumb()
+
+    def planner_location(self):
+        p = self.plan
+        return [p.site or T("Standort"), p.room or T("Raum"), T("Reihe {0}").format(p.row) if p.row else T("Reihe")]
+
+    def planner_fill_crumb(self):
+        parts = self.planner_location()
+        sel = self.pl_canvas.sel
+        plan = self.plan
+        rid = None
+        if sel and sel[0] == "rack":
+            rid = sel[1]
+        elif sel and sel[0] == "dev" and plan.dev(sel[1]):
+            rid = plan.dev(sel[1]).get("rack")
+        elif sel and sel[0] == "cable" and plan.cable(sel[1]):
+            rid = plan.dev(plan.cable(sel[1])["a"][0]).get("rack")
+        if rid and plan.rack(rid):
+            parts.append(T("Rack {0}").format(plan.rack(rid)["name"]))
+        if sel and sel[0] == "dev" and plan.dev(sel[1]):
+            d = plan.dev(sel[1])
+            parts.append(f"{T('HE')} {d['pos']} · {d['name']}" if d.get("rack") else d["name"])
+        elif sel and sel[0] == "cable" and plan.cable(sel[1]):
+            c = plan.cable(sel[1])
+            parts.append(T("Kabel {0} ↔ {1}").format(plan.dev(c["a"][0])["name"], plan.dev(c["b"][0])["name"]))
+        self.pl_crumb.setText("  ›  ".join(parts))
+
+    def planner_fill_tree(self):
+        tree = self.pl_tree
+        tree.clear()
+        style = self.style()
+        site, room, row = self.planner_location()
+        top = QTreeWidgetItem([site])
+        top.setIcon(0, style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon))
+        r_item = QTreeWidgetItem(top, [room])
+        r_item.setIcon(0, style.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        row_item = QTreeWidgetItem(r_item, [row])
+        row_item.setIcon(0, style.standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+        for r in self.plan.racks:
+            L = self.plan.rack_load(r["id"])
+            it = QTreeWidgetItem(row_item, [f"{r['name']}  ({L['used']}/{r['h']} {T('HE')})"])
+            it.setIcon(0, style.standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon))
+            it.setData(0, Qt.ItemDataRole.UserRole, f"rack:{r['id']}")
+            devs = sorted((d for d in self.plan.devs if d.get("rack") == r["id"]), key=lambda d: -d["pos"])
+            for d in devs:
+                child = QTreeWidgetItem(it, [f"{T('HE')} {d['pos']:>2}  {d['name']}"])
+                child.setIcon(0, style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon if d["kind"] == "server"
+                                                    else QStyle.StandardPixmap.SP_DriveNetIcon))
+                child.setData(0, Qt.ItemDataRole.UserRole, f"dev:{d['id']}")
+        tree.addTopLevelItem(top)
+        tree.expandToDepth(3)
+        for i in range(row_item.childCount()):
+            rack_item = row_item.child(i)
+            rack_item.setExpanded(rack_item.childCount() <= 14)
+
+    def planner_tree_clicked(self, item, _col=0):
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if data:
+            kind, _, ident = data.partition(":")
+            self.planner_select(kind, ident)
+
+    def planner_select(self, kind, ident):
+        """Objekt auswählen und in der Rack-Ansicht sichtbar machen."""
+        cv = self.pl_canvas
+        cv.select((kind, ident))
+        if kind == "dev" and self.plan.dev(ident) and self.plan.dev(ident).get("rack"):
+            r = cv.dev_rect(self.plan.dev(ident))
+        elif kind == "rack" and self.plan.rack(ident):
+            i = self.plan.rack_index(ident)
+            r = QRectF(cv.rack_x(i), cv.M, cv.RW, cv.HEAD)
+        else:
+            return
+        self.pl_scroll.ensureVisible(int(r.center().x()), int(r.center().y()), 120, 140)
+        self.pl_tabs.setCurrentIndex(0)
+
+    def planner_kind_name(self, d):
+        return {"server": T("Server"), "switch": T("Switch"), "fw": T("Firewall"), "patch": T("Patchpanel"),
+                "pdu": T("PDU"), "blank": T("Blindblende")}.get(d["kind"], d["kind"])
+
+    def planner_fill_objects(self):
+        plan = self.plan
+        worst = {}
+        order = {"err": 0, "warn": 1, "info": 2}
+        for level, _, did in plan.checks():
+            if did and order[level] < order.get(worst.get(did), 9):
+                worst[did] = level
+        status = {"err": T("Fehler"), "warn": T("Warnung"), "info": T("Hinweis")}
+        devs = sorted(plan.placed(), key=lambda d: (plan.rack_index(d["rack"]), -d["pos"]))
+        t = self.pl_objects
+        t.setSortingEnabled(False)
+        t.setRowCount(len(devs))
+        for i, d in enumerate(devs):
+            used = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
+            power = d.get("cap") if d["kind"] == "pdu" else d.get("w")
+            vals = [d["name"], self.planner_kind_name(d), d.get("model") or "", plan.rack(d["rack"])["name"],
+                    d["pos"], d["u"], f"{power} W" if power else "", f"{used}/{len(d['ports'])}" if d["ports"] else "",
+                    status.get(worst.get(d["id"]), T("OK"))]
+            for c, val in enumerate(vals):
+                it = QTableWidgetItem()
+                it.setData(Qt.ItemDataRole.DisplayRole, val)
+                it.setData(Qt.ItemDataRole.UserRole, d["id"])
+                if c == 8 and d["id"] in worst:
+                    it.setForeground(QColor(LEVEL_COLOR[worst[d["id"]]]))
+                t.setItem(i, c, it)
+        t.setSortingEnabled(True)
+        self.pl_bottom.setTabText(0, T("Objekte ({0})").format(len(devs)))
+        self.planner_filter_objects(self.pl_filter.text())
+
+    def planner_filter_objects(self, text):
+        text = (text or "").strip().lower()
+        t = self.pl_objects
+        for r in range(t.rowCount()):
+            row = " ".join(t.item(r, c).text().lower() for c in range(4) if t.item(r, c))
+            t.setRowHidden(r, bool(text) and text not in row)
+
+    def planner_object_clicked(self, row, _col=0):
+        item = self.pl_objects.item(row, 0)
+        if item is not None:
+            self.planner_select("dev", item.data(Qt.ItemDataRole.UserRole))
 
     def planner_say(self, text, err=False):
         self.pl_status.setText(text)
@@ -914,6 +1210,8 @@ class PlannerTabMixin:
     def planner_cable_mode(self, on):
         if on and self.pl_sim_btn.isChecked():
             self.pl_sim_btn.setChecked(False)
+        if on and self.pl_canvas.view != "rear":
+            self.planner_set_view("rear")
         self.pl_canvas.cable_mode = on
         self.pl_canvas.pending = None
         self.pl_canvas.update()
@@ -974,6 +1272,9 @@ class PlannerTabMixin:
                 self.pl_props.setCurrentIndex(3)
             else:
                 self.pl_canvas.sel = None
+                for key, edit in self.pl_loc.items():
+                    if not edit.hasFocus():
+                        edit.setText(getattr(plan, key))
                 devs = plan.placed()
                 warn = sum(1 for c in plan.checks() if c[0] != "info")
                 self.pl_summary.setText(T(
@@ -1112,10 +1413,7 @@ class PlannerTabMixin:
         did = item.data(Qt.ItemDataRole.UserRole)
         d = self.plan.dev(did) if did else None
         if d and d.get("rack"):
-            self.pl_canvas.select(("dev", did))
-            r = self.pl_canvas.dev_rect(d)
-            self.pl_scroll.ensureVisible(int(r.center().x()), int(r.center().y()), 80, 120)
-            self.pl_tabs.setCurrentIndex(0)
+            self.planner_select("dev", did)
 
     def planner_fill_nets(self):
         p = self.plan
@@ -1269,8 +1567,10 @@ class PlannerTabMixin:
                 self.pl_cable_btn.setChecked(False)
             cv.broken, cv.failed = set(), set()
             cv.sel = None
+            self.planner_set_view("rear")
             self.pl_simlog.clear()
-            self.pl_simlog.setVisible(True)
+            self.pl_bottom.setCurrentIndex(1)
+            self.planner_fill_crumb()
             self.planner_sim_recompute(log=False)
             self.planner_sim_log(T("Simulation: Kabel oder Gerät anklicken, um es ausfallen zu lassen; nochmal "
                                    "klicken stellt es wieder her. Der Plan bleibt unverändert."))
@@ -1278,8 +1578,9 @@ class PlannerTabMixin:
         else:
             cv.sim = None
             cv.broken, cv.failed = set(), set()
-            self.pl_simlog.setVisible(False)
+            self.pl_bottom.setCurrentIndex(0)
             self.planner_say("")
+            self.planner_fill_crumb()
             cv.update()
 
     def planner_sim_stop(self):
