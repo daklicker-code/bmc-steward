@@ -26,6 +26,15 @@ from bmc_steward.redfish import ProbeEngine, RedfishClient   # noqa: E402
 EXE = os.environ.get("SUSHY_EMULATOR") or shutil.which("sushy-emulator")
 
 
+def forget_pins(addr):
+    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
+    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
+    from bmc_steward import trust
+    st = trust.store()
+    for key in list(st.for_addr(addr)):
+        st.forget(key)
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -43,6 +52,7 @@ class TestAgainstSushy(unittest.TestCase):
         conf.write_text("SUSHY_EMULATOR_STATE_DIR = %r\n" % str(Path(cls.tmp.name) / "state"), encoding="utf-8")
         cls.port = free_port()
         cls.addr = "127.0.0.1:%d" % cls.port
+        forget_pins(cls.addr)
         cls.proc = subprocess.Popen([EXE, "--fake", "--config", str(conf), "-i", "127.0.0.1", "-p", str(cls.port),
                                      "--ssl-certificate", str(cert), "--ssl-key", str(key)],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)

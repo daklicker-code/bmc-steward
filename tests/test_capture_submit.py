@@ -17,6 +17,15 @@ from tests.test_capture import sample                 # noqa: E402
 VENDORS = ("dell", "hpe", "lenovo", "smc")
 
 
+def forget_pins(addr):
+    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
+    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
+    from bmc_steward import trust
+    st = trust.store()
+    for key in list(st.for_addr(addr)):
+        st.forget(key)
+
+
 class TestSubmissionCheck(unittest.TestCase):
     def redacted(self):
         cap = sample()
@@ -103,6 +112,7 @@ class TestRealCapturesPass(unittest.TestCase):
                 try:
                     port = b._redfish[0].socket.getsockname()[1]
                     user, pw = FACTORY_LOGIN[vendor]
+                    forget_pins("127.0.0.1:%d" % port)
                     cap, rep, err = C.run_capture("127.0.0.1:%d" % port, user, pw, Path(tmp) / "x", vendor=vendor)
                 finally:
                     fleet.stop(b)

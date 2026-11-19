@@ -19,6 +19,15 @@ PROBED_ONLY = {"/redfish/v1/EventService", "/redfish/v1/Managers/iDRAC.Embedded.
 VENDOR_OWN = ("/Attributes",)                         # herstellereigene Ressourcen ohne DMTF-Typ
 
 
+def forget_pins(addr):
+    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
+    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
+    from bmc_steward import trust
+    st = trust.store()
+    for key in list(st.for_addr(addr)):
+        st.forget(key)
+
+
 def links(doc):
     if isinstance(doc, dict):
         for k, v in doc.items():
@@ -48,6 +57,7 @@ class TestVbmcOData(unittest.TestCase):
             try:
                 port = b._redfish[0].socket.getsockname()[1]
                 user, pw = self.login[vendor]
+                forget_pins("127.0.0.1:%d" % port)
                 cap, _, err = C.run_capture("127.0.0.1:%d" % port, user, pw, Path(tmp) / "x", vendor=vendor,
                                             do_redact=False)
                 ctx = ssl.create_default_context()
