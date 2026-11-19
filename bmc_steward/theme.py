@@ -222,8 +222,10 @@ QLabel#pageIntro {{ background: {card}; border: 1px solid {line}; border-radius:
 """.format(**t)
 
 
-def apply(app, choice=None):
-    """Design setzen ("auto", "light", "dark"; ohne Angabe die gemerkte Wahl). Gibt das aktive Design zurück."""
+def apply(app, choice=None, sheet=True):
+    """Design setzen ("auto", "light", "dark"; ohne Angabe die gemerkte Wahl). Gibt das aktive Design zurück.
+    sheet=False lässt das Stylesheet weg (beim Start: erst nach dem Fensteraufbau setzen, sonst gestaltet Qt
+    jede Seite beim Einhängen erneut)."""
     global _current
     choice = choice or load_choice()
     name = resolve(choice)
@@ -232,7 +234,8 @@ def apply(app, choice=None):
             app.setStyle("Fusion")
             app.setProperty("bmcFusion", True)
         app.setPalette(palette(name))
-        app.setStyleSheet(stylesheet(name))
+        if sheet:
+            app.setStyleSheet(stylesheet(name))
     changed = name != _current
     _current = name
     if changed:

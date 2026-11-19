@@ -10,7 +10,7 @@ import re
 from html import escape as html_escape
 from pathlib import Path
 
-from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QMimeData, QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen,
                          QShortcut)
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QDialog, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
@@ -126,6 +126,19 @@ LEVEL_MARK = {"err": "✕", "warn": "!", "info": "i"}
 def net_names():
     return {"mgmt": T("Management (BMC)"), "data": T("Daten"), "storage": T("Storage"), "uplink": T("Uplink"),
             "patch": T("Patch"), "fc": T("Fibre Channel"), "sas": T("SAS"), "cluster": T("Cluster")}
+
+
+class BarScroll(QScrollArea):
+    """Scrollbereich für die Werkzeugleiste: so hoch wie die Leiste plus Platz für die Bildlaufleiste. Die Höhe
+    wird jedes Mal neu bestimmt – das Stylesheet kommt beim Start erst nach dem Aufbau dazu."""
+
+    def sizeHint(self):
+        w = self.widget()
+        h = (w.sizeHint().height() if w else 0) + self.horizontalScrollBar().sizeHint().height() + 2
+        return QSize(super().sizeHint().width(), h)
+
+    def minimumSizeHint(self):
+        return QSize(0, self.sizeHint().height())
 
 
 def rack_label(plan, r):
@@ -1370,7 +1383,7 @@ class PlannerTabMixin:
         self.pl_legend = legend
         self.pl_bar = bar
         # bei schmalem Fenster waagerecht scrollbar statt das ganze Fenster breit zu zwingen
-        bar_scroll = QScrollArea()
+        bar_scroll = BarScroll()
         bar_scroll.setObjectName("plBarScroll")
         bar_scroll.setWidget(bar)
         bar_scroll.setWidgetResizable(True)
@@ -1378,7 +1391,6 @@ class PlannerTabMixin:
         bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         bar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         bar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bar_scroll.setFixedHeight(bar.sizeHint().height() + 12)
         bar_scroll.setStyleSheet("QScrollArea#plBarScroll, QScrollArea#plBarScroll > QWidget > QWidget"
                                  " { background: transparent; }")
         v.addWidget(bar_scroll)

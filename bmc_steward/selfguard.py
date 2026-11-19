@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from .i18n import HERE
@@ -99,9 +100,27 @@ def _smbios():
     return vendor, product, uuid, serials
 
 
+def _vendor_product():
+    """(Hersteller, Modell) dieses Rechners – schnell und ohne externes Programm: unter Linux aus /sys (für alle
+    lesbar), unter Windows aus der Registry. Leer, wenn nichts lesbar ist."""
+    if WINDOWS:
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\BIOS") as key:
+                return (str(winreg.QueryValueEx(key, "SystemManufacturer")[0]),
+                        str(winreg.QueryValueEx(key, "SystemProductName")[0]))
+        except (OSError, ImportError):
+            return "", ""
+    base = "/sys/class/dmi/id/"
+    return _read(base + "sys_vendor"), _read(base + "product_name")
+
+
 def hypervisor():
-    """Name des Hypervisors, wenn BMC-Steward in einer VM läuft, sonst ''."""
-    vendor, product, _, _ = _smbios()
+    """Name des Hypervisors, wenn BMC-Steward in einer VM läuft, sonst ''. Läuft beim Start, daher ohne
+    PowerShell/hostnamectl; nur wenn die schnelle Quelle gar nichts liefert, wird SMBIOS ganz gelesen."""
+    vendor, product = _vendor_product()
+    if WINDOWS and not (vendor or product):
+        vendor, product, _, _ = _smbios()
     text = f"{vendor} {product}".lower()
     for marker, name in VIRT_MARKERS:
         if marker in text:
@@ -118,7 +137,8 @@ class SelfGuard:
         self.path = Path(path)
         self.entries = []
         self.virt = ""
-        self.own = []                     # eigene SMBIOS-Kennungen (nur auf echter Hardware)
+        self._own = []                    # eigene SMBIOS-Kennungen (nur auf echter Hardware), siehe own
+        self._probe = None                # Hintergrund-Thread, der sie liest
         self.load()
         if probe:
             self.refresh()
@@ -140,10 +160,37 @@ class SelfGuard:
 
     # ---------- eigene Kennung ----------
     def refresh(self):
+        """VM-Erkennung sofort (schnell); die eigenen Kennungen liest ein Hintergrund-Thread, denn unter
+        Windows braucht das PowerShell und dauert Sekunden. Wer `own` liest, wartet auf ihn."""
         self.virt = hypervisor()
-        _, _, uuid, serials = _smbios()
-        # In einer VM ist die eigene Kennung die virtuelle der VM – die passt nie auf einen BMC
-        self.own = [] if self.virt else [v for v in [uuid, *serials] if usable(v)]
+        self._own = []
+        if self.virt:                     # in einer VM ist die eigene Kennung die virtuelle – sie passt nie
+            self._probe = None
+            return
+
+        def probe():
+            _, _, uuid, serials = _smbios()
+            self._own = [v for v in [uuid, *serials] if usable(v)]
+        self._probe = threading.Thread(target=probe, name="selfguard-smbios", daemon=True)
+        self._probe.start()
+
+    @property
+    def own(self):
+        """Eigene Kennungen; wartet beim ersten Zugriff, bis der Hintergrund-Thread sie gelesen hat."""
+        if self._probe is not None:
+            self._probe.join(30)
+            self._probe = None
+        return self._own
+
+    @own.setter
+    def own(self, values):
+        self._probe = None
+        self._own = list(values)
+
+    @property
+    def own_ready(self):
+        """True, sobald `own` ohne Warten verfügbar ist."""
+        return self._probe is None or not self._probe.is_alive()
 
     @property
     def armed(self):
