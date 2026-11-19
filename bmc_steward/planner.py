@@ -46,7 +46,9 @@ CATALOG = {
     "fw":      dict(kind="fw", role="fw", u=1, w=200, model="Firewall 8×10G + 2 WAN", prefix="fw",
                     ports=[(8, "data", "p"), (2, "up", "u")]),
     "patch":   dict(kind="patch", role="patch", u=1, w=0, model="Patchpanel 24×Cat6a", prefix="pp",
-                    ports=[(24, "patch", "p")]),
+                    ports=[(24, "patch", "p"), (24, "patch", "r")]),     # Front p1…p24, Rückseite r1…r24
+    "patch_lc": dict(kind="patch", role="patch", u=1, w=0, model="LWL-Spleißbox 24×LC Duplex", prefix="lwl",
+                     ports=[(24, "patch", "p"), (24, "patch", "r")]),
     "pdu":     dict(kind="pdu", role="pdu", u=1, w=0, cap=3700, model="PDU 16 A / 230 V", prefix="pdu", ports=[]),
     "blank":   dict(kind="blank", role="blank", u=1, w=0, model="1 HE", prefix="blende", ports=[]),
     "server1": dict(kind="server", role="server", u=1, w=450, model="", prefix="neu", ports=None),
@@ -111,6 +113,36 @@ def build_ports(spec):
     return [{"id": f"{pre}{i}", "k": kind} for n, kind, pre in spec for i in range(1, n + 1)]
 
 
+# Angaben je Port, die man im Plan pflegen kann (alle als kurzer Text)
+PORT_FIELDS = ("sfp", "speed", "mac", "ip", "vlan", "desc")
+# Welche Portarten sich sinnvoll verbinden lassen (Patchpanels nehmen alles außer SAS)
+COMPATIBLE = {"bmc": {"mgmt", "patch", "data", "up"}, "mgmt": {"bmc", "up", "patch", "mgmt"},
+              "data": {"data", "up", "patch"}, "up": {"up", "data", "mgmt", "patch", "cl"},
+              "fc": {"fc", "patch"}, "sas": {"sas"}, "cl": {"cl", "up"},
+              "patch": {"bmc", "mgmt", "data", "up", "fc", "cl", "patch"}}
+# Vorschläge für Transceiver/Kabel je Portart (frei änderbar)
+SFP_PRESETS = {"bmc": ["RJ45 1G (fest)"], "mgmt": ["RJ45 1G (fest)"],
+               "data": ["SFP28 25G SR (MMF, 850 nm)", "SFP28 25G LR (SMF, 1310 nm)", "SFP28 25G DAC",
+                        "SFP+ 10G SR (MMF, 850 nm)", "SFP+ 10G LR (SMF, 1310 nm)", "SFP 1G RJ45"],
+               "up": ["QSFP28 100G SR4 (MMF, 850 nm)", "QSFP28 100G LR4 (SMF, 1310 nm)", "QSFP28 100G DAC",
+                      "SFP+ 10G SR (MMF, 850 nm)"],
+               "cl": ["QSFP28 100G DAC", "QSFP28 100G SR4 (MMF, 850 nm)"],
+               "fc": ["SFP+ FC 32G SW (MMF, 850 nm)", "SFP+ FC 16G SW (MMF, 850 nm)", "SFP+ FC 32G LW (SMF)"],
+               "sas": ["Mini-SAS HD (SFF-8644)"], "patch": ["RJ45 Cat6a", "LC Duplex OM4", "LC Duplex OS2"]}
+
+
+def compatible(ka, kb):
+    return kb in COMPATIBLE.get(ka, set())
+
+
+def through_port(d, pid):
+    """Gegenüberliegender Port eines Patchpanels (Front p7 <-> Rückseite r7) oder None."""
+    if d.get("kind") != "patch" or not pid or pid[0] not in "pr" or not pid[1:].isdigit():
+        return None
+    other = ("r" if pid[0] == "p" else "p") + pid[1:]
+    return other if any(p["id"] == other for p in d["ports"]) else None
+
+
 def port_name(d, pid):
     """Beschriftung eines Ports: die des Geräts (z. B. „A e0M“, „SAS A“), sonst aus der Kennung."""
     if d:
@@ -132,6 +164,8 @@ def port_label(pid):
         return f"NIC {num}"
     if pre == "u":
         return T("Uplink {0}").format(num)
+    if pre == "r":
+        return T("Rückseite {0}").format(num)
     return T("Port {0}").format(num)
 
 
@@ -449,6 +483,51 @@ class Plan:
         self.cables.append(c)
         return c, None
 
+    def trace(self, did, pid):
+        """Strecke ab einem Port: [(Gerät, Port, Kabel zum nächsten Glied oder None)], durch Patchpanels
+        hindurch (Front <-> Rückseite) bis zum anderen Ende. Bricht bei Schleifen ab."""
+        hops, seen = [], set()
+        while (did, pid) not in seen:
+            seen.add((did, pid))
+            d = self.dev(did)
+            c = self.cable_at(did, pid)
+            hops.append((d, pid, c))
+            if not c:
+                break
+            od, op = self.other_end(c, did, pid)
+            o = self.dev(od)
+            nxt = through_port(o, op)
+            if nxt and (od, op) not in seen:
+                seen.add((od, op))
+                hops.append((o, op, None))          # Eintritt ins Patchpanel, weiter auf der anderen Seite
+                did, pid = od, nxt
+                continue
+            hops.append((o, op, None))
+            break
+        return hops
+
+    def participants(self):
+        """Alle Ports mit Netzangaben oder Kabel: [{dev, port, ip, mac, vlan, sfp, peer}] – für die Liste der
+        Netzwerkteilnehmer. BMC-Ports ohne eigene IP bekommen die Adresse aus dem Netzplan."""
+        plan_ip = {n["dev"]["id"]: n["ip"] for n in self.net_plan()}
+        rows = []
+        for d in sorted(self.placed(), key=lambda d: (self.rack_index(d["rack"]), -d["pos"])):
+            if d["kind"] in ("patch", "blank", "pdu"):
+                continue
+            for p in d["ports"]:
+                c = self.cable_at(d["id"], p["id"])
+                ip = p.get("ip") or (plan_ip.get(d["id"]) if p["k"] == "bmc" else "")
+                if not (c or ip or p.get("mac") or p.get("vlan") or p.get("sfp")):
+                    continue
+                peer = ""
+                if c:
+                    hops = self.trace(d["id"], p["id"])
+                    end_d, end_p, _ = hops[-1]
+                    peer = f"{end_d['name']} · {port_name(end_d, end_p)}"
+                rows.append({"dev": d, "port": p, "ip": ip or "", "mac": p.get("mac", ""), "vlan": p.get("vlan", ""),
+                             "sfp": p.get("sfp", ""), "peer": peer})
+        return rows
+
     def disconnect(self, cid):
         self.cables = [c for c in self.cables if c["id"] != cid]
 
@@ -473,6 +552,25 @@ class Plan:
                 "storage": T("DAC-Kabel 25G SFP28"), "uplink": T("AOC/LWL 100G QSFP28"),
                 "fc": T("LWL OM4 LC/LC (FC 32G)"), "sas": T("Mini-SAS-HD-Kabel (SFF-8644)"),
                 "cluster": T("DAC-Kabel 100G QSFP28")}[net]
+
+    def cable_medium(self, c):
+        """Kabelart eines Kabels: aus den eingetragenen Transceivern an seinen Enden – bei Patchpanels vom Ende
+        der Strecke –, sonst aus dem Netz (medium)."""
+        sfps = []
+        for did, pid in (tuple(c["a"]), tuple(c["b"])):
+            end_d, end_p, _ = self.trace(did, pid)[-1]            # vom einen Ende über das Kabel zum anderen Ende
+            for d, p in ((self.dev(did), pid), (end_d, end_p)):
+                sfp = (self.port(d, p) or {}).get("sfp")
+                if sfp:
+                    sfps.append(sfp)
+        text = " ".join(sfps).upper()
+        if "DAC" in text:
+            return T("DAC-Kabel") + (" 100G QSFP28" if "QSFP" in text else " 25G SFP28" if "SFP28" in text else "")
+        if any(k in text for k in ("SMF", " LR", "LW", "OS2")):
+            return T("LWL OS2 LC/LC (Singlemode)")
+        if any(k in text for k in ("MMF", " SR", "SW", "OM4")):
+            return T("LWL OM4 LC/LC (Multimode)")
+        return self.medium(c["net"])
 
     def auto_cable(self):
         """Verkabelt offene Server: BMC an den ersten OOB-Switch, NIC 1/2 abwechselnd an Leaf/Access-Switches
@@ -711,16 +809,24 @@ class Plan:
         cab = {}
         trx = 0
         for c in self.cables:
-            k = (self.medium(c["net"]), self.cable_length(c))
+            k = (self.cable_medium(c), self.cable_length(c))
             cab[k] = cab.get(k, 0) + 1
             if c["net"] == "uplink":
                 trx += 2
         rows += [(T("Kabel"), m, f"{l:g} m".replace(".", ","), n) for (m, l), n in sorted(cab.items())]
         if trx:
             rows.append((T("Kabel"), T("Transceiver QSFP28"), "", trx))
-        sfp = 2 * sum(1 for c in self.cables if c["net"] == "fc")
-        if sfp:
-            rows.append((T("Kabel"), T("SFP-Optik FC 32G"), "", sfp))
+        given = {}
+        for d in self.placed():
+            for p in d["ports"]:
+                if p.get("sfp") and not p["sfp"].startswith("RJ45") and d["kind"] != "patch":
+                    given[p["sfp"]] = given.get(p["sfp"], 0) + 1
+        if given:                                   # im Plan eingetragene Optiken zählen genau
+            rows += [(T("Optiken"), k, "", n) for k, n in sorted(given.items())]
+        else:
+            sfp = 2 * sum(1 for c in self.cables if c["net"] == "fc")
+            if sfp:
+                rows.append((T("Kabel"), T("SFP-Optik FC 32G"), "", sfp))
         hu = sum(d["u"] for d in self.placed() if d["kind"] != "blank")
         if hu:
             rows.append((T("Montage"), T("Käfigmuttern und Schrauben"), "", hu * 4))
@@ -835,11 +941,15 @@ class Plan:
                 continue
             if did in ids or kind not in KINDS or not 1 <= u <= MAX_DEV_U:
                 continue
-            ports = [{"id": x["id"][:16], "k": x["k"], **({"l": x["l"][:16]} if isinstance(x.get("l"), str) else {})}
+            ports = [{"id": x["id"][:16], "k": x["k"],
+                      **({"l": x["l"][:16]} if isinstance(x.get("l"), str) else {}),
+                      **{k: x[k][:60] for k in PORT_FIELDS if isinstance(x.get(k), str) and x[k]}}
                      for x in (d.get("ports") or []) if isinstance(x, dict) and isinstance(x.get("id"), str)
                      and x.get("k") in PORT_KINDS]
             if kind == "server":
-                ports = server_ports(u)
+                kept = {p["id"]: p for p in ports}
+                ports = [{**p, **{k: v for k, v in kept.get(p["id"], {}).items() if k in PORT_FIELDS}}
+                         for p in server_ports(u)]
             dev = {"id": did, "kind": kind, "u": u, "ports": ports,
                    "role": str(d.get("role") or kind), "cat": d.get("cat") if d.get("cat") in CATALOG else None,
                    "prefix": str(d.get("prefix") or ""), "name": str(d.get("name") or did)[:40],

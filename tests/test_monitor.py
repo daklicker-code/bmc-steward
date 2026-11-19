@@ -274,19 +274,22 @@ class TestWindowLayout(unittest.TestCase):
     def setUpClass(cls):
         cls.w = Window()
 
-    def test_page_order_is_unchanged(self):
-        # Der übrige Code springt über Nummern: 1 = Neuware, 3 = Konsole, 4 = UEFI-Einstellungen, 5 = Dienste
+    def test_page_order_and_sections(self):
+        # Fest im Code: 0 = DHCP-Server, 1 = Neuware; alles andere wird über indexOf angesprungen
+        from bmc_steward.sidenav import MARK_ROLE, SECTION_ROLE
         self.assertEqual(self.w.tabs.count(), 12)
-        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 3)
-        self.assertEqual(self.w.tabs.indexOf(self.w.services_page), 5)
         names = [self.w.tabs.menu.item(i).text() for i in range(12)]
-        self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Konsole", "UEFI-Einstellungen",
-                                 "Dienste", "Benutzerkonten", "Firmware", "Aufnahme", "Testlabor", "Aufbauplaner",
-                                 "Hilfe"])      # ohne Nummern; der Aufbauplaner kam hinten dazu
+        self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
+                                 "Benutzerkonten", "Firmware", "UEFI-Konsole", "Aufnahme", "Testlabor",
+                                 "Aufbauplaner", "Hilfe"])
+        sections = {i: self.w.tabs.menu.item(i).data(SECTION_ROLE) for i in range(12)}
+        self.assertEqual({i: s for i, s in sections.items() if s}, {0: "Einrichtung", 7: "Werkzeuge"})
+        self.assertEqual([self.w.tabs.menu.item(i).data(MARK_ROLE) for i in range(7)], list(range(7)))
+        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 7)
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
-        page = self.w.tabs.stack.widget(11)
+        page = self.w.tabs.widget(11)
         self.assertIs(self.w.help_logo.parent(), page)
         self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 
@@ -305,18 +308,20 @@ class TestWindowLayout(unittest.TestCase):
         delegate = menu.itemDelegate()
         index = menu.model().index(0, 0)
 
+        height = delegate.sizeHint(QStyleOptionViewItem(), index).height()   # mit Bereichsüberschrift
+
         def render(state):
-            img = QImage(200, 30, QImage.Format.Format_ARGB32)
+            img = QImage(200, height, QImage.Format.Format_ARGB32)
             img.fill(QColor("#ffffff"))
             opt = QStyleOptionViewItem()
-            opt.rect = QRect(0, 0, 200, 30)
+            opt.rect = QRect(0, 0, 200, height)
             opt.state = state | QStyle.StateFlag.State_Enabled
             opt.font = menu.font()
             opt.palette = menu.palette()
             p = QPainter(img)
             delegate.paint(p, opt, index)
             p.end()
-            return img.pixelColor(100, 3)           # Randbereich: Fläche ohne Text
+            return img.pixelColor(150, height - 30)  # Fläche des Punkts unter der Überschrift, ohne Text
 
         yellow = QColor("#c9a100")
         hover = render(QStyle.StateFlag.State_MouseOver)
@@ -351,7 +356,7 @@ class TestWindowLayout(unittest.TestCase):
         self.w.tabs.setCurrentIndex(0)
         self.w.console_panel_show(False)
         self.w.monitor.clicked.emit()
-        self.assertEqual(self.w.tabs.currentIndex(), 3)
+        self.assertEqual(self.w.tabs.currentIndex(), self.w.tabs.indexOf(self.w.con_page))
         self.assertFalse(self.w.con_panel.isHidden())
 
     def test_click_on_live_monitor_opens_full_console(self):
@@ -361,7 +366,7 @@ class TestWindowLayout(unittest.TestCase):
             self.w.tabs.setCurrentIndex(0)
             self.w.console_panel_show(True)
             self.w.console_enter()
-            self.assertEqual(self.w.tabs.currentIndex(), 3)
+            self.assertEqual(self.w.tabs.currentIndex(), self.w.tabs.indexOf(self.w.con_page))
             self.assertTrue(self.w.con_panel.isHidden())
         finally:
             del self.w.console_source               # zurück zur echten Methode

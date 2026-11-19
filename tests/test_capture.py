@@ -344,11 +344,11 @@ class TestCaptureTab(unittest.TestCase):
         from bmc_steward.main import Window
         cls.w = Window()
 
-    def test_tab_exists_between_firmware_and_testlab(self):
+    def test_tab_exists_among_tools_before_testlab(self):
         menu = self.w.tabs.menu
         names = [menu.item(i).text() for i in range(menu.count())]
         i = names.index("Aufnahme")
-        self.assertEqual(names[i - 1], "Firmware")
+        self.assertEqual(names[i - 1], "UEFI-Konsole")
         self.assertEqual(names[i + 1], "Testlabor")
 
     def test_redaction_is_on_by_default_and_buttons_start_in_the_right_state(self):
