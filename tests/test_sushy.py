@@ -17,22 +17,13 @@ import time
 import unittest
 from pathlib import Path
 
-from tests._support import qapp
+from tests._support import forget_pins, qapp
 
 qapp()
 from bmc_steward import capture as C                  # noqa: E402
 from bmc_steward.redfish import ProbeEngine, RedfishClient   # noqa: E402
 
 EXE = os.environ.get("SUSHY_EMULATOR") or shutil.which("sushy-emulator")
-
-
-def forget_pins(addr):
-    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
-    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
-    from bmc_steward import trust
-    st = trust.store()
-    for key in list(st.for_addr(addr)):
-        st.forget(key)
 
 
 def free_port():

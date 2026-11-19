@@ -8,7 +8,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from tests._support import qapp
+from tests._support import forget_pins, qapp
 
 qapp()
 from bmc_steward import capture as C                  # noqa: E402
@@ -17,15 +17,6 @@ VENDORS = ("dell", "hpe", "lenovo", "smc")
 # Pfade, die die Aufnahme gezielt abfragt, ohne dass ein Simulator sie verlinkt (404 ist dort richtig)
 PROBED_ONLY = {"/redfish/v1/EventService", "/redfish/v1/Managers/iDRAC.Embedded.1/EthernetInterfaces/NIC.1"}
 VENDOR_OWN = ("/Attributes",)                         # herstellereigene Ressourcen ohne DMTF-Typ
-
-
-def forget_pins(addr):
-    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
-    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
-    from bmc_steward import trust
-    st = trust.store()
-    for key in list(st.for_addr(addr)):
-        st.forget(key)
 
 
 def links(doc):

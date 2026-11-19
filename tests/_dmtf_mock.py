@@ -20,6 +20,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from tests._support import forget_pins
 from tests._trees import TREES
 
 
@@ -174,6 +175,7 @@ class DmtfMockServer:
         for port in (0,):
             self.httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self.port = self.httpd.server_address[1]
+        forget_pins(self.addr)              # Port eines früheren Testservers? Dessen Merkung gilt nicht mehr
         self.httpd.daemon_threads = True
         self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True, do_handshake_on_connect=False)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
