@@ -142,7 +142,7 @@ class VbmcTabMixin:
         self.vbmc_cfgfile = None
         self.vbmc_run_mode = None
 
-        intro = QLabel(T("Virtuelle Böll/Häpe/Venolo/Hypernano-Server, die sich wie echte BMCs verhalten - zum "
+        intro = QLabel(T("Virtuelle Server, die sich wie echte BMCs verhalten - zum "
                          "Testen und Vorführen ohne Hardware. Im Modus Konfigraum oder Router bekommt jeder "
                          "Server eine eigene Netzwerkkarte mit MAC, holt sich per DHCP eine Adresse (oder hat "
                          "eine feste Werks-IP) und zieht beim Umstellen wirklich um."))
