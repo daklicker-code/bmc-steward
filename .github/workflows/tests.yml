@@ -34,3 +34,29 @@ jobs:
 
       - name: Prüfsuite (Unit-Tests + Audit + Fuzzing)
         run: python3 tests/run.py --fuzz 20000
+
+  redfish-validator:
+    # Offizieller DMTF-Validator gegen die virtuellen BMCs aller Hersteller (tools/ci/validate_vbmc.py).
+    # Rot nur, wenn ein Hersteller mehr Fehler hat als in tools/ci/validator-baseline.json erlaubt.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Validator installieren (exakt gepinnt, nur mit passenden Hashes; nur für die CI)
+        run: pip install --require-hashes -r tools/ci/validator.lock
+
+      - name: Validieren
+        run: python3 tools/ci/validate_vbmc.py --reports validator-reports
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: redfish-validator-reports
+          path: |
+            validator-reports/*/
+            validator-reports/summary.json
+            !validator-reports/SchemaFiles/

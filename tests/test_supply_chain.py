@@ -116,6 +116,16 @@ class TestWorkflows(unittest.TestCase):
         rel = (REPO / ".github" / "workflows" / "releases.yml").read_text(encoding="utf-8")
         self.assertIn("gh workflow run attest.yml", rel)
 
+    def test_redfish_validator_runs_in_ci_from_hashed_lock(self):
+        wf = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("pip install --require-hashes -r tools/ci/validator.lock", wf)
+        self.assertIn("tools/ci/validate_vbmc.py", wf)
+        pkgs = _lock_packages(REPO / "tools" / "ci" / "validator.lock")
+        self.assertIn("redfish-service-validator", pkgs)
+        for name, (version, hashes) in pkgs.items():
+            with self.subTest(package=name):
+                self.assertGreater(hashes, 0)
+
     def test_release_archive_is_reproducible(self):
         import subprocess
         import tempfile
