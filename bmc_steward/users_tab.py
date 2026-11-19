@@ -425,32 +425,45 @@ class UsersTabMixin:
         self.users_worker.start()
 
     def rot_done(self, new_pw):
+        """Neue Passwörter in die Serverliste. Gespeichert wird nur auf Wunsch: in den Schlüsselbund, wenn
+        dessen Haken gesetzt ist, sonst fragt das Tool (voreingestellt: nicht speichern)."""
         if not new_pw:
             return
         in_vault, leftover = {}, {}
+        use_vault = getattr(self, "vault_use", None) is not None and self.vault_use.isChecked() and vault.available()
         for ip, pw2 in new_pw.items():
             serial = ""
             for r in range(self.table.rowCount()):
                 if self.cell(r, 0) == ip or self.cell(r, 2) == ip:
                     self.table.item(r, 1).setText(pw2)
                     serial = self.cell(r, 6)
-            if vault.available() and vault.store(serial, ip, pw2):
+            if use_vault and vault.store(serial, ip, pw2):
                 in_vault[ip] = pw2
             else:
                 leftover[ip] = pw2
         parts = [T("  Neue Passwörter stehen jetzt in der Serverliste (Spalte „Passwort“)")]
-        if in_vault and not leftover:
-            parts.append(T("und im Schlüsselbund."))
-        else:
-            if in_vault:
-                parts.append(T('und für {0} davon zusätzlich im Schlüsselbund.').format(len(in_vault)))
+        if in_vault:
+            parts.append(T("und im Schlüsselbund.") if not leftover
+                         else T('und für {0} davon zusätzlich im Schlüsselbund.').format(len(in_vault)))
+        if leftover and self.rot_ask_save(len(leftover)):
             path = self.rot_save_results(leftover)
-            parts.append(T('und für die restlichen {0} zusätzlich gesichert unter {1}.')
-                         .format(len(leftover), path) if in_vault
-                         else T('und zusätzlich gesichert unter {0}.').format(path))
+            parts.append(T('und zusätzlich gesichert unter {0}.').format(path))
         parts.append(T("Bitte die Serverliste jetzt speichern."))
         self.users_say(" ".join(parts), "ok")
         self.rot_enabled_timestamp()
+
+    def rot_ask_save(self, n):
+        """Fragt, ob neu rotierte Passwörter als Datei gesichert werden sollen. Voreingestellt: nein."""
+        box = QMessageBox(QMessageBox.Icon.Warning, T("Neue Passwörter sichern?"),
+                          T("{0} neue Passwörter stehen nur in der Serverliste.").format(n), parent=self)
+        box.setInformativeText(T("Ohne Sicherung sind sie weg, wenn die Liste nicht gespeichert wird. Eine Datei "
+                                 "enthält sie im Klartext (nur für diesen Benutzer lesbar). Besser: Haken "
+                                 "„Passwörter im Schlüsselbund speichern“ in „Neuware“ setzen."))
+        b_file = box.addButton(T("Als Datei sichern"), QMessageBox.ButtonRole.DestructiveRole)
+        b_no = box.addButton(T("Nicht speichern"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(b_no)
+        box.exec()
+        return box.clickedButton() is b_file
 
     @staticmethod
     def rot_save_results(new_pw):

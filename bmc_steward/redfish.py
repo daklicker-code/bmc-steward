@@ -132,13 +132,23 @@ def xq(value):
 
 
 
-SECRET_KEYS = ("password", "passwd", "passphrase", "secret", "community", "token")   # als *** zeigen
+SECRET_KEYS = ("password", "passwd", "passphrase", "secret", "community", "token", "licensekey")   # als *** zeigen
 
 
 def secret_key(key):
     """True für Schlüssel, deren Wert nie im Protokoll stehen darf (auch z. B. Dells „Users.3.Password“)."""
     low = str(key).lower()
     return any(s in low for s in SECRET_KEYS)
+
+
+def redact(data):
+    """Kopie ohne Geheimnisse (Passwörter, Community-Strings, Token …) für Dateien auf der Platte, z. B. die
+    Sicherungen: der Wert wird zu None, der Schlüssel bleibt, damit die Struktur erhalten bleibt."""
+    if isinstance(data, dict):
+        return {k: (None if secret_key(k) and v not in (None, "", [], {}) else redact(v)) for k, v in data.items()}
+    if isinstance(data, list):
+        return [redact(v) for v in data]
+    return data
 
 
 CERT_KEYS = ("sslcertificatefile", "certificate", "certificatestring")   # langen Zertifikatstext kürzen
@@ -450,7 +460,7 @@ class RedfishClient:
         from .core import __version__
         doc = {"meta": {"address": addr_key(ip), "device": self.keys.get(addr_key(ip), ""), "vendor": vendor,
                         "reason": reason, "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "version": __version__,
-                        "run": self.run_id}, "resources": data}
+                        "run": self.run_id}, "resources": redact(data)}
         path = i18n.DATA / "sicherungen" / folder / (time.strftime("%Y%m%d-%H%M%S-") + reason + ".json")
         try:
             i18n.write_private(path, json.dumps(doc, indent=1, ensure_ascii=False))

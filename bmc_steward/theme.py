@@ -143,7 +143,7 @@ def stylesheet(name):
     t = dict(TOKENS[name])
     t.update({f"i_{k}": v for k, v in _icons(name).items()})
     return """
-QToolTip {{ background: {card}; color: {text}; border: 1px solid {line2}; padding: 5px 7px; }}
+QToolTip {{ background: {card}; color: {text}; border: 1px solid {line2}; padding: 8px 10px; }}
 QWidget#sidebar {{ background: {panel}; border-right: 1px solid {line}; }}
 QLabel#brandName {{ font-size: 15px; font-weight: 600; }}
 QLabel#brandVersion, QLabel#muted {{ color: {dim}; font-size: 11px; }}
@@ -183,6 +183,9 @@ QCheckBox, QRadioButton {{ spacing: 7px; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {line2}; border-radius: 4px; background: {input}; }}
 QCheckBox::indicator:checked {{ background: {accent}; border-color: {accent}; image: url({i_check}); }}
 QCheckBox::indicator:disabled {{ background: {bg}; border-color: {line}; }}
+QRadioButton::indicator {{ width: 16px; height: 16px; border: 1px solid {line2}; border-radius: 9px; background: {input}; }}
+QRadioButton::indicator:checked {{ border: 5px solid {accent}; width: 8px; height: 8px; background: {on_accent}; }}
+QRadioButton::indicator:disabled {{ background: {bg}; border-color: {line}; }}
 QCheckBox#toggle::indicator {{ width: 36px; height: 20px; border: none; background: transparent;
                               image: url({i_toggle_off}); }}
 QCheckBox#toggle::indicator:checked {{ image: url({i_toggle_on}); }}
@@ -236,6 +239,8 @@ def apply(app, choice=None, sheet=True):
         app.setPalette(palette(name))
         if sheet:
             app.setStyleSheet(stylesheet(name))
+        from . import tooltips
+        tooltips.install(app)                      # Tooltips als schmale, lesbare Kästchen
     changed = name != _current
     _current = name
     if changed:

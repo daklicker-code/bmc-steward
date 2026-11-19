@@ -95,9 +95,25 @@ class DhcpTabMixin:
         self.auto_timer = QTimer(self)             # holt zurückgestellte Geräte nach (Lauf aktiv, Zelle in Bearbeitung)
         self.auto_timer.setInterval(2000)
         self.auto_timer.timeout.connect(self.auto_take_leases)
+        self.auto_console = QCheckBox(T("Neue Server in der UEFI-Konsole öffnen"))
+        self.auto_console.setChecked(False)
+        self.auto_console.setToolTip(T(
+            "Sobald ein neu angeschlossener Server eine Adresse bekommt und seine Weboberfläche antwortet, "
+            "öffnet das Tool ihn in der UEFI-Konsole.\n\n"
+            "Nur Geräte, die nach dem Setzen des Hakens neu auftauchen. Eine laufende Konsole wird nie "
+            "unterbrochen. Angemeldet wird mit dem Werkspasswort aus „Neuware“; fehlt es, steht nur die "
+            "Adresse in der Konsole.\n\n"
+            "Der Server wird nicht neu gestartet: ins UEFI-Setup geht es erst mit dem Knopf in der Konsole."))
+        self.auto_console.toggled.connect(self.auto_console_toggled)
+        self.console_seen = set()              # MACs, die schon einmal in die Konsole durften
+        self.console_wait = {}                 # IP -> Zahl der Versuche, bis die Weboberfläche antwortet
+        self.console_timer = QTimer(self)
+        self.console_timer.setInterval(5000)
+        self.console_timer.timeout.connect(self.auto_console_poll)
         lb = QHBoxLayout()
         lb.addWidget(self.lease_count)
         lb.addStretch()
+        lb.addWidget(self.auto_console)
         lb.addWidget(self.auto_take)
         lb.addWidget(take)
         self.own_laptop_label = QLabel()
@@ -441,6 +457,7 @@ class DhcpTabMixin:
                 self.leases.setItem(r, c, QTableWidgetItem(val))
         self.lease_count.setText(T('{0} Geräte').format(len(rows)))
         self.auto_take_leases()
+        self.auto_console_leases()
 
     def show_own_lease(self, row):
         """Eigenen Rechner über der Geräteliste anzeigen (nicht in der Liste selbst)."""
@@ -497,6 +514,69 @@ class DhcpTabMixin:
             text = T('{0} Geräte automatisch übernommen: jetzt neue IP und Hostname eintragen').format(len(new))
             self.status.setText(text)
             self.dlog(text, "#3fa45b")
+
+    # ---------- Neue Server automatisch in die UEFI-Konsole ----------
+    def auto_console_toggled(self, on):
+        """Beim Einschalten zählen nur Geräte, die danach neu auftauchen."""
+        self.console_seen = {mac or ip for ip, mac in self.lease_pairs()} if on else set()
+        self.console_wait.clear()
+        if not on:
+            self.console_timer.stop()
+
+    def auto_console_leases(self):
+        if not self.auto_console.isChecked():
+            return
+        for ip, mac in self.lease_pairs():
+            if (mac or ip) not in self.console_seen:
+                self.console_seen.add(mac or ip)
+                self.console_wait[ip] = 0
+                self.dlog(T("Neuer Server {0}: warte auf die Weboberfläche, dann UEFI-Konsole.").format(ip))
+        if self.console_wait and not self.console_timer.isActive():
+            self.console_timer.start()
+            self.auto_console_poll()
+
+    def auto_console_poll(self):
+        """Prüft ohne zu blockieren, ob Port 443 antwortet; die erste antwortende Adresse geht in die Konsole."""
+        from PyQt6.QtNetwork import QTcpSocket
+        if not self.console_wait:
+            self.console_timer.stop()
+            return
+        for ip in list(self.console_wait):
+            self.console_wait[ip] += 1
+            if self.console_wait[ip] > 60:              # fünf Minuten ohne Antwort: aufgeben
+                del self.console_wait[ip]
+                self.dlog(T("Server {0} antwortet nicht auf HTTPS, UEFI-Konsole nicht geöffnet.").format(ip), "#d29922")
+                continue
+            sock = QTcpSocket(self)
+            sock.connected.connect(lambda ip=ip, sock=sock: self.auto_console_ready(ip, sock))
+            sock.errorOccurred.connect(lambda *_, sock=sock: sock.deleteLater())
+            sock.connectToHost(ip, 443)
+            limit = QTimer(sock)                        # hängt am Socket: ist er schon weg, feuert er nicht mehr
+            limit.setSingleShot(True)
+            limit.timeout.connect(lambda sock=sock: (sock.abort(), sock.deleteLater()))
+            limit.start(3000)
+
+    def auto_console_ready(self, ip, sock):
+        sock.disconnectFromHost()
+        sock.deleteLater()
+        if ip not in self.console_wait:
+            return
+        if self.console_active():                       # laufende Konsole nie unterbrechen: später noch einmal
+            return
+        del self.console_wait[ip]
+        pw = next((self.cell(r, 1) for r in range(self.table.rowCount()) if self.cell(r, 0) == ip), "") \
+            or self.cur_pass.text()
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.con_page))
+        self.con_ip.setEditText(ip)
+        if self.cur_user.text().strip():
+            self.con_user.setText(self.cur_user.text().strip())
+        self.con_pass.setText(pw)
+        self.dlog(T("Server {0} in der UEFI-Konsole geöffnet.").format(ip), "#3fa45b")
+        if pw:
+            self.console_connect()
+        else:
+            self.console_set_status(T("Adresse {0} übernommen. Benutzer und Passwort eintragen, dann „Verbinden“.").format(ip))
+            self.con_pass.setFocus()
 
     @staticmethod
     def address_is_dynamic(name, ip):

@@ -18,7 +18,7 @@ ACCENT_ROLE = Qt.ItemDataRole.UserRole + 1      # Farbe, in der der Punkt unter 
 MARK_ROLE = Qt.ItemDataRole.UserRole + 2        # Inhalt des Kreises links: Schrittnummer oder Symbol
 SECTION_ROLE = Qt.ItemDataRole.UserRole + 3     # Überschrift über dem Punkt (Beginn eines Bereichs)
 LAMP_ROLE = Qt.ItemDataRole.UserRole + 4        # Farbe der Leuchte rechts („hier läuft gerade etwas“), sonst leer
-HEAD_H, ROW_H = 26, 34
+HEAD_H, ROW_H = 22, 31
 LAB_LAMP = "#f2c200"         # Leuchte „Testlabor“: virtuelle Server laufen
 PLAN_LAMP = "#3b8beb"        # Leuchte „Aufbauplaner“: Ausfall-Simulation läuft
 

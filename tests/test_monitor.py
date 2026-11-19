@@ -277,19 +277,20 @@ class TestWindowLayout(unittest.TestCase):
     def test_page_order_and_sections(self):
         # Fest im Code: 0 = DHCP-Server, 1 = Neuware; alles andere wird über indexOf angesprungen
         from bmc_steward.sidenav import MARK_ROLE, SECTION_ROLE
-        self.assertEqual(self.w.tabs.count(), 12)
-        names = [self.w.tabs.menu.item(i).text() for i in range(12)]
+        self.assertEqual(self.w.tabs.count(), 13)
+        names = [self.w.tabs.menu.item(i).text() for i in range(13)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
-                                 "Benutzerkonten", "Firmware", "UEFI-Konsole", "Aufnahme", "Testlabor",
+                                 "Benutzerkonten", "Firmware", "Mainboard-Tausch", "UEFI-Konsole", "Aufnahme", "Testlabor",
                                  "Aufbauplaner", "Hilfe"])
-        sections = {i: self.w.tabs.menu.item(i).data(SECTION_ROLE) for i in range(12)}
-        self.assertEqual({i: s for i, s in sections.items() if s}, {0: "Einrichtung", 7: "Werkzeuge"})
+        sections = {i: self.w.tabs.menu.item(i).data(SECTION_ROLE) for i in range(13)}
+        self.assertEqual({i: s for i, s in sections.items() if s}, {0: "Einrichtung", 3: "Konfiguration", 7: "Service", 9: "Werkzeuge"})
         self.assertEqual([self.w.tabs.menu.item(i).data(MARK_ROLE) for i in range(7)], list(range(7)))
-        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 7)
+        self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 8)
+        self.assertEqual(self.w.tabs.indexOf(self.w.swap_page), 7)
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
-        page = self.w.tabs.widget(11)
+        page = self.w.tabs.widget(12)
         self.assertIs(self.w.help_logo.parent(), page)
         self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 
@@ -321,7 +322,7 @@ class TestWindowLayout(unittest.TestCase):
             p = QPainter(img)
             delegate.paint(p, opt, index)
             p.end()
-            return img.pixelColor(150, height - 30)  # Fläche des Punkts unter der Überschrift, ohne Text
+            return img.pixelColor(150, height - 8)   # Fläche des Punkts unter der Überschrift, ohne Text
 
         yellow = QColor("#c9a100")
         hover = render(QStyle.StateFlag.State_MouseOver)

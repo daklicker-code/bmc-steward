@@ -233,7 +233,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         apply_pw.setToolTip(T("Trägt das Passwort von oben in die Spalte „Passwort“ aller Zeilen ein\n"
                             "und überschreibt dort vorhandene Einträge."))
         apply_pw.clicked.connect(self.apply_password)
-        box_cur = QGroupBox(T("Aktueller Login (Auslieferungszustand)"))
+        box_cur = QGroupBox(T("1 · Werkszugang (Auslieferungszustand)"))
         box_cur.setToolTip(T("Mit diesen Daten meldet sich das Tool an den Geräten an, um sie umzustellen."))
         f = self.compact_form(box_cur)
         self.vendor_tip_base = T("„Automatisch erkennen“ fragt jedes Gerät nach seinem Hersteller, gemischte Listen sind möglich.\n"
@@ -260,7 +260,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.slot = QSpinBox()
         self.slot.setRange(3, 16)
         self.slot.setValue(3)
-        box_new = QGroupBox(T("Neuer Administrator"))
+        box_new = QGroupBox(T("2 · Neuer Administrator"))
         box_new.setToolTip(T("Dieses Konto wird auf jedem Gerät der Liste eingerichtet."))
         f = self.compact_form(box_new)
         user_tip = T("Name des Administrator-Kontos, das auf allen Geräten angelegt wird.\n"
@@ -311,14 +311,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
         f.addRow(self.lock_factory)                 # untereinander: die Seite bleibt auch auf 1366er-Bildschirmen schmal
         f.addRow(self.clear_pass_after)
-        # Mainboard getauscht: eigener Dialog für genau einen Server (Identität, Sicherung, Zertifikat)
-        self.swap_btn = QPushButton(T("Mainboard getauscht …"))
-        self.swap_btn.setToolTip(T("Für einen Server nach dem Tausch der Systemplatine: vergleicht das neue Board mit dem "
-                                   "Aufkleber am Gehäuse,\nsucht die Sicherung des alten Boards, setzt bei HPE "
-                                   "Seriennummer und Produkt-ID und zeigt je Hersteller,\nwas zu tun ist. Nimmt die "
-                                   "markierte Zeile der Serverliste."))
-        self.swap_btn.clicked.connect(self.open_board_swap)
-        f.addRow(self.swap_btn)
 
         # --- Vorgaben für neue Zeilen ---
         self.def_mask = QLineEdit()
@@ -327,7 +319,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.def_gw.setPlaceholderText(T("z. B. 10.20.0.1"))
         for w in (self.def_mask, self.def_gw):
             w.editingFinished.connect(self.validate_defaults)
-        box_def = QGroupBox(T("Vorgaben für neue Zeilen"))
+        box_def = QGroupBox(T("3 · Netzwerk-Vorgaben für neue Zeilen"))
         box_def.setToolTip(T("Gelten für Zeilen, die danach neu entstehen („+ Server“, „Server suchen“, DHCP-Übernahme).\n"
                              "Schon vorhandene Zeilen ändert erst der Knopf „Auf Liste anwenden“."))
         f = self.compact_form(box_def)
@@ -426,7 +418,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         vrow.addStretch()
         vrow.addWidget(vault_clear)
 
-        box_list = QGroupBox(T("Serverliste"))
+        box_list = QGroupBox(T("4 · Serverliste"))
         v = QVBoxLayout(box_list)
         v.addWidget(self.table)
         v.addLayout(btns)
@@ -521,12 +513,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "zur Kontrolle unter der neuen Adresse an und sperrt das Werkskonto.<br><b>Ablauf:</b> Server eintragen "
             "(oder aus „DHCP-Server“ übernehmen), oben den neuen Administrator eingeben, im Trockenlauf prüfen, dann "
             "scharf starten. Fertige Zeilen werden grün und beim nächsten Lauf übersprungen.")))
+        self.new_page = page
         self.tabs.addTab(page, T("Neuware"), mark=1, scroll=True)
         self.tabs.addTab(self.build_existing(), T("Bestandsserver"), mark=2)
         con_page = self.build_console()
         for widget, key in ((dhcp_page, "dhcp"), (page, "new"), (con_page, "console")):
             self.deps_footers.append(deps.attach(widget, key))
-        self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"), mark=3)
+        self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"), mark=3, section=T("Konfiguration"))
         self.services_page = self.build_services()
         self.services_page.layout().insertWidget(0, intro_label(T(
             "<b>Dienste</b> richtet auf allen Servern der Serverliste dieselben Verwaltungsdienste ein, z. B. "
@@ -541,8 +534,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "verlangt das Eintippen der Serverzahl. Tipp: vorher und nachher unter „Aufnahme“ aufnehmen und "
             "vergleichen.")))
         self.tabs.addTab(fw_page, T("Firmware"), mark=6)
-        self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢", section=T("Werkzeuge"))
-        self.tabs.addTab(self.build_capture(), T("Aufnahme"), mark="◉")
+        self.swap_page = self.build_board_swap()
+        self.tabs.addTab(self.swap_page, T("Mainboard-Tausch"), mark="⇄", section=T("Service"))
+        self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢")
+        self.tabs.addTab(self.build_capture(), T("Aufnahme"), mark="◉", section=T("Werkzeuge"))
         vbmc_page = self.build_vbmc()
         self.vbmc_page = vbmc_page
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
@@ -687,7 +682,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                   T("Bestandsserver"): T("Bestandsserver prüfen"), T("UEFI-Einstellungen"): T("UEFI-Einstellungen setzen"),
                   T("Dienste"): T("Dienste einrichten"), T("Benutzerkonten"): T("Benutzerkonten verwalten"),
                   T("Firmware"): T("Firmware aktualisieren"), T("Aufnahme"): T("Aufnahme und Vergleich"),
-                  T("Testlabor"): T("Testlabor")}
+                  T("Testlabor"): T("Testlabor"), T("Mainboard-Tausch"): T("Server nach Teiletausch wiederherstellen")}
         from .sidenav import MARK_ROLE
         section = ""
         for i in range(self.tabs.count()):
@@ -724,27 +719,65 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             LOG.debug(T("Seite: {0}").format(item.text()))
 
     # ---------- Hilfen ----------
-    def open_board_swap(self):
-        """Dialog „Mainboard getauscht“ für die markierte (sonst erste) Zeile der Serverliste."""
-        from .board_swap import BoardSwapDialog
+    def build_board_swap(self):
+        """Seite „Mainboard-Tausch“: eigener Menüpunkt unter „Service“."""
+        from .board_swap import BoardSwapPage
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.addWidget(intro_label(T(
+            "<b>Mainboard-Tausch</b> bringt einen Server nach einem Teiletausch wieder auf den alten Stand: Kennung "
+            "vom Gehäuse-Aufkleber, Lizenz, Netzwerkdienste und UEFI-Einstellungen aus der Sicherung, Hostname und "
+            "Adresse in die Serverliste.<br><b>Ablauf:</b> Szenario wählen, neues Board prüfen (nur lesend), Haken "
+            "kontrollieren, im Trockenlauf ausführen, dann scharf. Administrator und Netzwerk richtet danach "
+            "„Neuware“ ein.")))
+        self.swap = BoardSwapPage(page, ("", "", ""), "")
+        self.swap.take_ready.connect(self.board_swap_take)
+        self.swap.row_wanted.connect(self.board_swap_row)
+        self.swap.search_wanted.connect(lambda: self.open_netscan(True))
+        self.swap.console_wanted.connect(self.board_swap_console)
+        self.swap.next_wanted.connect(lambda: self.tabs.setCurrentIndex(self.tabs.indexOf(self.new_page)))
+        lay.addWidget(self.swap, 1)
+        return page
+
+    def board_swap_row(self):
+        """Markierte (sonst erste) Zeile der Serverliste in die Seite „Mainboard-Tausch“ übernehmen."""
         r = self.table.currentRow()
         if r < 0 and self.table.rowCount():
             r = 0
-        row = (self.cell(r, 0), self.cell(r, 1), self.cell(r, 6)) if r >= 0 else ("", self.cur_pass.text(), "")
-        dlg = BoardSwapDialog(self, row, self.cur_user.text().strip())
-        dlg.exec()
-        if dlg.take:
-            host, ip, mask, gw, serial = dlg.take
-            if r < 0:
-                self.add_row()
-                r = self.table.rowCount() - 1
-            for c, val in ((0, dlg.addr.text().strip()), (2, ip), (3, mask), (4, gw), (5, host), (6, serial)):
-                if val:
-                    item = self.table.item(r, c) or QTableWidgetItem()
-                    item.setText(val)
-                    self.table.setItem(r, c, item)
-            self.touch()
-            self.update_missing()
+        if r >= 0:
+            self.swap.set_row(self.cell(r, 0), self.cell(r, 1) or self.cur_pass.text(), self.cell(r, 6))
+        if not self.swap.user.text().strip():
+            self.swap.user.setText(self.cur_user.text().strip())
+
+    def board_swap_console(self, ip, user, pw):
+        """Neues Board in der UEFI-Konsole öffnen (Felder vorbelegen, nichts speichern)."""
+        if not ip:
+            self.swap.say(T("Aktuelle IP eintragen."), "err")
+            return
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.con_page))
+        self.con_ip.setEditText(ip)
+        if user:
+            self.con_user.setText(user)
+        self.con_pass.setText(pw)
+        self.console_connect()
+
+    def board_swap_take(self, vals):
+        """Werte aus „Mainboard-Tausch“ in die Serverliste: Zeile mit derselben Aktuellen IP, sonst eine neue."""
+        cur, host, ip, mask, gw, serial = vals
+        r = next((i for i in range(self.table.rowCount()) if cur and self.cell(i, 0) == cur), -1)
+        if r < 0:
+            r = next((i for i in range(self.table.rowCount()) if not any(self.cell(i, c) for c in (0, 2, 5))), -1)
+        if r < 0:
+            self.add_row()
+            r = self.table.rowCount() - 1
+        for c, val in ((0, cur), (2, ip), (3, mask), (4, gw), (5, host), (6, serial)):
+            if val:
+                item = self.table.item(r, c) or QTableWidgetItem()
+                item.setText(val)
+                self.table.setItem(r, c, item)
+        self.touch()
+        self.update_missing()
 
     def later(self, ms, fn):
         """Einmal-Timer, der am Fenster hängt: Wird das Fenster vorher gelöscht (z. B. am Ende eines Tests),
@@ -1570,6 +1603,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.stop_dhcp()
         self.console_shutdown()
         self.vbmc_shutdown()
+        self.swap.stop_thread()
+        self.swap.clear_secrets()
         for th in list(self.vendor_threads.values()):      # kurze Gnadenfrist, sonst Warnung/Absturz beim Beenden
             th.wait(300)
         event.accept()
@@ -1931,6 +1966,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "lock_factory": self.lock_factory.isChecked(),
             "clear_pass_after": self.clear_pass_after.isChecked(),
             "auto_take": self.auto_take.isChecked(), "lease_taken": sorted(self.lease_taken),
+            "auto_console": self.auto_console.isChecked(), "console_seen": sorted(self.console_seen),
             "rows": [([self.cell(r, c) for c in range(len(i18n.COLS))], self.is_done(r))
                      for r in range(self.table.rowCount())],
             "bios_profile": self.bios_current_profile(), "bios_vendor": self.bios_vendor.currentData() or "",
@@ -1955,6 +1991,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.clear_pass_after.setChecked(s.get("clear_pass_after", True))
         self.auto_take.setChecked(s.get("auto_take", False))
         self.lease_taken = set(s.get("lease_taken", []))
+        self.auto_console.setChecked(s.get("auto_console", False))
+        self.console_seen = set(s.get("console_seen", []))
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for vals, done in s["rows"]:

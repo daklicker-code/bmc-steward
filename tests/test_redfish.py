@@ -164,6 +164,22 @@ class TestSecretScrub(unittest.TestCase):
             self.assertNotIn(leak, out)
         self.assertIn("admin", out)
 
+    def test_license_key_is_masked(self):
+        self.assertNotIn("ABCDE-12345", scrub({"LicenseKey": "ABCDE-12345-FGHIJ-67890-KLMNO"}))
+
+    def test_backups_on_disk_carry_no_secrets(self):
+        from bmc_steward.redfish import redact
+        doc = {"/Managers/1/Attributes": {"Attributes": {"SNMP.1.AgentCommunity": "public", "NIC.1.DNSRacName": "r1",
+                                                         "Users.2.Password": None}},
+               "/Managers/1/NetworkProtocol": {"IPMI": {"ProtocolEnabled": False}},
+               "list": [{"Password": "geheim"}]}
+        out = redact(doc)
+        self.assertIsNone(out["/Managers/1/Attributes"]["Attributes"]["SNMP.1.AgentCommunity"])
+        self.assertEqual(out["/Managers/1/Attributes"]["Attributes"]["NIC.1.DNSRacName"], "r1")
+        self.assertEqual(out["/Managers/1/NetworkProtocol"], {"IPMI": {"ProtocolEnabled": False}})
+        self.assertIsNone(out["list"][0]["Password"])
+        self.assertEqual(doc["list"][0]["Password"], "geheim")          # Original bleibt unverändert
+
 
 class TestFactoryLock(unittest.TestCase):
     def _eng(self, cur_user, new_user="ops"):

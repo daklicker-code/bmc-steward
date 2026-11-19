@@ -1,5 +1,6 @@
-"""Modus „Mainboard getauscht“: Sicherung des alten Boards auswerten, Identität des neuen Boards lesen,
-HPE-Seriennummer/Produkt-ID setzen, altes Zertifikat vergessen, Werte in die Serverliste übernehmen."""
+"""Seite „Mainboard-Tausch“: Sicherung des alten Boards auswerten, Identität des neuen Boards lesen,
+HPE-Seriennummer/Produkt-ID setzen, altes Zertifikat vergessen, Werte in die Serverliste übernehmen,
+und je Szenario (Systemplatine, nur BMC, nur Prozessorplatine, Ersatzgerät) nur passende Schritte anbieten."""
 import json
 import time
 import unittest
@@ -52,6 +53,22 @@ class TestBackupHelpers(unittest.TestCase):
         self.assertEqual(doc["meta"]["time"], "neu")
         self.assertEqual(latest_backup("GIBTSNICHT"), (None, None))
 
+    def test_scenarios_offer_only_fitting_steps(self):
+        from bmc_steward.board_swap import SCENARIOS
+        self.assertFalse(SCENARIOS["server"]["ident"])           # Ersatzgerät: Kennung nie ändern
+        self.assertFalse(SCENARIOS["bmc"]["bios"])               # UEFI liegt auf der Hauptplatine, unberührt
+        self.assertFalse(SCENARIOS["cpu"]["take"] or SCENARIOS["cpu"]["pin"])   # BMC bleibt: Adresse, Zertifikat
+        self.assertTrue(all(SCENARIOS["board"].values()))
+
+    def test_vendor_advice_covers_every_vendor_and_scenario(self):
+        from bmc_steward.board_swap import SCENARIOS, vendor_advice
+        for v in ("hpe", "hpe_old", "dell", "lenovo", "smc"):
+            for scen in SCENARIOS:
+                for same in (False, True):
+                    adv = vendor_advice(v, scen, same)
+                    self.assertTrue(all(isinstance(t, str) and k in ("", "ok") for t, k in adv), (v, scen))
+        self.assertTrue(vendor_advice("hpe", "board", False))
+
     def test_lenovo_commands_never_contain_the_password(self):
         from bmc_steward.board_swap import lenovo_commands
         lines = lenovo_commands("10.0.0.9", "USERID", "7X02CTO1WW", "J300ABCD")
@@ -100,7 +117,7 @@ class TestBoardSwapLive(_WebBase):
         self._isolate_data()
         from PyQt6.QtWidgets import QApplication
         from bmc_steward import i18n, trust
-        from bmc_steward.board_swap import BoardSwapDialog
+        from bmc_steward.board_swap import BoardSwapPage
         b, port = self._start("hpe")
         user, pw = FACTORY_LOGIN["hpe"]
         label = "CZJ7654321"
@@ -108,7 +125,7 @@ class TestBoardSwapLive(_WebBase):
         d.mkdir(parents=True)
         (d / "20261101-100000-neuware.json").write_text(json.dumps(BACKUP), encoding="utf-8")
         trust.store().check("uuid:1111-2222", "ab" * 32, "10.0.0.21")
-        dlg = BoardSwapDialog(None, (f"127.0.0.1:{port}", pw, label), "")
+        dlg = BoardSwapPage(None, (f"127.0.0.1:{port}", pw, label), "")
         dlg.pid.setText("868703-B21")
 
         def wait():
@@ -130,6 +147,59 @@ class TestBoardSwapLive(_WebBase):
         self.assertEqual(dlg.take, ("srv-21", "10.0.0.21", "255.255.255.0", "10.0.0.1", label))
         self.assertEqual(b.bios.get("SerialNumber"), label)
         dlg.close()
+
+
+class TestScenarioPage(_WebBase):
+    """Ersatzgerät: Sicherung unter der alten Seriennummer, Kennung des neuen Geräts bleibt unangetastet."""
+
+    def test_spare_server_takes_old_settings_but_keeps_its_serial(self):
+        qapp()
+        self._isolate_data()
+        from PyQt6.QtWidgets import QApplication
+        from bmc_steward import i18n
+        from bmc_steward.board_swap import BoardSwapPage
+        b, port = self._start("hpe")
+        d = i18n.DATA / "sicherungen" / "ALTSERVER1"
+        d.mkdir(parents=True)
+        (d / "20261101-100000-neuware.json").write_text(json.dumps(BACKUP), encoding="utf-8")
+        page = BoardSwapPage(None, (f"127.0.0.1:{port}", FACTORY_LOGIN["hpe"][1], "NEUSERIE01"), "")
+        self.addCleanup(page.close)
+        page.scen_btn["server"].setChecked(True)
+        page.old_serial.setText("ALTSERVER1")
+        taken = []
+        page.take_ready.connect(taken.append)
+        page.check()
+        deadline = time.monotonic() + 30
+        while page.thread.isRunning() and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.02)
+        QApplication.processEvents()
+        self.assertFalse(page.do_ident.isEnabled(), page.out.toPlainText())
+        self.assertEqual(page.new_ip.text(), "10.0.0.21")
+        self.assertTrue(page.do_take.isChecked())
+        before = dict(b.bios)
+        page.dry.setChecked(False)
+        page.execute()
+        QApplication.processEvents()
+        self.assertEqual(taken[0][1:], ("srv-21", "10.0.0.21", "255.255.255.0", "10.0.0.1", "NEUSERIE01"))
+        self.assertEqual(b.bios.get("SerialNumber"), before.get("SerialNumber"))
+        self.assertEqual(page.pw.text(), "")                     # Passwort nach dem scharfen Lauf gelöscht
+
+    def test_without_backup_hostname_and_address_can_be_typed(self):
+        qapp()
+        self._isolate_data()
+        from bmc_steward.board_swap import BoardSwapPage
+        page = BoardSwapPage(None, ("10.9.9.9", "", "KEINEBACKUP"), "")
+        self.addCleanup(page.close)
+        page.info = {"ok": True, "vendor": "dell", "user": "root", "serial": "", "sku": ""}
+        page.find_backup()
+        self.assertIsNone(page.backup)
+        self.assertFalse(page.do_take.isEnabled())
+        page.host.setText("srv-99")
+        page.new_ip.setText("10.0.0.99")
+        self.assertTrue(page.do_take.isEnabled() and page.do_take.isChecked())
+        page.scen_btn["cpu"].setChecked(True)                   # BMC bleibt: nichts in die Liste
+        self.assertFalse(page.do_take.isEnabled())
 
 
 class TestRestoreFromBackupLive(_WebBase):
@@ -213,14 +283,14 @@ class TestRestoreFromBackupLive(_WebBase):
         qapp()
         from PyQt6.QtWidgets import QApplication
         from bmc_steward import i18n
-        from bmc_steward.board_swap import BoardSwapDialog
+        from bmc_steward.board_swap import BoardSwapPage
         old, doc = self.old_backup("hpe")
         label = "CZJ7654321"
         d = i18n.DATA / "sicherungen" / label
         d.mkdir(parents=True, exist_ok=True)
         (d / "20261101-100000-neuware.json").write_text(json.dumps(doc), encoding="utf-8")
         new, port = self._start("hpe", idx=2)
-        dlg = BoardSwapDialog(None, (f"127.0.0.1:{port}", FACTORY_LOGIN["hpe"][1], label), "")
+        dlg = BoardSwapPage(None, (f"127.0.0.1:{port}", FACTORY_LOGIN["hpe"][1], label), "")
         self.addCleanup(dlg.close)
 
         def wait():
