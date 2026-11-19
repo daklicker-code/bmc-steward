@@ -4,44 +4,31 @@ Links die Bibliothek (Server aus der Serverliste, Switches, Infrastruktur, Platz
 Racks als Zeichenfläche (RackCanvas), rechts Eigenschaften, Prüfung, Netze und Stückliste. Der Plan selbst
 (planner.Plan) kennt keine Oberfläche. Gespeichert wird nur auf Knopfdruck – wie überall im Tool.
 """
+import ipaddress
 import json
+import re
+from html import escape as html_escape
 from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPalette, QPainterPath, QPainterPathStroker, QPen,
+from PyQt6.QtGui import (QBrush, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen,
                          QShortcut)
-from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QDialog, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
                              QHBoxLayout, QHeaderView, QInputDialog, QStyle, QTreeWidget, QTreeWidgetItem,
                              QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
-                             QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
-                             QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout, QWidget)
+                             QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
+                             QTableWidgetItem, QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from . import i18n
 from .applog import LOG
-from .core import WINDOWS, intro_label
-from .i18n import DATA, HERE, T, write_private
-from .planner import (CATALOG, MAX_COLS, MAX_DEV_U, MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES,
+from .core import intro_label
+from . import theme
+from .i18n import HERE, T
+from .planner import (CATALOG, SFP_PRESETS, compatible, MAX_COLS, MAX_DEV_U, MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES,
                       Plan, catalog_texts, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord, port_name,
                       rack_tiles, vendor_of)
 
 MIME = "application/x-bmc-steward-planner"
-PREFS = DATA / "bmc-planner.json"           # nur die Design-Wahl, keine Plandaten
-
-
-def load_theme_choice():
-    try:
-        choice = json.loads(PREFS.read_text(encoding="utf-8")).get("theme")
-    except (OSError, ValueError, AttributeError):
-        choice = None
-    return choice if choice in ("auto", "light", "dark") else "auto"
-
-
-def save_theme_choice(choice):
-    try:
-        write_private(PREFS, json.dumps({"theme": choice}) + "\n")
-    except OSError:
-        pass
-
 # Farbschemata. Hell im Stil üblicher DCIM-Werkzeuge (Vorgabe unter Windows), dunkel wie der Rest von
 # BMC-Steward (Vorgabe unter Linux). apply_theme() setzt die Namen unten; die Zeichenflächen lesen sie beim Zeichnen.
 _C = QColor
@@ -122,25 +109,6 @@ def apply_theme(name):
     globals().update(THEMES[name if name in THEMES else "light"])
 
 
-def default_theme():
-    """Vorgabe je System: hell unter Windows, sonst dunkel."""
-    return "light" if WINDOWS else "dark"
-
-
-def dark_palette():
-    pal = QPalette()
-    for role, col in ((QPalette.ColorRole.Window, "#0f191b"), (QPalette.ColorRole.WindowText, "#d6e2e0"),
-                      (QPalette.ColorRole.Base, "#0b1214"), (QPalette.ColorRole.AlternateBase, "#101a1c"),
-                      (QPalette.ColorRole.Text, "#d6e2e0"), (QPalette.ColorRole.Button, "#142124"),
-                      (QPalette.ColorRole.ButtonText, "#bcd0cd"), (QPalette.ColorRole.Highlight, "#1f6b52"),
-                      (QPalette.ColorRole.HighlightedText, "#ffffff"), (QPalette.ColorRole.Mid, "#23363a"),
-                      (QPalette.ColorRole.PlaceholderText, "#4f6764"), (QPalette.ColorRole.ToolTipBase, "#101a1c"),
-                      (QPalette.ColorRole.ToolTipText, "#d6e2e0"), (QPalette.ColorRole.Light, "#2a3c3f"),
-                      (QPalette.ColorRole.Dark, "#081011"), (QPalette.ColorRole.Link, "#6ee7b7")):
-        pal.setColor(role, QColor(col))
-    return pal
-
-
 # Vorgabe hell; die Namen stehen hier ausdrücklich, damit Werkzeuge wie pyflakes sie kennen
 _L = THEMES["light"]
 (BG, RACK_BG, RACK_LINE, RAIL, STRIPE, TEXT, MUTED, DIM, ACCENT, TITLE_BG, TITLE_SEL, TITLE_TEXT, TITLE_SUB,
@@ -158,6 +126,12 @@ LEVEL_MARK = {"err": "✕", "warn": "!", "info": "i"}
 def net_names():
     return {"mgmt": T("Management (BMC)"), "data": T("Daten"), "storage": T("Storage"), "uplink": T("Uplink"),
             "patch": T("Patch"), "fc": T("Fibre Channel"), "sas": T("SAS"), "cluster": T("Cluster")}
+
+
+def rack_label(plan, r):
+    """„C04“ oder „Netz-1 · C04“: der Stellplatz nur, wenn er nicht schon der Name ist."""
+    coord = plan.coord(r)
+    return r["name"] if coord in (r["name"], "–") else f"{r['name']} · {coord}"
 
 
 def _group(title):
@@ -300,6 +274,7 @@ class RackCanvas(ZoomPan, QWidget):
         self.ghost = None                # (Rack-ID, Position, Höhe, passt?)
         self.drag = None
         self.view = "front"              # "front" (Gerätefronten) oder "rear" (Ports und Kabel)
+        self.highlight = set()           # Kabel-IDs einer angezeigten Strecke
         self.zp_init()
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -607,6 +582,10 @@ class RackCanvas(ZoomPan, QWidget):
             p.setPen(QPen(PORT_EDGE.get(kind, RACK_LINE), 1))
             p.setBrush(NET_COLOR[c["net"]] if c else PORT_FILL)
             p.drawRect(rc)
+            if self.sel == ("port", (d["id"], pid)):
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(QPen(ACCENT, 2))
+                p.drawRect(rc.adjusted(-2.5, -2.5, 2.5, 2.5))
             if self.pending == (d["id"], pid):
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QPen(ACCENT, 1.6))
@@ -629,7 +608,17 @@ class RackCanvas(ZoomPan, QWidget):
             p.setPen(QPen(halo, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawPath(path)
         col = QColor(STATE_COLOR["down"]) if dead else QColor(NET_COLOR[c["net"]])
-        pen = QPen(col, 1.8, Qt.PenStyle.DotLine if dead else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        width = 1.8
+        if self.highlight:                           # Strecke: ihre Kabel kräftig, alle anderen blass
+            if c["id"] in self.highlight:
+                halo = QColor(ACCENT)
+                halo.setAlpha(110)
+                p.setPen(QPen(halo, 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                p.drawPath(path)
+                width = 3
+            else:
+                col.setAlpha(45)
+        pen = QPen(col, width, Qt.PenStyle.DotLine if dead else Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         p.drawPath(path)
 
@@ -655,6 +644,9 @@ class RackCanvas(ZoomPan, QWidget):
         hit = self.port_at(pt)
         if hit and self.cable_mode:
             self.port_clicked(*hit)
+            return
+        if hit:                                      # Rückseite: Port auswählen (Eigenschaften, SFP …)
+            self.select(("port", hit))
             return
         if self.cable_mode:
             cid = self.cable_hit(pt)
@@ -711,7 +703,7 @@ class RackCanvas(ZoomPan, QWidget):
             c = plan.cable(cid)
             A, B = plan.dev(c["a"][0]), plan.dev(c["b"][0])
             return (f"{A['name']} · {port_name(A, c['a'][1])}  ↔  {B['name']} · {port_name(B, c['b'][1])}\n"
-                    f"{net_names()[c['net']]} · {plan.medium(c['net'])} · {plan.cable_length(c):g} m")
+                    f"{net_names()[c['net']]} · {plan.cable_medium(c)} · {plan.cable_length(c):g} m")
         d = self.dev_at(pt)
         if d:
             used = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
@@ -1100,6 +1092,163 @@ class FloorCanvas(ZoomPan, QWidget):
             self.rackDropped.emit(h, t[0], t[1])
 
 
+class ConnectDialog(QDialog):
+    """Gegenstelle für einen Port wählen: Rack, Gerät, freier passender Port – über alle Racks hinweg."""
+
+    def __init__(self, parent, plan, did, pid):
+        super().__init__(parent)
+        self.plan, self.src, self.choice = plan, (did, pid), None
+        d = plan.dev(did)
+        self.kind = plan.port(d, pid)["k"]
+        self.setWindowTitle(T("Verbinden"))
+        self.resize(640, 460)
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel(T("Von: {0}").format(f"<b>{html_escape(d['name'])} · "
+                                                 f"{html_escape(port_name(d, pid))}</b>")))
+        row = QHBoxLayout()
+        self.rack = QComboBox()
+        self.rack.addItem(T("Alle Racks"), None)
+        for r in plan.racks:
+            self.rack.addItem(rack_label(plan, r), r["id"])
+        self.find = QLineEdit()
+        self.find.setPlaceholderText(T("Gerät suchen …"))
+        self.find.setClearButtonEnabled(True)
+        row.addWidget(self.rack)
+        row.addWidget(self.find, 1)
+        v.addLayout(row)
+        lists = QHBoxLayout()
+        self.devs = QListWidget()
+        self.ports = QListWidget()
+        lists.addWidget(self.devs, 3)
+        lists.addWidget(self.ports, 2)
+        v.addLayout(lists, 1)
+        row = QHBoxLayout()
+        self.net = QComboBox()
+        self.net.addItem(T("Kabeltyp: automatisch"), None)
+        for k, name in net_names().items():
+            self.net.addItem(name, k)
+        row.addWidget(self.net)
+        row.addStretch(1)
+        self.ok = QPushButton(T("Verbinden"))
+        self.ok.setObjectName("primary")
+        self.ok.setEnabled(False)
+        cancel = QPushButton(T("Abbrechen"))
+        row.addWidget(cancel)
+        row.addWidget(self.ok)
+        v.addLayout(row)
+        self.rack.currentIndexChanged.connect(self.fill_devs)
+        self.find.textChanged.connect(self.fill_devs)
+        self.devs.currentItemChanged.connect(self.fill_ports)
+        self.ports.currentItemChanged.connect(lambda *_: self.ok.setEnabled(self.ports.currentItem() is not None))
+        self.ports.itemDoubleClicked.connect(lambda *_: self.accept_choice())
+        self.ok.clicked.connect(self.accept_choice)
+        cancel.clicked.connect(self.reject)
+        own = plan.dev(did)["rack"]
+        i = self.rack.findData(own)
+        self.fill_devs()
+        if i >= 0 and not self.devs.count():
+            self.rack.setCurrentIndex(0)
+
+    def free_ports(self, d):
+        return [p for p in d["ports"] if not self.plan.cable_at(d["id"], p["id"])
+                and compatible(self.kind, p["k"])]
+
+    def fill_devs(self, *_):
+        rid, text = self.rack.currentData(), self.find.text().strip().lower()
+        self.devs.clear()
+        for d in sorted(self.plan.placed(), key=lambda d: (self.plan.rack_index(d["rack"]), -d["pos"])):
+            if d["id"] == self.src[0] or (rid and d["rack"] != rid):
+                continue
+            free = self.free_ports(d)
+            if not free:
+                continue
+            r = self.plan.rack(d["rack"])
+            label = f"{d['name']}  ·  {r['name']} {T('HE')} {d['pos']}  ·  " + T("{0} frei").format(len(free))
+            if text and text not in label.lower() and text not in (d.get("model") or "").lower():
+                continue
+            it = QListWidgetItem(label)
+            it.setData(Qt.ItemDataRole.UserRole, d["id"])
+            self.devs.addItem(it)
+        if self.devs.count():
+            self.devs.setCurrentRow(0)
+        else:
+            self.ports.clear()
+
+    def fill_ports(self, *_):
+        self.ports.clear()
+        it = self.devs.currentItem()
+        if it is None:
+            return
+        d = self.plan.dev(it.data(Qt.ItemDataRole.UserRole))
+        for p in self.free_ports(d):
+            pi = QListWidgetItem(port_name(d, p["id"]))
+            pi.setData(Qt.ItemDataRole.UserRole, p["id"])
+            self.ports.addItem(pi)
+        if self.ports.count():
+            self.ports.setCurrentRow(0)
+
+    def accept_choice(self):
+        di, pi = self.devs.currentItem(), self.ports.currentItem()
+        if di is None or pi is None:
+            return
+        self.choice = (di.data(Qt.ItemDataRole.UserRole), pi.data(Qt.ItemDataRole.UserRole), self.net.currentData())
+        self.accept()
+
+
+class TraceDialog(QDialog):
+    """Streckenansicht: der ganze Weg einer Verbindung von Ende zu Ende, durch Patchpanels hindurch, mit Rack,
+    Stellplatz, HE, Port, Transceiver und Kabel (Medium, Länge, Netz)."""
+
+    def __init__(self, parent, plan, hops):
+        super().__init__(parent)
+        self.setWindowTitle(T("Strecke"))
+        self.resize(720, 520)
+        v = QVBoxLayout(self)
+        cables = [c for _, _, c in hops if c]
+        total = sum(plan.cable_length(c) for c in cables)
+        panels = len({d["id"] for d, _, _ in hops if d["kind"] == "patch"})
+        v.addWidget(QLabel(T("{0} Kabel · {1} m gesamt (geschätzt) · {2} Patchpanels").format(
+            len(cables), f"{total:g}".replace(".", ","), panels)))
+        view = QTextBrowser()
+        view.setHtml(self.html(plan, hops))
+        v.addWidget(view, 1)
+        self.text = view.toPlainText()
+        row = QHBoxLayout()
+        copy = QPushButton(T("Als Text kopieren"))
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text))
+        close = QPushButton(T("Schließen"))
+        close.clicked.connect(self.accept)
+        row.addWidget(copy)
+        row.addStretch(1)
+        row.addWidget(close)
+        v.addLayout(row)
+
+    @staticmethod
+    def html(plan, hops):
+        t = theme.tokens()
+        out = [f"<table cellspacing='0' cellpadding='6' width='100%' style='color:{t['text']}'>"]
+        for n, (d, pid, c) in enumerate(hops):
+            r = plan.rack(d["rack"])
+            p = plan.port(d, pid) or {}
+            extra = " · ".join(x for x in (p.get("sfp"), p.get("speed"), p.get("ip"), p.get("vlan") and
+                                            "VLAN " + p["vlan"]) if x)
+            out.append(
+                f"<tr><td style='background:{t['accent_soft']}; border:1px solid {t['line2']}'>"
+                f"<b>{html_escape(d['name'])}</b> · {html_escape(port_name(d, pid))}<br>"
+                f"<span style='color:{t['muted']}'>{html_escape(rack_label(plan, r))} · {T('HE')} {d['pos']}"
+                f"{' · ' + html_escape(d.get('model') or '') if d.get('model') else ''}</span>"
+                + (f"<br><span style='color:{t['muted']}'>{html_escape(extra)}</span>" if extra else "")
+                + "</td></tr>")
+            if c:
+                out.append(f"<tr><td align='center' style='color:{t['muted']}'>│&nbsp; {html_escape(plan.cable_medium(c))}"
+                           f" · {plan.cable_length(c):g} m · {html_escape(net_names()[c['net']])} &nbsp;│</td></tr>")
+            elif n + 1 < len(hops) and d["kind"] == "patch":
+                out.append(f"<tr><td align='center' style='color:{t['dim']}'>"
+                           f"{T('durch das Patchpanel')}</td></tr>")
+        out.append("</table>")
+        return "".join(out)
+
+
 class PlannerTabMixin:
     """Seite „Aufbauplaner“ des Hauptfensters."""
 
@@ -1219,16 +1368,20 @@ class PlannerTabMixin:
         legend = QLabel()
         legend.setObjectName("legend")
         self.pl_legend = legend
-        self.pl_theme = QComboBox()
-        self.pl_theme.addItem(T("Design: automatisch"), "auto")
-        self.pl_theme.addItem(T("Design: hell"), "light")
-        self.pl_theme.addItem(T("Design: dunkel"), "dark")
-        self.pl_theme.setToolTip(T("Automatisch: hell unter Windows, dunkel unter Linux. Die Wahl merkt sich das "
-                                   "Tool in bmc-planner.json (ohne Plandaten)."))
-        self.pl_theme.setCurrentIndex(max(0, self.pl_theme.findData(load_theme_choice())))
-        self.pl_theme.currentIndexChanged.connect(self.planner_theme_changed)
         self.pl_bar = bar
-        v.addWidget(bar)
+        # bei schmalem Fenster waagerecht scrollbar statt das ganze Fenster breit zu zwingen
+        bar_scroll = QScrollArea()
+        bar_scroll.setObjectName("plBarScroll")
+        bar_scroll.setWidget(bar)
+        bar_scroll.setWidgetResizable(True)
+        bar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        bar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        bar_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        bar_scroll.setFixedHeight(bar.sizeHint().height() + 12)
+        bar_scroll.setStyleSheet("QScrollArea#plBarScroll, QScrollArea#plBarScroll > QWidget > QWidget"
+                                 " { background: transparent; }")
+        v.addWidget(bar_scroll)
 
         # Pfad zum gewählten Objekt, rechts daneben die Kabelfarben und das Design
         self.pl_crumb = QLabel()
@@ -1237,7 +1390,6 @@ class PlannerTabMixin:
         crumb_row.setSpacing(10)
         crumb_row.addWidget(self.pl_crumb, 1)
         crumb_row.addWidget(legend)
-        crumb_row.addWidget(self.pl_theme)
         v.addLayout(crumb_row)
 
         # Links: Navigator (Standort › Raum › Reihe › Rack › Gerät) und Katalog
@@ -1318,6 +1470,7 @@ class PlannerTabMixin:
         self.pl_simlog.setReadOnly(True)
         self.pl_bottom = QTabWidget()
         self.pl_bottom.addTab(objects, T("Objekte"))
+        self.pl_bottom.addTab(self._planner_participants(), T("Netzwerkteilnehmer"))
         self.pl_bottom.addTab(self.pl_simlog, T("Simulation"))
         center = QSplitter(Qt.Orientation.Vertical)
         center.addWidget(self.pl_views)
@@ -1362,8 +1515,8 @@ class PlannerTabMixin:
             QShortcut(QKeySequence(keys), page, slot, context=ctx)
         self.pl_undo, self.pl_redo, self.pl_snap = [], [], None
         self.planner_page = page
-        page.setAutoFillBackground(True)
         self.planner_apply_theme()
+        theme.on_change(self.planner_apply_theme)
         self.planner_set_view("floor")
         plan = Plan()
         plan.add_rack("R01", 42)
@@ -1516,7 +1669,83 @@ class PlannerTabMixin:
         b.clicked.connect(self.planner_delete_selected)
         f.addRow(b)
         self.pl_props.addWidget(w)
+        # 4: Port
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        box, f = _group(T("Port"))
+        self.pl_p_where = QLabel()
+        self.pl_p_where.setWordWrap(True)
+        self.pl_p_peer = QLabel()
+        self.pl_p_peer.setWordWrap(True)
+        f.addRow(T("Anschluss"), self.pl_p_where)
+        f.addRow(T("Gegenstelle"), self.pl_p_peer)
+        row = QHBoxLayout()
+        self.pl_p_connect = QPushButton(T("Verbinden …"))
+        self.pl_p_connect.setToolTip(T("Gegenstelle aus einer Liste wählen – auch in einem anderen Rack."))
+        self.pl_p_connect.clicked.connect(lambda: self.planner_connect_dialog(*self.pl_canvas.sel[1]))
+        self.pl_p_trace = QPushButton(T("Strecke …"))
+        self.pl_p_trace.setToolTip(T("Zeigt den ganzen Weg dieser Verbindung, auch durch Patchpanels."))
+        self.pl_p_trace.clicked.connect(lambda: self.planner_show_trace(*self.pl_canvas.sel[1]))
+        self.pl_p_unplug = QPushButton(T("Trennen"))
+        self.pl_p_unplug.clicked.connect(self.planner_port_unplug)
+        for b in (self.pl_p_connect, self.pl_p_trace, self.pl_p_unplug):
+            row.addWidget(b)
+        f.addRow(row)
+        lay.addWidget(box)
+        box, f = _group(T("Transceiver und Netz"))
+        self.pl_p_sfp = QComboBox()
+        self.pl_p_sfp.setEditable(True)
+        self.pl_p_speed = QComboBox()
+        self.pl_p_speed.setEditable(True)
+        self.pl_p_speed.addItems(["", "1G", "10G", "25G", "40G", "100G", "FC 16G", "FC 32G", "SAS 12G"])
+        self.pl_p_mac, self.pl_p_ip, self.pl_p_vlan, self.pl_p_desc = (QLineEdit() for _ in range(4))
+        self.pl_p_mac.setPlaceholderText("00:11:22:33:44:55")
+        self.pl_p_ip.setPlaceholderText(T("z. B. 10.20.0.11/24"))
+        self.pl_p_vlan.setPlaceholderText(T("z. B. 100 oder 100,200"))
+        f.addRow(T("SFP / Medium"), self.pl_p_sfp)
+        f.addRow(T("Geschwindigkeit"), self.pl_p_speed)
+        f.addRow("MAC", self.pl_p_mac)
+        f.addRow("IP", self.pl_p_ip)
+        f.addRow("VLAN", self.pl_p_vlan)
+        f.addRow(T("Beschreibung"), self.pl_p_desc)
+        for key, wdg in (("sfp", self.pl_p_sfp), ("speed", self.pl_p_speed)):
+            wdg.lineEdit().editingFinished.connect(lambda k=key, x=wdg: self.planner_port_edit(k, x.currentText()))
+            wdg.activated.connect(lambda _i, k=key, x=wdg: self.planner_port_edit(k, x.currentText()))
+        for key, wdg in (("mac", self.pl_p_mac), ("ip", self.pl_p_ip), ("vlan", self.pl_p_vlan),
+                         ("desc", self.pl_p_desc)):
+            wdg.editingFinished.connect(lambda k=key, x=wdg: self.planner_port_edit(k, x.text()))
+        lay.addWidget(box)
+        lay.addStretch(1)
+        self.pl_props.addWidget(w)
         return self.pl_props
+
+    def _planner_participants(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 4, 0, 0)
+        row = QHBoxLayout()
+        self.pl_part_filter = QLineEdit()
+        self.pl_part_filter.setPlaceholderText(T("Teilnehmer filtern (Gerät, IP, MAC, VLAN, SFP) …"))
+        self.pl_part_filter.setClearButtonEnabled(True)
+        self.pl_part_filter.textChanged.connect(self.planner_filter_participants)
+        row.addWidget(self.pl_part_filter, 1)
+        b = QPushButton(T("Als CSV exportieren …"))
+        b.clicked.connect(self.planner_export_participants)
+        row.addWidget(b)
+        v.addLayout(row)
+        self.pl_parts = QTableWidget(0, 8)
+        self.pl_parts.setHorizontalHeaderLabels([T("Gerät"), T("Rack"), T("Port"), T("SFP / Medium"), "IP", "MAC",
+                                                 "VLAN", T("Gegenstelle (Ende der Strecke)")])
+        self.pl_parts.verticalHeader().setVisible(False)
+        self.pl_parts.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.pl_parts.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.pl_parts.setAlternatingRowColors(True)
+        self.pl_parts.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.pl_parts.horizontalHeader().setStretchLastSection(True)
+        self.pl_parts.cellClicked.connect(self.planner_participant_clicked)
+        v.addWidget(self.pl_parts, 1)
+        return w
 
     def _planner_nets(self):
         w = QWidget()
@@ -1664,6 +1893,7 @@ class PlannerTabMixin:
         self.planner_fill_bom()
         self.planner_fill_tree()
         self.planner_fill_objects()
+        self.planner_fill_participants()
         self.planner_selection_changed()
 
     def planner_selection_changed(self):
@@ -1705,13 +1935,11 @@ class PlannerTabMixin:
                 coord_name(x, y)))
 
     # ================================================================ Design
-    def planner_apply_theme(self):
-        choice = self.pl_theme.currentData() or "auto"
-        name = default_theme() if choice == "auto" else choice
+    def planner_apply_theme(self, *_):
+        """Farben der Zeichenflächen und der eigenen Leisten an das Design des Programms anpassen."""
+        name = theme.current()
         self.planner_theme = name
         apply_theme(name)
-        page = self.planner_page
-        page.setPalette(dark_palette() if name == "dark" else QPalette())
         self.pl_bar.setStyleSheet(BAR_CSS)
         self.pl_crumb.setStyleSheet(CRUMB_CSS)
         self.pl_scroll.setStyleSheet(SCROLL_CSS)
@@ -1722,10 +1950,6 @@ class PlannerTabMixin:
                                         for k, n in net_names().items() if k != "patch"))
         self.pl_canvas.update()
         self.pl_floor.update()
-
-    def planner_theme_changed(self, *_):
-        save_theme_choice(self.pl_theme.currentData() or "auto")
-        self.planner_apply_theme()
 
     def planner_loc_edit(self, key, edit):
         val = edit.text().strip()
@@ -1751,9 +1975,14 @@ class PlannerTabMixin:
             rid = plan.dev(sel[1]).get("rack")
         elif sel and sel[0] == "cable" and plan.cable(sel[1]):
             rid = plan.dev(plan.cable(sel[1])["a"][0]).get("rack")
+        elif sel and sel[0] == "port" and plan.dev(sel[1][0]):
+            rid = plan.dev(sel[1][0]).get("rack")
         if rid and plan.rack(rid):
             rk = plan.rack(rid)
             parts.append(T("Rack {0}").format(rk["name"]) + (f" ({plan.coord(rk)})" if plan.coord(rk) != rk["name"] else ""))
+        if sel and sel[0] == "port" and plan.dev(sel[1][0]):
+            d = plan.dev(sel[1][0])
+            parts.append(f"{T('HE')} {d['pos']} · {d['name']} · {port_name(d, sel[1][1])}")
         if sel and sel[0] == "dev" and plan.dev(sel[1]):
             d = plan.dev(sel[1])
             parts.append(f"{T('HE')} {d['pos']} · {d['name']}" if d.get("rack") else d["name"])
@@ -2040,6 +2269,8 @@ class PlannerTabMixin:
                 self._planner_fill_dev(plan.dev(sel[1]))
             elif sel and sel[0] == "cable" and plan.cable(sel[1]):
                 self._planner_fill_cable(plan.cable(sel[1]))
+            elif sel and sel[0] == "port" and plan.dev(sel[1][0]) and plan.dev(sel[1][0]).get("rack"):
+                self._planner_fill_port(*sel[1])
             elif sel and sel[0] == "rack" and plan.rack(sel[1]):
                 r = plan.rack(sel[1])
                 L = plan.rack_load(r["id"])
@@ -2113,7 +2344,7 @@ class PlannerTabMixin:
         self.pl_c_from.setText(f"{A['name']} · {port_name(A, c['a'][1])}")
         self.pl_c_to.setText(f"{B['name']} · {port_name(B, c['b'][1])}")
         self.pl_c_net.setCurrentIndex(max(0, self.pl_c_net.findData(c["net"])))
-        self.pl_c_med.setText(plan.medium(c["net"]))
+        self.pl_c_med.setText(plan.cable_medium(c))
         self.pl_c_len.setText(T("{0} m (geschätzt)").format(f"{plan.cable_length(c):g}".replace(".", ",")))
         tag = lambda d, pid: f"{d['name']}/{port_name(d, pid).replace(' ', '')}"
         self.pl_c_tag.setText(f"{tag(A, c['a'][1])} ↔ {tag(B, c['b'][1])}")
@@ -2205,6 +2436,173 @@ class PlannerTabMixin:
             self.planner_say(T("{0} stünde dann außerhalb des Rasters – erst verschieben.").format(
                 ", ".join(r["name"] for r in out)), True)
         self.planner_changed()
+
+    # ================================================================ Ports, Verbinden, Strecke, Teilnehmer
+    def planner_select_port(self, did, pid):
+        if self.pl_canvas.view != "rear":
+            self.planner_set_view("rear")
+        self.pl_canvas.select(("port", (did, pid)))
+        d = self.plan.dev(did)
+        r = self.pl_canvas.dev_rect(d)
+        z = self.pl_canvas.zoom
+        self.pl_scroll.ensureVisible(int(r.right() * z), int(r.center().y() * z), int(160 * z), int(140 * z))
+        self.pl_tabs.setCurrentIndex(0)
+
+    def _planner_fill_port(self, did, pid):
+        plan = self.plan
+        d = plan.dev(did)
+        p = plan.port(d, pid)
+        r = plan.rack(d["rack"])
+        self.pl_p_where.setText(f"<b>{html_escape(d['name'])} · {html_escape(port_name(d, pid))}</b><br>"
+                                + T("Rack {0} · HE {1}").format(rack_label(plan, r), d["pos"]))
+        c = plan.cable_at(did, pid)
+        if c:
+            end_d, end_p, _ = plan.trace(did, pid)[-1]
+            od, op = plan.other_end(c, did, pid)
+            text = f"{plan.dev(od)['name']} · {port_name(plan.dev(od), op)}"
+            if end_d["id"] != od:
+                text += "<br>" + T("Ende der Strecke: {0}").format(f"{end_d['name']} · {port_name(end_d, end_p)}")
+            self.pl_p_peer.setText(text)
+        else:
+            self.pl_p_peer.setText(T("frei"))
+        self.pl_p_connect.setEnabled(not c)
+        self.pl_p_trace.setEnabled(bool(c))
+        self.pl_p_unplug.setEnabled(bool(c))
+        self.pl_p_sfp.clear()
+        self.pl_p_sfp.addItems([""] + SFP_PRESETS.get(p["k"], []))
+        self.pl_p_sfp.setEditText(p.get("sfp", ""))
+        self.pl_p_sfp.lineEdit().setCursorPosition(0)          # Anfang zeigen, nicht das Ende eines langen Namens
+        self.pl_p_speed.setEditText(p.get("speed", ""))
+        self.pl_p_mac.setText(p.get("mac", ""))
+        self.pl_p_ip.setText(p.get("ip", ""))
+        self.pl_p_vlan.setText(p.get("vlan", ""))
+        self.pl_p_desc.setText(p.get("desc", ""))
+        self.pl_props.setCurrentIndex(4)
+
+    def planner_port_edit(self, key, value):
+        if self._pl_filling:
+            return
+        sel = self.pl_canvas.sel
+        if not sel or sel[0] != "port":
+            return
+        d = self.plan.dev(sel[1][0])
+        p = self.plan.port(d, sel[1][1]) if d else None
+        if p is None:
+            return
+        value = (value or "").strip()[:60]
+        if key == "mac" and value:
+            value = value.lower().replace("-", ":")
+            if not re.fullmatch(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", value):
+                self.planner_say(T("„{0}“ ist keine MAC-Adresse (z. B. 00:11:22:33:44:55).").format(value), True)
+                return
+        if key == "ip" and value:
+            try:
+                ipaddress.ip_interface(value)
+            except ValueError:
+                self.planner_say(T("„{0}“ ist keine IP-Adresse (z. B. 10.20.0.11 oder 10.20.0.11/24).").format(value),
+                                 True)
+                return
+        if (p.get(key) or "") == value:
+            return
+        if value:
+            p[key] = value
+        else:
+            p.pop(key, None)
+        self.plan_dirty = True
+        self.planner_record()
+        self.planner_fill_participants()
+        self.planner_fill_bom()
+
+    def planner_port_unplug(self):
+        sel = self.pl_canvas.sel
+        if sel and sel[0] == "port":
+            c = self.plan.cable_at(*sel[1])
+            if c:
+                self.plan.disconnect(c["id"])
+                self.planner_changed()
+
+    def planner_connect_dialog(self, did, pid):
+        """Gegenstelle aus einer Liste wählen – schneller als Scrollen, wenn die Racks weit auseinander stehen."""
+        dlg = ConnectDialog(self, self.plan, did, pid)
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.choice:
+            return
+        od, op, net = dlg.choice
+        c, err = self.plan.connect(did, pid, od, op, net)
+        if err:
+            self.planner_say(err, True)
+            return
+        A, B = self.plan.dev(did), self.plan.dev(od)
+        self.planner_say(T("Kabel gezogen: {0} · {1} ↔ {2} · {3}").format(
+            A["name"], port_name(A, pid), B["name"], port_name(B, op)))
+        self.pl_canvas.sel = ("port", (did, pid))
+        self.planner_changed()
+
+    def planner_show_trace(self, did, pid):
+        hops = self.plan.trace(did, pid)
+        # vom Ende her lesen, wenn der Port mitten in der Strecke liegt (Patchpanel)
+        start = hops[-1]
+        hops = self.plan.trace(start[0]["id"], start[1]) if len(hops) > 1 else hops
+        self.pl_canvas.highlight = {c["id"] for _, _, c in hops if c}
+        if self.planner_current_view() != "rear":
+            self.planner_set_view("rear")
+        self.pl_canvas.update()
+        try:
+            TraceDialog(self, self.plan, hops).exec()
+        finally:
+            self.pl_canvas.highlight = set()
+            self.pl_canvas.update()
+
+    def planner_fill_participants(self):
+        rows = self.plan.participants()
+        t = self.pl_parts
+        t.setSortingEnabled(False)
+        t.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            d, p = r["dev"], r["port"]
+            rack = self.plan.rack(d["rack"])
+            vals = [d["name"], rack_label(self.plan, rack), port_name(d, p["id"]), r["sfp"],
+                    r["ip"], r["mac"], r["vlan"], r["peer"]]
+            for c, val in enumerate(vals):
+                it = QTableWidgetItem(val)
+                it.setData(Qt.ItemDataRole.UserRole, f"{d['id']}\x1f{p['id']}")
+                t.setItem(i, c, it)
+        t.setSortingEnabled(True)
+        self.pl_bottom.setTabText(1, T("Netzwerkteilnehmer ({0})").format(len(rows)))
+        self.planner_filter_participants(self.pl_part_filter.text())
+
+    def planner_filter_participants(self, text):
+        text = (text or "").strip().lower()
+        t = self.pl_parts
+        for r in range(t.rowCount()):
+            row = " ".join(t.item(r, c).text().lower() for c in range(t.columnCount()) if t.item(r, c))
+            t.setRowHidden(r, bool(text) and text not in row)
+
+    def planner_participant_clicked(self, row, _col=0):
+        item = self.pl_parts.item(row, 0)
+        if item is not None:
+            did, _, pid = item.data(Qt.ItemDataRole.UserRole).partition("\x1f")
+            self.planner_select_port(did, pid)
+
+    def planner_export_participants(self):
+        path, _ = QFileDialog.getSaveFileName(self, T("Netzwerkteilnehmer exportieren"),
+                                              str(HERE / "teilnehmer.csv"), T("CSV-Datei (*.csv)"))
+        if not path:
+            return
+        head = [T("Gerät"), T("Rack"), T("Stellplatz"), T("HE"), T("Port"), T("SFP / Medium"), T("Geschwindigkeit"),
+                "IP", "MAC", "VLAN", T("Beschreibung"), T("Gegenstelle (Ende der Strecke)")]
+        lines = [";".join(head)]
+        for r in self.plan.participants():
+            d, p = r["dev"], r["port"]
+            rack = self.plan.rack(d["rack"])
+            vals = [d["name"], rack["name"], self.plan.coord(rack), str(d["pos"]), port_name(d, p["id"]), r["sfp"],
+                    p.get("speed", ""), r["ip"], r["mac"], r["vlan"], p.get("desc", ""), r["peer"]]
+            lines.append(";".join(str(v).replace(";", ",") for v in vals))
+        try:
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+        except OSError as e:
+            QMessageBox.warning(self, T("Netzwerkteilnehmer exportieren"), T("Datei nicht schreibbar:\n{0}").format(e))
+            return
+        self.planner_say(T("Netzwerkteilnehmer gespeichert: {0}").format(path))
 
     # ================================================================ Zoom
     def planner_active_canvas(self):
@@ -2321,19 +2719,23 @@ class PlannerTabMixin:
             d = plan.dev(did)
             c = plan.cable_at(did, pid)
             menu.addSection(f"{d['name']} · {port_name(d, pid)}")
+            menu.addAction(T("Port-Eigenschaften (SFP, IP, MAC, VLAN)"), lambda: self.planner_select_port(did, pid))
             if c:
+                menu.addAction(T("Strecke anzeigen …"), lambda: self.planner_show_trace(did, pid))
                 od, op = plan.other_end(c, did, pid)
                 menu.addAction(T("Gegenstelle zeigen: {0}").format(f"{plan.dev(od)['name']} · "
                                                                   f"{port_name(plan.dev(od), op)}"),
                                lambda: self.planner_select("dev", od))
                 menu.addAction(T("Kabel entfernen"), lambda: self.planner_remove_cable(c["id"]))
             else:
+                menu.addAction(T("Verbinden mit … (auch anderes Rack)"), lambda: self.planner_connect_dialog(did, pid))
                 menu.addAction(T("Kabel von hier ziehen"), lambda: self.planner_start_cable(did, pid))
         elif kind == "cable":
             c = plan.cable(ident)
             self.pl_canvas.select(("cable", ident))
             A, B = plan.dev(c["a"][0]), plan.dev(c["b"][0])
             menu.addSection(f"{A['name']} ↔ {B['name']}")
+            menu.addAction(T("Strecke anzeigen …"), lambda: self.planner_show_trace(*c["a"]))
             nm = menu.addMenu(T("Netz"))
             for k, name in net_names().items():
                 a = nm.addAction(name, lambda k=k: self.planner_set_cable_net(ident, k))
@@ -2653,7 +3055,7 @@ class PlannerTabMixin:
             cv.sel = None
             self.planner_set_view("rear")
             self.pl_simlog.clear()
-            self.pl_bottom.setCurrentIndex(1)
+            self.pl_bottom.setCurrentWidget(self.pl_simlog)
             self.planner_fill_crumb()
             self.planner_fill_props()
             self.planner_sim_recompute(log=False)

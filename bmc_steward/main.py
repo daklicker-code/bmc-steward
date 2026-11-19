@@ -36,7 +36,7 @@ from .dhcp_tab import DhcpTabMixin
 from .existing_tab import ExistingTabMixin
 from .services_tab import ServicesTabMixin
 from .scanner import ScannerDialog
-from . import applog, selfguard, trust, vault
+from . import applog, selfguard, theme, trust, vault
 from .applog import LOG, LevelCombo, LogLabel, LogView
 
 
@@ -213,6 +213,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
 
     def __init__(self, state=None):
         super().__init__()
+        if theme._current is None:                 # erstes Fenster: Design setzen (run() tut es sonst schon)
+            theme.apply(QApplication.instance())
         self.setWindowTitle(f"BMC-Steward {__version__} · Dell iDRAC / HPE iLO / Supermicro / Lenovo XCC")
         self.setWindowIcon(app_icon())
         self.resize(*self.default_size())
@@ -307,11 +309,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Leert nach jedem scharfen Lauf alle Passwortfelder (Werkskonto, neuer Administrator, je Zeile).\n"
             "Die Passwörter bleiben nur so lange im Arbeitsspeicher, wie nötig. Trockenlauf löscht nichts.\n"
             "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
-        crow = QHBoxLayout()
-        crow.addWidget(self.lock_factory)
-        crow.addWidget(self.clear_pass_after)
-        crow.addStretch()
-        f.addRow(crow)
+        f.addRow(self.lock_factory)                 # untereinander: die Seite bleibt auch auf 1366er-Bildschirmen schmal
+        f.addRow(self.clear_pass_after)
 
         # --- Vorgaben für neue Zeilen ---
         self.def_mask = QLineEdit()
@@ -376,6 +375,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                         "Beim Speichern wird gefragt, ob die Passwörter mit in die Datei sollen."))
         save.clicked.connect(self.save_dialog)
         self.count = QLabel()
+        self.count.setObjectName("pill")
         btns = QHBoxLayout()
         btns.addWidget(add)
         btns.addWidget(rem)
@@ -430,6 +430,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
 
         # --- Start ---
         self.dry = QCheckBox(T("Trockenlauf (nichts ändern)"))
+        self.dry.setObjectName("toggle")
         self.dry.setChecked(True)
         self.dry.setToolTip(T("Mit Haken wird nichts geändert: Das Protokoll zeigt nur, welche Aufrufe\n"
                             "an welches Gerät gingen. Ohne Haken werden die Geräte wirklich umgestellt."))
@@ -441,6 +442,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                               "Fertige (grüne) Zeilen werden übersprungen. Vor einem scharfen Lauf\n"
                               "wird nachgefragt."))
         self.start.clicked.connect(self.run)
+        self.start.setObjectName("primary")
         self.stop = QPushButton(T("Abbrechen"))
         self.stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
         self.stop.setEnabled(False)
@@ -467,6 +469,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         # --- Was fehlt noch? ---
         self.cells_missing = self.cells_bad = 0
         self.todo = QLabel()
+        self.todo.setObjectName("todoBox")
         self.todo.setWordWrap(True)
         self.todo.setToolTip(T("Zeigt, was vor dem Start noch auszufüllen ist. Die betroffenen Felder sind\n"
                                "gelb (fehlt noch) oder rot (fehlerhaft) markiert."))
@@ -507,40 +510,40 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs = SideNav()                      # Menü links, Seiten rechts (statt Reiterleiste)
         self.deps_footers = []                     # Randbereich je Seite: fehlende optionale Pakete
         dhcp_page = self.build_dhcp()
-        self.tabs.addTab(dhcp_page, T("DHCP-Server"), accent=DHCP_YELLOW)
+        self.tabs.addTab(dhcp_page, T("DHCP-Server"), accent=DHCP_YELLOW, mark=0, section=T("Einrichtung"))
         pl.insertWidget(0, intro_label(T(
             "<b>Neuware</b> richtet frische Server ein: Für jede Zeile der Serverliste legt das Tool den neuen "
             "Administrator an, setzt den Hostnamen und stellt den BMC auf die feste Adresse um. Danach meldet es sich "
             "zur Kontrolle unter der neuen Adresse an und sperrt das Werkskonto.<br><b>Ablauf:</b> Server eintragen "
             "(oder aus „DHCP-Server“ übernehmen), oben den neuen Administrator eingeben, im Trockenlauf prüfen, dann "
             "scharf starten. Fertige Zeilen werden grün und beim nächsten Lauf übersprungen.")))
-        self.tabs.addTab(page, T("Neuware"))
-        self.tabs.addTab(self.build_existing(), T("Bestandsserver"))
+        self.tabs.addTab(page, T("Neuware"), mark=1, scroll=True)
+        self.tabs.addTab(self.build_existing(), T("Bestandsserver"), mark=2)
         con_page = self.build_console()
-        self.tabs.addTab(con_page, T("UEFI-Konsole"))
         for widget, key in ((dhcp_page, "dhcp"), (page, "new"), (con_page, "console")):
             self.deps_footers.append(deps.attach(widget, key))
-        self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"))
+        self.tabs.addTab(self.build_bios(), T("UEFI-Einstellungen"), mark=3)
         self.services_page = self.build_services()
         self.services_page.layout().insertWidget(0, intro_label(T(
             "<b>Dienste</b> richtet auf allen Servern der Serverliste dieselben Verwaltungsdienste ein, z. B. "
             "Zeitserver (NTP), Syslog, LDAP/Active Directory, DNS und die Härtung (unsichere Dienste aus, Kontosperre, "
             "Sitzungs-Zeitlimit). Geändert wird nur, was angehakt ist; der Trockenlauf zeigt vorher jeden Aufruf.")))
-        self.tabs.addTab(self.services_page, T("Dienste"))
-        self.tabs.addTab(self.build_users(), T("Benutzerkonten"))
+        self.tabs.addTab(self.services_page, T("Dienste"), mark=4)
+        self.tabs.addTab(self.build_users(), T("Benutzerkonten"), mark=5)
         fw_page = self.build_firmware()
         fw_page.layout().insertWidget(0, intro_label(T(
             "<b>Firmware</b> spielt ein Update auf alle Server der Serverliste: erst das Inventar eines Referenzgeräts "
             "lesen, dann eine Datei vom PC oder eine URL wählen. Der Trockenlauf ist voreingestellt; ein scharfer Lauf "
             "verlangt das Eintippen der Serverzahl. Tipp: vorher und nachher unter „Aufnahme“ aufnehmen und "
             "vergleichen.")))
-        self.tabs.addTab(fw_page, T("Firmware"))
-        self.tabs.addTab(self.build_capture(), T("Aufnahme"))
+        self.tabs.addTab(fw_page, T("Firmware"), mark=6)
+        self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢", section=T("Werkzeuge"))
+        self.tabs.addTab(self.build_capture(), T("Aufnahme"), mark="◉")
         vbmc_page = self.build_vbmc()
         self.vbmc_page = vbmc_page
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
-        self.tabs.addTab(vbmc_page, T("Testlabor"))
-        self.tabs.addTab(self.build_planner(), T("Aufbauplaner"))   # hinten, damit die Seitennummern bleiben
+        self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
+        self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[i18n.LANG] + ABOUT)
@@ -551,21 +554,47 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         hl.addWidget(help_view, 1)
         self.help_logo = AnimatedLogo(64)
         hl.addWidget(self.help_logo, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.tabs.addTab(help_page, T("Hilfe"))
+        self.tabs.addTab(help_page, T("Hilfe"), mark="?")
+        self.add_page_headers()
         self.lang = QComboBox()
         for code, name in LANGS:
             self.lang.addItem(name, code)
         self.lang.setCurrentIndex(max(0, self.lang.findData(i18n.LANG)))
         self.lang.setToolTip("Sprache · Language · Langue · Sproch")
         self.lang.activated.connect(self.switch_language)
+        self.design = QComboBox()
+        for key, text in (("auto", T("Design: automatisch")), ("light", T("Design: hell")),
+                          ("dark", T("Design: dunkel"))):
+            self.design.addItem(text, key)
+        self.design.setCurrentIndex(max(0, self.design.findData(theme.load_choice())))
+        self.design.setToolTip(T("Automatisch folgt der Hell/Dunkel-Einstellung des Systems (Windows und Linux). "
+                                 "Die Wahl merkt sich das Tool in bmc-design.json."))
+        self.design.activated.connect(self.design_changed)
 
         # Linke Spalte: Monitor mit Varianten-Schalter, darunter das Menü, ganz unten die Sprache
         side = QWidget()
+        side.setObjectName("sidebar")
+        side.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.nav_side = side                       # wird im Vollbild der Konsole ausgeblendet
         side.setFixedWidth(272)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setContentsMargins(12, 12, 12, 10)
         sl.setSpacing(8)
+        brand = QHBoxLayout()
+        brand.setSpacing(10)
+        logo = QLabel()
+        logo.setPixmap(app_icon().pixmap(32, 32))
+        brand.addWidget(logo)
+        names = QVBoxLayout()
+        names.setSpacing(0)
+        bname = QLabel("BMC-Steward")
+        bname.setObjectName("brandName")
+        bver = QLabel(T("Version {0}").format(__version__))
+        bver.setObjectName("brandVersion")
+        names.addWidget(bname)
+        names.addWidget(bver)
+        brand.addLayout(names, 1)
+        sl.addLayout(brand)
         sl.addWidget(monitor_block)
         sl.addWidget(self.tabs.menu, 1)
         self.guard_btn = QPushButton()
@@ -591,13 +620,20 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)   # Breite kommt vom Raster
             tools.addWidget(btn, n // 2, n % 2)
         sl.addLayout(tools)
-        sl.addWidget(self.lang)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(6)
+        bottom.addWidget(self.lang, 1)
+        bottom.addWidget(self.design, 1)
+        sl.addLayout(bottom)
         body = QHBoxLayout()
+        body.setSpacing(14)
         body.addWidget(side)
         body.addWidget(self.tabs.stack, 1)
 
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 12, 6)
         lay.addLayout(body, 1)
+        self.status.setContentsMargins(14, 2, 0, 0)
         lay.addWidget(self.status)
         self.main_lay, self.main_body = lay, body        # Ränder fallen im Vollbild der Konsole weg
 
@@ -636,6 +672,44 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         applog.watch(self)
         w, h = self.width(), self.height()
         LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
+
+    def add_page_headers(self):
+        """Kopf jeder Arbeitsseite: Bereich › Schritt als Pfad, darunter der Titel (wie im Entwurf). Konsole,
+        Aufbauplaner und Hilfe brauchen den Platz selbst und bekommen keinen."""
+        titles = {T("DHCP-Server"): T("DHCP-Server für das Staging-Netz"), T("Neuware"): T("Neuware einrichten"),
+                  T("Bestandsserver"): T("Bestandsserver prüfen"), T("UEFI-Einstellungen"): T("UEFI-Einstellungen setzen"),
+                  T("Dienste"): T("Dienste einrichten"), T("Benutzerkonten"): T("Benutzerkonten verwalten"),
+                  T("Firmware"): T("Firmware aktualisieren"), T("Aufnahme"): T("Aufnahme und Vergleich"),
+                  T("Testlabor"): T("Testlabor")}
+        from .sidenav import MARK_ROLE
+        section = ""
+        for i in range(self.tabs.count()):
+            item = self.tabs.menu.item(i)
+            section = item.data(Qt.ItemDataRole.UserRole + 3) or section
+            title = titles.get(item.text())
+            page = self.tabs.widget(i)
+            lay = page.layout() if title else None
+            if lay is None:
+                continue
+            mark = item.data(MARK_ROLE)
+            crumb = section + (" › " + T("Schritt {0}").format(mark) if isinstance(mark, int) else "")
+            head = QWidget()
+            hl = QVBoxLayout(head)
+            hl.setContentsMargins(2, 6, 2, 2)
+            hl.setSpacing(0)
+            c = QLabel(crumb)
+            c.setObjectName("pageCrumb")
+            t = QLabel(title)
+            t.setObjectName("pageTitle")
+            hl.addWidget(c)
+            hl.addWidget(t)
+            lay.insertWidget(0, head)
+
+    def design_changed(self, *_):
+        choice = self.design.currentData() or "auto"
+        theme.save_choice(choice)
+        name = theme.apply(QApplication.instance(), choice)
+        LOG.debug(T("Design: {0}").format(name))
 
     def page_logged(self, i):
         item = self.tabs.menu.item(i)
@@ -1944,6 +2018,8 @@ def run():
         os.environ["QT_QUICK_BACKEND"] = "software"
     app = QApplication(sys.argv)
     applog.install(app)                       # jede Bedienung ins Protokoll
+    theme.apply(app)                          # hell/dunkel, automatisch nach System
+    theme.follow_system(app)
     LOG.info(T("BMC-Steward {0} gestartet").format(__version__), bold=True)
     LOG.info(T("Sprache: {0}").format(i18n.LANG))
     LOG.info(T("Trockenlauf ist voreingestellt: Es wird erst etwas geändert, wenn „Scharf starten“ gedrückt wird."))

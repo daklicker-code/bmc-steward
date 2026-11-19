@@ -8,7 +8,7 @@ qapp()
 import bmc_steward.i18n as i18n
 i18n.set_language("de")
 i18n.build_texts()
-from bmc_steward.planner import (Plan, col_index, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord,
+from bmc_steward.planner import (Plan, compatible, through_port, col_index, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord,
                                  port_label, port_name, vendor_of)
 
 INV = [{"key": "sn:A1", "name": "srv-a", "vendor": "dell", "model": "Dell iDRAC9", "serial": "A1"},
@@ -306,6 +306,73 @@ class TestNetApp(unittest.TestCase):
         self.assertNotIn(oob, p.devs)
 
 
+class TestPathsAndPorts(unittest.TestCase):
+    def build(self):
+        p = Plan()
+        a, b = p.add_rack("A", 42), p.add_rack("B", 42, at=(10, 3))
+        pp1, pp2 = p.new_device("patch"), p.new_device("patch")
+        p.place(pp1, a["id"], 42)
+        p.place(pp2, b["id"], 42)
+        srv, sw = p.new_device("server1"), p.new_device("leaf")
+        p.place(srv, a["id"], 10)
+        p.place(sw, b["id"], 40)
+        p.connect(srv["id"], "n1", pp1["id"], "p3")
+        p.connect(pp1["id"], "r3", pp2["id"], "r3")
+        p.connect(pp2["id"], "p3", sw["id"], "p7")
+        return p, srv, sw, pp1, pp2
+
+    def test_trace_goes_through_patch_panels_both_ways(self):
+        p, srv, sw, pp1, pp2 = self.build()
+        hops = p.trace(srv["id"], "n1")
+        self.assertEqual([(d["name"], pid) for d, pid, _ in hops],
+                         [(srv["name"], "n1"), (pp1["name"], "p3"), (pp1["name"], "r3"), (pp2["name"], "r3"),
+                          (pp2["name"], "p3"), (sw["name"], "p7")])
+        self.assertEqual(sum(1 for *_, c in hops if c), 3)
+        back = p.trace(sw["id"], "p7")
+        self.assertEqual(back[-1][0]["id"], srv["id"])
+        self.assertEqual(through_port(pp1, "p3"), "r3")
+        self.assertIsNone(through_port(srv, "n1"))
+
+    def test_trace_survives_loops_and_open_ends(self):
+        p, srv, sw, pp1, pp2 = self.build()
+        p.connect(pp1["id"], "p5", pp2["id"], "p5")
+        p.connect(pp1["id"], "r5", pp2["id"], "r5")          # Ring über zwei Panels
+        hops = p.trace(pp1["id"], "p5")
+        self.assertLess(len(hops), 10)
+        self.assertEqual(len(p.trace(sw["id"], "p9")), 1)      # freier Port: nur er selbst
+
+    def test_cable_medium_follows_transceivers_through_panels(self):
+        p, srv, sw, pp1, pp2 = self.build()
+        mid = next(c for c in p.cables if c["a"][0] == pp1["id"] and c["b"][0] == pp2["id"])
+        self.assertEqual(p.cable_medium(mid), p.medium(mid["net"]))          # ohne SFP: aus dem Netz
+        p.port(srv, "n1")["sfp"] = "SFP28 25G LR (SMF, 1310 nm)"
+        for c in p.cables:                                                    # alle Teilstücke: Singlemode
+            self.assertIn("OS2", p.cable_medium(c))
+        p.port(srv, "n1")["sfp"] = "SFP28 25G SR (MMF, 850 nm)"
+        self.assertIn("OM4", p.cable_medium(mid))
+        p.port(srv, "n1")["sfp"] = "SFP28 25G DAC"
+        self.assertIn("DAC", p.cable_medium(mid))
+
+    def test_port_fields_saved_and_in_participants(self):
+        p, srv, sw, pp1, pp2 = self.build()
+        port = p.port(srv, "n1")
+        port.update(sfp="SFP28 25G SR (MMF, 850 nm)", ip="10.30.0.5/22", mac="00:11:22:33:44:55", vlan="100")
+        q = Plan.from_dict(json.loads(json.dumps(p.to_dict())))
+        self.assertEqual(q.port(q.dev(srv["id"]), "n1")["mac"], "00:11:22:33:44:55")
+        parts = {(r["dev"]["name"], r["port"]["id"]): r for r in q.participants()}
+        row = parts[(srv["name"], "n1")]
+        self.assertEqual(row["peer"], f"{sw['name']} · Port 7")   # Ende der Strecke, nicht das Patchpanel
+        self.assertFalse(any(r["dev"]["kind"] == "patch" for r in q.participants()))
+        self.assertIn(("Optiken", "SFP28 25G SR (MMF, 850 nm)", "", 1), q.bom())
+
+    def test_compatibility(self):
+        self.assertTrue(compatible("bmc", "mgmt"))
+        self.assertTrue(compatible("fc", "fc"))
+        self.assertFalse(compatible("fc", "data"))
+        self.assertFalse(compatible("sas", "patch"))
+        self.assertTrue(compatible("data", "patch"))
+
+
 class TestPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -480,16 +547,18 @@ class TestPage(unittest.TestCase):
         QTest.mouseClick(fc, Qt.MouseButton.LeftButton, pos=fc.tile_rect(12, 9).center().toPoint())
         w.planner_add_rack()
         self.assertEqual(w.plan.coord(w.plan.racks[-1]), "M10")
-        # Design: automatisch je System, hell/dunkel wählbar und gemerkt
-        self.assertEqual(planner_tab.default_theme(), "light" if planner_tab.WINDOWS else "dark")
-        for choice, name in (("light", "light"), ("dark", "dark")):
-            w.pl_theme.setCurrentIndex(w.pl_theme.findData(choice))
-            self.assertEqual(w.planner_theme, name)
-            self.assertEqual(planner_tab.load_theme_choice(), choice)
+        # Design: folgt der Wahl des Programms (links unten), Zeichenflächen wechseln mit
+        from bmc_steward import theme
+        for choice in ("light", "dark"):
+            w.design.setCurrentIndex(w.design.findData(choice))
+            w.design_changed()
+            self.assertEqual(w.planner_theme, choice)
+            self.assertEqual(planner_tab.BG, planner_tab.THEMES[choice]["BG"])
             fc.grab()
             w.pl_canvas.grab()
-        w.pl_theme.setCurrentIndex(w.pl_theme.findData("auto"))
-        self.assertEqual(w.planner_theme, planner_tab.default_theme())
+        w.design.setCurrentIndex(w.design.findData("auto"))
+        w.design_changed()
+        self.assertEqual(w.planner_theme, theme.system_scheme())
         w.plan_dirty = False
 
     def test_zoom_menus_undo_and_catalog(self):
@@ -577,6 +646,67 @@ class TestPage(unittest.TestCase):
         w.planner_set_view("rear")
         c = w.pl_canvas.port_center(aff["id"], "a_0a")
         self.assertIn("A 0a", w.pl_canvas.tip_at(c, (aff["id"], "a_0a")))
+        w.plan_dirty = False
+
+    def test_port_panel_connect_dialog_trace_and_participants(self):
+        from unittest import mock
+        from bmc_steward import planner_tab
+        w = self.w
+        self.fill_list()
+        p = Plan()
+        a, b = p.add_rack("A", 42), p.add_rack("B", 42, at=(10, 3))
+        w.planner_set_plan(p, dirty=False)
+        srv, sw = w.plan.new_device("server1"), w.plan.new_device("leaf")
+        w.plan.place(srv, a["id"], 10)
+        w.plan.place(sw, b["id"], 40)
+        w.planner_refresh()
+        # Port auswählen und Angaben pflegen
+        w.planner_select_port(srv["id"], "n1")
+        self.assertEqual(w.pl_canvas.sel, ("port", (srv["id"], "n1")))
+        self.assertEqual(w.pl_props.currentIndex(), 4)
+        w.pl_p_mac.setText("00-11-22-33-44-AA")
+        w.planner_port_edit("mac", w.pl_p_mac.text())
+        self.assertEqual(w.plan.port(srv, "n1")["mac"], "00:11:22:33:44:aa")
+        w.planner_port_edit("ip", "kein-ip")
+        self.assertNotIn("ip", w.plan.port(srv, "n1"))          # ungültig: nichts übernommen
+        w.planner_port_edit("sfp", "SFP28 25G SR (MMF, 850 nm)")
+        w.planner_undo()
+        self.assertNotIn("sfp", w.plan.port(w.plan.dev(srv["id"]), "n1"))
+        w.planner_redo()
+        # Verbinden über die Rackgrenze per Dialog
+        dlg = planner_tab.ConnectDialog(w, w.plan, srv["id"], "n1")
+        names = [dlg.devs.item(i).text() for i in range(dlg.devs.count())]
+        self.assertTrue(any(sw["name"] in n for n in names))
+        target = next(i for i in range(dlg.devs.count()) if sw["name"] in dlg.devs.item(i).text())
+        dlg.devs.setCurrentRow(target)
+        self.assertTrue(all(w.plan.port(sw, dlg.ports.item(i).data(0x0100))["k"] in ("data", "up")
+                            for i in range(dlg.ports.count())))
+        with mock.patch.object(planner_tab.ConnectDialog, "exec",
+                               lambda d: (d.devs.setCurrentRow(target), d.accept_choice(), 1)[2]):
+            w.planner_connect_dialog(srv["id"], "n1")
+        c = w.plan.cable_at(srv["id"], "n1")
+        self.assertIsNotNone(c)
+        self.assertEqual(w.plan.dev(w.plan.other_end(c, srv["id"], "n1")[0])["id"], sw["id"])
+        # Strecke: Dialog zeigt beide Enden, Kabel sind währenddessen hervorgehoben
+        seen = {}
+
+        def fake_exec(d):
+            seen["text"] = d.text
+            seen["hl"] = set(w.pl_canvas.highlight)
+            return 1
+        with mock.patch.object(planner_tab.TraceDialog, "exec", fake_exec):
+            w.planner_show_trace(srv["id"], "n1")
+        self.assertIn(srv["name"], seen["text"])
+        self.assertIn(sw["name"], seen["text"])
+        self.assertEqual(seen["hl"], {c["id"]})
+        self.assertEqual(w.pl_canvas.highlight, set())
+        # Teilnehmerliste mit Filter
+        self.assertGreaterEqual(w.pl_parts.rowCount(), 2)
+        w.pl_part_filter.setText("00:11:22")
+        shown = [r for r in range(w.pl_parts.rowCount()) if not w.pl_parts.isRowHidden(r)]
+        self.assertEqual(len(shown), 1)
+        w.pl_part_filter.clear()
+        w.pl_canvas.grab()
         w.plan_dirty = False
 
     def test_simulation_toggle(self):
