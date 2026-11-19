@@ -397,22 +397,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
 
         self.vault_use = QCheckBox(T("Passwörter im Schlüsselbund speichern (statt im Klartext)"))
         self.vault_use.toggled.connect(self.vault_use_toggled)
-        if vault.available():
-            self.vault_use.setToolTip(T("Beim Speichern der Liste wandern die Passwörter in den "
-                                        "System-Schlüsselbund (Secret Service/libsecret, Windows-"
-                                        "Anmeldeinformationsverwaltung, macOS-Schlüsselbundverwaltung) "
-                                        "statt in die Datei; die Datei enthält dann nur noch Adressen, "
-                                        "Hostnamen und Einstellungen. Beim Laden werden leere "
-                                        "Passwort-Felder automatisch aus dem Schlüsselbund aufgefüllt "
-                                        "(Zuordnung über die Seriennummer, sonst über die Aktuelle IP). "
-                                        "Ebenso wird jedes von Hand eingetragene oder geänderte Passwort "
-                                        "sofort mitgesichert, solange der Haken gesetzt ist."))
-        else:
-            self.vault_use.setEnabled(False)
-            self.vault_use.setToolTip(T("Kein Schlüsselbund auf diesem Rechner erreichbar (Paket "
-                                        "„keyring“ fehlt, oder es läuft kein Secret-Service-Dienst, z. B. "
-                                        "bei einer Sitzung ohne Desktop-Umgebung). Passwörter bleiben wie "
-                                        "bisher nur in der Tabelle/CSV."))
+        vault.probe_async()
+        self.vault_show_availability()
         vault_clear = QPushButton(T("Schlüsselbund für diese Liste leeren"))
         vault_clear.setToolTip(T("Entfernt die Schlüsselbund-Einträge aller Server dieser Liste wieder. "
                                  "Ändert nichts an der Tabelle selbst."))
@@ -640,7 +626,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.dirty = False
         self.vendor_changed()
         self.read_profiles()
-        self.vault_load_state()
+        if vault.ready():
+            self.vault_load_state()                 # sonst nach der Schlüsselbund-Suche (vault_show_availability)
         self.add_row()
         self.update_count()
         self.tabs.setCurrentIndex(0)
@@ -1127,6 +1114,32 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             return
         n = sum(1 for ip, serial in rows if vault.delete(serial, ip))
         self.status.setText(T('{0} Schlüsselbund-Einträge entfernt.').format(n))
+
+    def vault_show_availability(self, later=False):
+        """Haken „Schlüsselbund“ freischalten oder sperren, sobald feststeht, ob es einen gibt (die Suche
+        läuft beim Start im Hintergrund, siehe vault.probe_async)."""
+        if not vault.ready():
+            self.vault_use.setEnabled(False)
+            QTimer.singleShot(200, lambda: self.vault_show_availability(True))
+            return
+        self.vault_use.setEnabled(vault.available())
+        if vault.available():
+            self.vault_use.setToolTip(T("Beim Speichern der Liste wandern die Passwörter in den "
+                                        "System-Schlüsselbund (Secret Service/libsecret, Windows-"
+                                        "Anmeldeinformationsverwaltung, macOS-Schlüsselbundverwaltung) "
+                                        "statt in die Datei; die Datei enthält dann nur noch Adressen, "
+                                        "Hostnamen und Einstellungen. Beim Laden werden leere "
+                                        "Passwort-Felder automatisch aus dem Schlüsselbund aufgefüllt "
+                                        "(Zuordnung über die Seriennummer, sonst über die Aktuelle IP). "
+                                        "Ebenso wird jedes von Hand eingetragene oder geänderte Passwort "
+                                        "sofort mitgesichert, solange der Haken gesetzt ist."))
+        else:
+            self.vault_use.setToolTip(T("Kein Schlüsselbund auf diesem Rechner erreichbar (Paket "
+                                        "„keyring“ fehlt, oder es läuft kein Secret-Service-Dienst, z. B. "
+                                        "bei einer Sitzung ohne Desktop-Umgebung). Passwörter bleiben wie "
+                                        "bisher nur in der Tabelle/CSV."))
+        if later:                                   # beim Aufbau lädt __init__ den Zustand selbst
+            self.vault_load_state()
 
     def vault_load_state(self):
         try:
@@ -1734,6 +1747,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.guard_btn.setToolTip(T("BMC-Steward läuft in einer VM ({0}). Den Host dieser VM in die "
                                         "Schutzliste eintragen, sonst kann er versehentlich neu gestartet "
                                         "werden.").format(g.virt))
+        elif not g.own_ready:             # eigene Kennung wird noch im Hintergrund gelesen
+            self.guard_btn.setText(T("Eigenschutz ({0})").format(len(g.entries)))
+            self.guard_btn.setStyleSheet("")
+            self.guard_btn.setToolTip(T("Server, die BMC-Steward nie neu startet oder mit Firmware bespielt."))
+            QTimer.singleShot(250, self.update_guard_btn)
         else:
             self.guard_btn.setText(T("Eigenschutz ({0})").format(len(g.entries) + len(g.own)))
             self.guard_btn.setStyleSheet("")
@@ -2017,13 +2035,14 @@ def run():
     if selfguard.get().virt and "QT_QUICK_BACKEND" not in os.environ:
         os.environ["QT_QUICK_BACKEND"] = "software"
     app = QApplication(sys.argv)
-    applog.install(app)                       # jede Bedienung ins Protokoll
-    theme.apply(app)                          # hell/dunkel, automatisch nach System
+    theme.apply(app, sheet=False)             # hell/dunkel, automatisch nach System; Stylesheet nach dem Aufbau
     theme.follow_system(app)
     LOG.info(T("BMC-Steward {0} gestartet").format(__version__), bold=True)
     LOG.info(T("Sprache: {0}").format(i18n.LANG))
     LOG.info(T("Trockenlauf ist voreingestellt: Es wird erst etwas geändert, wenn „Scharf starten“ gedrückt wird."))
-    LOG.debug(T("System: {0} · Python {1} · Qt {2}").format(platform.platform(), platform.python_version(), QT_VERSION_STR))
+    LOG.debug(T("System: {0} · Python {1} · Qt {2}").format(
+        f"{platform.system()} {platform.release()} {platform.machine()}",   # platform.platform() startet uname
+        platform.python_version(), QT_VERSION_STR))
     LOG.debug(T("Datenordner: {0}").format(i18n.DATA))
     LOG.debug(T("Eigener Rechner: {0}").format(selfguard.get().virt or T("echte Hardware")))
     app.setApplicationName("bmc-steward")
@@ -2032,7 +2051,11 @@ def run():
     app.setWindowIcon(app_icon())
     global MAIN
     MAIN = Window()
+    app.setStyleSheet(theme.stylesheet(theme.current()))   # einmal für das fertige Fenster statt je Seite
     MAIN.show()
+    # Bedienung protokollieren erst jetzt: Vorher kann niemand klicken, und der Filter müsste sonst die
+    # zehntausenden Ereignisse des Fensteraufbaus durch Python schleusen (spürbar beim Start).
+    applog.install(app)
     app.aboutToQuit.connect(lambda: MAIN.stop_scanner())
     code = app.exec()
     MAIN.stop_scanner()
