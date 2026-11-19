@@ -746,6 +746,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.touch()
             self.update_missing()
 
+    def later(self, ms, fn):
+        """Einmal-Timer, der am Fenster hängt: Wird das Fenster vorher gelöscht (z. B. am Ende eines Tests),
+        feuert er nicht mehr auf schon gelöschte Bedienelemente."""
+        t = QTimer(self)
+        t.setSingleShot(True)
+        t.timeout.connect(fn)
+        t.timeout.connect(t.deleteLater)
+        t.start(ms)
+
     @staticmethod
     def tip_row(form, label, widget, tip):
         """Formularzeile, bei der Beschriftung und Feld denselben Hilfetext zeigen."""
@@ -1162,7 +1171,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         läuft beim Start im Hintergrund, siehe vault.probe_async)."""
         if not vault.ready():
             self.vault_use.setEnabled(False)
-            QTimer.singleShot(200, lambda: self.vault_show_availability(True))
+            self.later(200, lambda: self.vault_show_availability(True))
             return
         self.vault_use.setEnabled(vault.available())
         if vault.available():
@@ -1794,7 +1803,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.guard_btn.setText(T("Eigenschutz ({0})").format(len(g.entries)))
             self.guard_btn.setStyleSheet("")
             self.guard_btn.setToolTip(T("Server, die BMC-Steward nie neu startet oder mit Firmware bespielt."))
-            QTimer.singleShot(250, self.update_guard_btn)
+            self.later(250, self.update_guard_btn)
         else:
             self.guard_btn.setText(T("Eigenschutz ({0})").format(len(g.entries) + len(g.own)))
             self.guard_btn.setStyleSheet("")
