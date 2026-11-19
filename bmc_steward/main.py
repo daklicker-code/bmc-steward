@@ -2037,6 +2037,10 @@ def run():
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = flags
     if selfguard.get().virt and "QT_QUICK_BACKEND" not in os.environ:
         os.environ["QT_QUICK_BACKEND"] = "software"
+    # Linux: Ohne installierte .desktop-Datei meldet das Desktop-Portal beim Start „App info not found“. Das ist
+    # harmlos (nur die Anmeldung beim Portal entfällt), verwirrt aber; deshalb nur diese eine Meldung ausblenden.
+    from PyQt6.QtCore import QLoggingCategory
+    QLoggingCategory.setFilterRules("qt.qpa.services.warning=false")
     app = QApplication(sys.argv)
     theme.apply(app, sheet=False)             # hell/dunkel, automatisch nach System; Stylesheet nach dem Aufbau
     theme.follow_system(app)
