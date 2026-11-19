@@ -3061,6 +3061,9 @@ class PlannerTabMixin:
     # ================================================================ Ausfall-Simulation
     def planner_sim_toggle(self, on):
         cv = self.pl_canvas
+        if getattr(self, "plan_tab", None) is not None:     # blaue Leuchte im Menü, solange die Simulation läuft
+            from .sidenav import PLAN_LAMP
+            self.tabs.setLamp(self.plan_tab, PLAN_LAMP if on else None)
         if on:
             if self.pl_cable_btn.isChecked():
                 self.pl_cable_btn.setChecked(False)

@@ -782,8 +782,9 @@ class Engine(RedfishClient):
 
     def __init__(self, rows, cur_user, cur_pass, new_user, new_pass, slot=3, dry=True,
                  log=print, stopped=lambda: False, verify_wait=240, vendor=None, on_done=lambda ip: None,
-                 lock_factory=True):
+                 lock_factory=True, hpe_ident=None):
         super().__init__(dry, log, stopped)
+        self.hpe_ident = hpe_ident          # (Seriennummer, Produkt-ID) für HPE iLO 5/6 nach Mainboard-Tausch, sonst None
         self.rows, self.cur_user_set, self.cur_pass = rows, cur_user, cur_pass
         self.new_user, self.new_pass, self.slot = new_user, new_pass, slot
         self.verify_wait, self.force_vendor = verify_wait, vendor
@@ -957,6 +958,15 @@ class Engine(RedfishClient):
             pw = self.existing_account(ip, pw, accounts, code)
             if pw is None:
                 return False
+        # 1b) Seriennummer/Produkt-ID (UEFI-Attribute, wirken nach dem nächsten Server-Neustart)
+        if self.hpe_ident:
+            serial, pid = self.hpe_ident
+            attrs = {k: v for k, v in (("SerialNumber", serial), ("ProductId", pid)) if v}
+            if not self.attempt(T("Seriennummer/Produkt-ID"), ip, pw, "PATCH", "/redfish/v1/Systems/1/Bios/Settings/",
+                                {"Attributes": attrs}):
+                return False
+            self.log(T("  Seriennummer/Produkt-ID vorgemerkt: {0} (gilt nach dem nächsten Neustart des Servers)").format(
+                ", ".join(f"{k}={v}" for k, v in attrs.items())), "ok")
         # 2) Hostname
         if not self.attempt(T("Hostname"), ip, pw, "PATCH", nic,
                             {"HostName": host}, {"Oem": {"Hpe": {"HostName": host}}}):
@@ -1201,6 +1211,8 @@ class Engine(RedfishClient):
                 self.log(T("  Hinweis: altes Gerät, die Verbindung nutzt veraltete Verschlüsselung (TLS 1.0/1.1)."))
             if not self.dry and v != "hpe_old":
                 self.backup(cur_ip, self.cur_user, pw, v, "neuware")
+            if self.hpe_ident and v != "hpe":
+                self.log(T("  Seriennummer/Produkt-ID: nur bei HPE iLO 5/6 möglich, hier übersprungen."))
             if getattr(self, "setup_" + v)(cur_ip, pw, new_ip, mask, gw, host):
                 done.append((new_ip, self.verify_path))
                 if self.lock_factory:

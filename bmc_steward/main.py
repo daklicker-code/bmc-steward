@@ -1,6 +1,6 @@
 """BMC-Steward: Hauptfenster (alle Reiter) und Programmstart."""
 from pathlib import Path
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
@@ -271,14 +271,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         slot_lab = QLabel(T("User-Slot (nur Dell)"))
         slot_lab.setToolTip(slot_tip)
         self.slot.setToolTip(slot_tip)
-        urow = QWidget()
-        uh = QHBoxLayout(urow)
-        uh.setContentsMargins(0, 0, 0, 0)
-        uh.addWidget(self.new_user, 1)
-        uh.addWidget(slot_lab)
-        uh.addWidget(self.slot)
-        self.tip_row(f, T("Benutzer"), urow, user_tip)
-        self.new_user.setToolTip(user_tip)
+        self.tip_row(f, T("Benutzer"), self.new_user, user_tip)
         self.tip_row(f, T("Passwort"), self._with_eye(self.new_pass),
                      T("Passwort des neuen Administrators, auf allen Geräten gleich.\n"
                      "Die Geräte prüfen ihre eigenen Regeln, iLO verlangt z. B. mindestens 8 Zeichen.\n"
@@ -295,6 +288,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.new_pass2_chk.toggled.connect(self.touch)
         self.new_pass2_chk.toggled.connect(self.update_missing)
         f.addRow(self.new_pass2_chk, self.new_pass2_box)
+        # User-Slot in eigener Zeile unter den Passwörtern: Benutzer → Passwort bleiben direkt nacheinander
+        srow = QWidget()
+        sh = QHBoxLayout(srow)
+        sh.setContentsMargins(0, 0, 0, 0)
+        sh.addWidget(self.slot)
+        sh.addStretch(1)
+        f.addRow(slot_lab, srow)
         self.lock_factory = QCheckBox(T("Werkskonto danach sperren (empfohlen)"))
         self.lock_factory.setChecked(True)
         self.lock_factory.setToolTip(T(
@@ -311,6 +311,40 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
         f.addRow(self.lock_factory)                 # untereinander: die Seite bleibt auch auf 1366er-Bildschirmen schmal
         f.addRow(self.clear_pass_after)
+        # HPE: Produkt-ID und Seriennummer (nach Mainboard-Tausch), aufklappbar, Standard zugeklappt
+        self.hpe_ident_btn = QToolButton()
+        self.hpe_ident_btn.setText(T("HPE: Produkt-ID und Seriennummer ändern"))
+        self.hpe_ident_btn.setCheckable(True)
+        self.hpe_ident_btn.setAutoRaise(True)
+        self.hpe_ident_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self.hpe_ident_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        ident_tip = T("Nur HPE iLO 5/6, z. B. nach einem Mainboard-Tausch: Das neue Board kennt Seriennummer und\n"
+                      "Produkt-ID des Gehäuses nicht. Beide Werte stehen auf dem Aufkleber am Gehäuse und müssen\n"
+                      "genau übereinstimmen. Sie werden als UEFI-Einstellung gesetzt und gelten nach dem nächsten\n"
+                      "Neustart des Servers. Nur für genau einen Server je Lauf; leere Felder bleiben unverändert.\n"
+                      "iLO 3/4 und andere Hersteller werden übersprungen.")
+        self.hpe_ident_btn.setToolTip(ident_tip)
+        self.hpe_ident = QWidget()
+        hf = QFormLayout(self.hpe_ident)
+        hf.setContentsMargins(14, 0, 0, 0)
+        hf.setVerticalSpacing(3)
+        self.hpe_serial = QLineEdit()
+        self.hpe_serial.setPlaceholderText(T("z. B. CZJ1234567 (Aufkleber am Gehäuse)"))
+        self.hpe_pid = QLineEdit()
+        self.hpe_pid.setPlaceholderText(T("z. B. 868703-B21 (Aufkleber am Gehäuse)"))
+        for w in (self.hpe_serial, self.hpe_pid):
+            w.setMaxLength(20)
+            w.textEdited.connect(lambda txt, w=w: w.setText(txt.upper()))
+        self.tip_row(hf, T("Seriennummer"), self.hpe_serial, ident_tip)
+        self.tip_row(hf, T("Produkt-ID"), self.hpe_pid, ident_tip)
+        self.hpe_ident.setVisible(False)
+
+        def toggle_ident(on):
+            self.hpe_ident.setVisible(on)
+            self.hpe_ident_btn.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
+        self.hpe_ident_btn.toggled.connect(toggle_ident)
+        f.addRow(self.hpe_ident_btn)
+        f.addRow(self.hpe_ident)
 
         # --- Vorgaben für neue Zeilen ---
         self.def_mask = QLineEdit()
@@ -334,6 +368,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                                "und überschreibt dort vorhandene Werte. Ein leeres Feld lässt die Spalte unverändert."))
         apply_def.clicked.connect(self.apply_defaults)
         f.addRow("", apply_def)
+        # Tab-Reihenfolge: Benutzer → Passwort → Subnetzmaske → Gateway (Augen-Knöpfe, Slot usw. danach)
+        # (erst nach dem Aufbau, wenn alle Felder im selben Fenster hängen)
+        def tab_order():
+            QWidget.setTabOrder(self.new_user, self.new_pass)
+            QWidget.setTabOrder(self.new_pass, self.def_mask)
+            QWidget.setTabOrder(self.def_mask, self.def_gw)
+        QTimer.singleShot(0, tab_order)
 
         top = QHBoxLayout()
         top.setSpacing(6)
@@ -528,8 +569,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         vbmc_page = self.build_vbmc()
         self.vbmc_page = vbmc_page
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
-        self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
-        self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
+        self.lab_tab = self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
+        self.plan_tab = self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
         help_view = QTextBrowser()
         help_view.setOpenExternalLinks(True)
         help_view.setHtml(HELP[i18n.LANG] + ABOUT)
@@ -706,6 +747,21 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             LOG.debug(T("Seite: {0}").format(item.text()))
 
     # ---------- Hilfen ----------
+    def hpe_ident_values(self):
+        """(Seriennummer, Produkt-ID) aus dem aufklappbaren HPE-Bereich; None, wenn beide leer sind,
+        False nach einer Fehlermeldung (ungültige Zeichen)."""
+        serial, pid = self.hpe_serial.text().strip().upper(), self.hpe_pid.text().strip().upper()
+        if not serial and not pid:
+            return None
+        bad = [n for n, v in ((T("Seriennummer"), serial), (T("Produkt-ID"), pid))
+               if v and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{2,19}", v)]
+        if bad:
+            QMessageBox.warning(self, T("Seriennummer/Produkt-ID"),
+                                T("Ungültig: {0}. Erlaubt sind Großbuchstaben, Ziffern und Bindestrich, genau wie auf "
+                                  "dem Aufkleber am Gehäuse.").format(", ".join(bad)))
+            return False
+        return serial, pid
+
     @staticmethod
     def tip_row(form, label, widget, tip):
         """Formularzeile, bei der Beschriftung und Feld denselben Hilfetext zeigen."""
@@ -1576,6 +1632,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                                     "Neue Zeilen eintragen."))
             return
         n = len(todo)
+        ident = self.hpe_ident_values()
+        if ident and n != 1:
+            QMessageBox.warning(self, T("Seriennummer/Produkt-ID"),
+                                T("Seriennummer und Produkt-ID gehören zu genau einem Gehäuse. In der Liste sind aber {0} "
+                                  "offene Server.\n\nNur den einen Server offen lassen oder die Felder leeren.").format(n))
+            return
+        if ident is False:
+            return
         dry = self.dry.isChecked()
         if not dry:
             nets = [i.network for i in self.local_ifaces()]
@@ -1591,6 +1655,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             if far:
                 info += "\n\n" + (T("⚠ Die aktuelle IP liegt in keinem Netz, an dem dieser Rechner direkt hängt. "
                                   "Für ein Staging-Gerät ist das ungewöhnlich. Ist es wirklich das richtige Gerät?"))
+            if ident:
+                info += "\n\n" + T("HPE: Seriennummer {0}, Produkt-ID {1} (wirkt nach dem nächsten Neustart des Servers).").format(
+                    ident[0] or "–", ident[1] or "–")
             if self.lock_factory.isChecked():
                 info += "\n\n" + T("Nach erfolgreicher Kontrolle wird auf jedem Server das Werkskonto gesperrt. Danach "
                                     "gilt nur noch der neue Administrator – Passwort vorher sicher ablegen.")
@@ -1605,7 +1672,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.worker = EngineThread(
             self, rows=todo, cur_user=self.cur_user.text().strip(), cur_pass=self.cur_pass.text(),
             new_user=self.new_user.text(), new_pass=self.new_pass.text(), slot=self.slot.value(), dry=dry,
-            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked())
+            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked(),
+            hpe_ident=ident or None)
         self.worker.line.connect(self.show_line)
         self.worker.row_done.connect(self.mark_done)
         self.worker.result.connect(self.done)

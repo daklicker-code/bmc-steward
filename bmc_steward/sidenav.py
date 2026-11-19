@@ -17,7 +17,10 @@ NAV_CSS = ("QListWidget#nav { border: none; background: transparent; padding: 0;
 ACCENT_ROLE = Qt.ItemDataRole.UserRole + 1      # Farbe, in der der Punkt unter der Maus als Knopf aufleuchtet
 MARK_ROLE = Qt.ItemDataRole.UserRole + 2        # Inhalt des Kreises links: Schrittnummer oder Symbol
 SECTION_ROLE = Qt.ItemDataRole.UserRole + 3     # Überschrift über dem Punkt (Beginn eines Bereichs)
+LAMP_ROLE = Qt.ItemDataRole.UserRole + 4        # Farbe der Leuchte rechts („hier läuft gerade etwas“), sonst leer
 HEAD_H, ROW_H = 26, 34
+LAB_LAMP = "#f2c200"         # Leuchte „Testlabor“: virtuelle Server laufen
+PLAN_LAMP = "#3b8beb"        # Leuchte „Aufbauplaner“: Ausfall-Simulation läuft
 
 
 class AccentDelegate(QStyledItemDelegate):
@@ -102,7 +105,17 @@ class AccentDelegate(QStyledItemDelegate):
         painter.setPen(QColor(idle_accent) if accent and not hover and not selected else text_col)
         opt = QTextOption(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         opt.setWrapMode(QTextOption.WrapMode.NoWrap)
-        painter.drawText(QRectF(x, box.y(), box.right() - x - 6, box.height()),
+        lamp = index.data(LAMP_ROLE)
+        right = box.right() - 6
+        if lamp:                                    # Leuchte rechts: in dieser Seite läuft gerade etwas
+            d = 12
+            dot = QRectF(box.right() - 12 - d, box.center().y() - d / 2, d, d)
+            painter.setPen(QPen(QColor(lamp).darker(160), 1))
+            painter.setBrush(QColor(lamp))
+            painter.drawEllipse(dot)
+            right = dot.left() - 6
+        painter.setPen(QColor(idle_accent) if accent and not hover and not selected else text_col)
+        painter.drawText(QRectF(x, box.y(), right - x, box.height()),
                          str(index.data(Qt.ItemDataRole.DisplayRole)), opt)
         painter.restore()
 
@@ -173,3 +186,11 @@ class SideNav(QObject):
 
     def count(self):
         return self.stack.count()
+
+    def setLamp(self, i, color=None):
+        """Leuchte rechts am Menüpunkt `i` ein- (Farbe, z. B. "#e8b400") oder ausschalten (None)."""
+        item = self.menu.item(i) if i is not None else None
+        if item is not None and item.data(LAMP_ROLE) != color:
+            item.setData(LAMP_ROLE, color)
+            tip = T("Hier läuft gerade etwas.") if color else ""
+            item.setToolTip(tip)

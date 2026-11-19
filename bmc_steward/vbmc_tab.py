@@ -725,6 +725,9 @@ class VbmcTabMixin:
                   self.vbmc_rand_btn, self.vbmc_load_btn, *self.vbmc_add_btns):
             w.setEnabled(not running)
         self._vbmc_busy = running
+        if getattr(self, "lab_tab", None) is not None:      # gelbe Leuchte im Menü, solange der Cluster läuft
+            from .sidenav import LAB_LAMP
+            self.tabs.setLamp(self.lab_tab, LAB_LAMP if running else None)
         self.vbmc_stop_btn.setVisible(running)
         self.vbmc_stop_btn.setEnabled(running)
         self.vbmc_update_start()

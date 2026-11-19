@@ -2291,6 +2291,66 @@ TR = {
 "Nom d'hôte",
 "Hostname"
 ],
+"HPE: Produkt-ID und Seriennummer ändern": [
+"HPE: change product ID and serial number",
+"HPE : modifier l'ID produit et le numéro de série",
+"HPE: Produkt-ID und Säriänummer ändere"
+],
+"HPE: Seriennummer {0}, Produkt-ID {1} (wirkt nach dem nächsten Neustart des Servers).": [
+"HPE: serial number {0}, product ID {1} (takes effect after the next server restart).",
+"HPE : numéro de série {0}, ID produit {1} (effectif après le prochain redémarrage du serveur).",
+"HPE: Säriänummer {0}, Produkt-ID {1} (gilt nach em nächschte Neustart vom Server)."
+],
+"Nur HPE iLO 5/6, z. B. nach einem Mainboard-Tausch: Das neue Board kennt Seriennummer und\nProdukt-ID des Gehäuses nicht. Beide Werte stehen auf dem Aufkleber am Gehäuse und müssen\ngenau übereinstimmen. Sie werden als UEFI-Einstellung gesetzt und gelten nach dem nächsten\nNeustart des Servers. Nur für genau einen Server je Lauf; leere Felder bleiben unverändert.\niLO 3/4 und andere Hersteller werden übersprungen.": [
+"HPE iLO 5/6 only, e.g. after a system board replacement: the new board does not know the chassis\nserial number and product ID. Both values are on the label on the chassis and must match exactly.\nThey are set as UEFI settings and take effect after the next server restart.\nOnly for exactly one server per run; empty fields stay unchanged.\niLO 3/4 and other vendors are skipped.",
+"HPE iLO 5/6 uniquement, p. ex. après un remplacement de carte mère : la nouvelle carte ne connaît pas\nle numéro de série ni l'ID produit du châssis. Les deux valeurs figurent sur l'étiquette du châssis et\ndoivent correspondre exactement. Elles sont définies comme paramètres UEFI et s'appliquent au prochain\nredémarrage du serveur. Un seul serveur par exécution ; les champs vides restent inchangés.\niLO 3/4 et les autres fabricants sont ignorés.",
+"Nur HPE iLO 5/6, z. B. nach emne Mainboard-Tuusch: S neue Board kennt Säriänummer und\nProdukt-ID vom Gehäuse nöd. Beidi Wärt stönd uf em Chläber am Gehäuse und müend\nexakt übereistimme. Si wärded als UEFI-Iistellig gsetzt und gälted nach em nächschte\nNeustart vom Server. Nur für genau ein Server pro Lauf; leeri Fälder blibed unveränderet.\niLO 3/4 und anderi Härsteller wärded übersprunge."
+],
+"Produkt-ID": [
+"Product ID",
+"ID produit",
+"Produkt-ID"
+],
+"Seriennummer und Produkt-ID gehören zu genau einem Gehäuse. In der Liste sind aber {0} offene Server.\n\nNur den einen Server offen lassen oder die Felder leeren.": [
+"Serial number and product ID belong to exactly one chassis, but the list has {0} open servers.\n\nLeave only that one server open or clear the fields.",
+"Le numéro de série et l'ID produit appartiennent à un seul châssis, mais la liste contient {0} serveurs ouverts.\n\nNe laissez ouvert que ce serveur ou videz les champs.",
+"Säriänummer und Produkt-ID ghöred zu genau eim Gehäuse. I de Liste sind aber {0} offeni Server.\n\nNur dä eint Server offe lah oder d Fälder leere."
+],
+"Seriennummer/Produkt-ID": [
+"Serial number/product ID",
+"Numéro de série/ID produit",
+"Säriänummer/Produkt-ID"
+],
+"Ungültig: {0}. Erlaubt sind Großbuchstaben, Ziffern und Bindestrich, genau wie auf dem Aufkleber am Gehäuse.": [
+"Invalid: {0}. Allowed are capital letters, digits and hyphens, exactly as on the chassis label.",
+"Non valide : {0}. Sont autorisés les majuscules, les chiffres et le tiret, exactement comme sur l'étiquette du châssis.",
+"Ungültig: {0}. Erlaubt sind Grossbuechstabe, Ziffere und Bindestrich, genau wie uf em Chläber am Gehäuse."
+],
+"z. B. 868703-B21 (Aufkleber am Gehäuse)": [
+"e.g. 868703-B21 (chassis label)",
+"p. ex. 868703-B21 (étiquette du châssis)",
+"z. B. 868703-B21 (Chläber am Gehäuse)"
+],
+"z. B. CZJ1234567 (Aufkleber am Gehäuse)": [
+"e.g. CZJ1234567 (chassis label)",
+"p. ex. CZJ1234567 (étiquette du châssis)",
+"z. B. CZJ1234567 (Chläber am Gehäuse)"
+],
+"  Seriennummer/Produkt-ID vorgemerkt: {0} (gilt nach dem nächsten Neustart des Servers)": [
+"  Serial number/product ID scheduled: {0} (takes effect after the next server restart)",
+"  Numéro de série/ID produit programmés : {0} (effectifs après le prochain redémarrage du serveur)",
+"  Säriänummer/Produkt-ID vorgmerkt: {0} (gilt nach em nächschte Neustart vom Server)"
+],
+"  Seriennummer/Produkt-ID: nur bei HPE iLO 5/6 möglich, hier übersprungen.": [
+"  Serial number/product ID: only possible with HPE iLO 5/6, skipped here.",
+"  Numéro de série/ID produit : possible uniquement avec HPE iLO 5/6, ignoré ici.",
+"  Säriänummer/Produkt-ID: nur bi HPE iLO 5/6 möglich, da übersprunge."
+],
+"Hier läuft gerade etwas.": [
+"Something is running here.",
+"Une opération est en cours ici.",
+"Da lauft grad öppis."
+],
 "Seriennummer": [
 "Serial number",
 "Numéro de série",

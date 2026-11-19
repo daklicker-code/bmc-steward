@@ -1298,6 +1298,38 @@ class TestHardeningLive(_WebBase):
             self.assertEqual(b.extra["session_timeout"], 1200)
 
 
+class TestHpeIdentLive(_WebBase):
+    """HPE iLO 5/6: Seriennummer und Produkt-ID werden als UEFI-Attribute vorgemerkt (Mainboard-Tausch)."""
+
+    def test_serial_and_product_id_go_to_bios_settings(self):
+        qapp()
+        from bmc_steward.redfish import Engine
+        b, port = self._start("hpe")
+        factory, pw = FACTORY_LOGIN["hpe"]
+        lines = []
+        eng = Engine(rows=[], cur_user="", cur_pass="", new_user="ops", new_pass="Sicher-Passw0rt!", dry=False,
+                     log=lambda line, kind="": lines.append(line), hpe_ident=("CZJ1234567", "868703-B21"))
+        eng.cur_user = factory
+        self.assertTrue(eng.setup_hpe(f"127.0.0.1:{port}", pw, "127.0.0.1", "255.0.0.0", "", "srv-neu"), "\n".join(lines))
+        eng.close_sessions()
+        self.assertEqual(b.bios.get("SerialNumber"), "CZJ1234567")
+        self.assertEqual(b.bios.get("ProductId"), "868703-B21")
+        self.assertIn("Neustart", "\n".join(lines))
+
+    def test_without_ident_bios_stays_untouched(self):
+        qapp()
+        from bmc_steward.redfish import Engine
+        b, port = self._start("hpe")
+        factory, pw = FACTORY_LOGIN["hpe"]
+        before = dict(b.bios)
+        eng = Engine(rows=[], cur_user="", cur_pass="", new_user="ops", new_pass="Sicher-Passw0rt!", dry=False,
+                     log=lambda line, kind="": None)
+        eng.cur_user = factory
+        eng.setup_hpe(f"127.0.0.1:{port}", pw, "127.0.0.1", "255.0.0.0", "", "srv-neu")
+        eng.close_sessions()
+        self.assertEqual(b.bios, before)
+
+
 class TestFactoryLockLive(_WebBase):
     """Werkskonto sperren: angemeldet als neuer Administrator, gegen echte Redfish-/RIBCL-Antworten."""
 
