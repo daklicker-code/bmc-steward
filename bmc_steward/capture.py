@@ -2,7 +2,7 @@
 
 Liest den Redfish-Baum eines echten Geräts (ausschließlich GET), schwärzt auf Wunsch persönliche Daten und
 legt ihn im DMTF-Redfish-Mockup-Format ab (ein Ordner je Ressource mit „index.json“, Pfad = Redfish-Pfad). Daraus
-entstehen (a) ein Mockup für tests/dmtf_mockups/, den vBMC und den DMTF-Mockup-Server, (b) ein
+entstehen (a) ein Mockup für den vBMC und den DMTF-Mockup-Server, (b) ein
 Fähigkeitsbericht („SSH-Keys: ja/nein“ …) und (c) ein Vergleich zweier Aufnahmen desselben Geräts, etwa vor und
 nach einem Firmware-Update: verschwundene Pfade und Aktionen, weggefallene Schreibrechte (Allow-Kopfzeile),
 geänderte erlaubte Werte.

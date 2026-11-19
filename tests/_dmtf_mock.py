@@ -1,5 +1,5 @@
-"""Leichter Mock-Redfish-Server für Tests: lädt einen Hersteller-Baum im DMTF-Redfish-Mockup-Server-Format
-(ein Ordner je Ressource mit „index.json" darin, der Ordnerpfad ist der Redfish-Pfad) und beantwortet GET/PATCH
+"""Leichter Mock-Redfish-Server für Tests: lädt einen selbst geschriebenen Baum aus tests/_trees.py
+({Redfish-Pfad: JSON-Inhalt}, kein Herstellermaterial) und beantwortet GET/PATCH
 wie ein echter BMC – inklusive „404 für unbekannte Ressource", damit ServicesEngine.soft() seinen
 Graceful-Skip (None statt False) auch gegen reale Baumstrukturen prüfen kann.
 
@@ -20,17 +20,12 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-MOCKUPS = Path(__file__).resolve().parent / "dmtf_mockups"
+from tests._trees import TREES
 
 
 def load_tree(vendor):
-    """Liest alle index.json unter tests/dmtf_mockups/<vendor>/ ein: {Redfish-Pfad: JSON-Inhalt}."""
-    root = MOCKUPS / vendor
-    tree = {}
-    for f in root.rglob("index.json"):
-        path = "/" + str(f.parent.relative_to(root)).replace(os.sep, "/")
-        tree[path] = json.loads(f.read_text(encoding="utf-8"))
-    return tree
+    """Eine tiefe Kopie des Testbaums für diesen Hersteller: {Redfish-Pfad: JSON-Inhalt}."""
+    return json.loads(json.dumps(TREES[vendor]))
 
 
 def _deep_merge(dst, src):

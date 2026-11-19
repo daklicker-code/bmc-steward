@@ -1,6 +1,6 @@
 """Aufnahme- und Vergleichsmodus (capture.py): nur lesend, Schwärzung, Mockup-Format, Fähigkeitsbericht, Vergleich.
 
-Die Aufnahme läuft gegen die vier DMTF-Mockups (tests/dmtf_mockups) über den echten RedfishClient; die
+Die Aufnahme läuft gegen die vier selbst geschriebenen Testbäume (tests/_trees.py) über den echten RedfishClient; die
 Schwärzung und der Vergleich zusätzlich mit kleinen, selbst gebauten Bäumen, in denen jeder persönliche Wert
 bekannt ist."""
 import copy
@@ -121,7 +121,7 @@ class TestRedaction(unittest.TestCase):
 
 
 @need("openssl")
-class TestCaptureAgainstMockups(unittest.TestCase):
+class TestCaptureAgainstTrees(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -192,7 +192,7 @@ class TestCaptureAgainstMockups(unittest.TestCase):
         self.assertEqual(len(cap["tree"]), 3)
         self.assertEqual(cap["meta"]["aborted"], "limit")
 
-    def test_capabilities_match_the_mockup_trees(self):
+    def test_capabilities_match_the_test_trees(self):
         states = {}
         for v in VENDORS:
             _, cap, _, _ = self.capture(v, do_redact=False)
@@ -377,7 +377,7 @@ class TestCaptureTab(unittest.TestCase):
             self.assertFalse(self.w.cap_save.isEnabled())
 
     @need("openssl")
-    def test_capture_thread_runs_against_a_mockup_and_reports_done(self):
+    def test_capture_thread_runs_against_a_test_tree_and_reports_done(self):
         from PyQt6.QtTest import QSignalSpy
         from bmc_steward.capture_tab import CaptureThread
         srv = DmtfMockServer("lenovo").start()

@@ -1,7 +1,7 @@
-"""Herstellereigene DMTF-Mockups (tests/dmtf_mockups/<hersteller>/, Redfish-Mockup-Server-Format) gegen den
+"""Selbst geschriebene Minimal-Redfish-Bäume (tests/_trees.py, kein Herstellermaterial) gegen den
 echten RedfishClient/ServicesEngine-Code laufen lassen – statt nur mit unittest.mock vorgetäuschten Antworten.
 
-Prüft mit statischen, realitätsnahen Ressourcenbäumen je Hersteller (Dell iDRAC9, HPE iLO5,
+Prüft mit statischen Ressourcenbäumen je Hersteller (Dell iDRAC9, HPE iLO5,
 Lenovo XCC2, Supermicro X12):
 1. vendor() erkennt jeden Hersteller korrekt allein am ServiceRoot (Vendor-Feld / Oem-Schlüssel).
 2. svc_hard() (Härtung: IPMI/SSDP/SNMP aus, Kontosperre, Session-Timeout, TLS-Mindestversion) funktioniert
@@ -33,8 +33,8 @@ DEFAULT_USER = {"dell": "root", "hpe": "Administrator", "lenovo": "USERID", "smc
 
 
 @need("openssl")
-class TestVendorDetectionAgainstMockups(unittest.TestCase):
-    """RedfishClient.vendor() allein anhand des ServiceRoot-Mockups je Hersteller."""
+class TestVendorDetectionAgainstTrees(unittest.TestCase):
+    """RedfishClient.vendor() allein anhand des ServiceRoot-Baums je Hersteller."""
 
     @classmethod
     def setUpClass(cls):
@@ -45,7 +45,7 @@ class TestVendorDetectionAgainstMockups(unittest.TestCase):
         for srv in cls.servers.values():
             srv.stop()
 
-    def test_each_mockup_is_recognized_as_its_own_vendor(self):
+    def test_each_tree_is_recognized_as_its_own_vendor(self):
         for v in VENDORS:
             with self.subTest(vendor=v):
                 c = RedfishClient(dry=False)
@@ -53,7 +53,7 @@ class TestVendorDetectionAgainstMockups(unittest.TestCase):
 
 
 @need("openssl")
-class TestHardeningAgainstMockups(unittest.TestCase):
+class TestHardeningAgainstTrees(unittest.TestCase):
     """ServicesEngine.svc_hard() gegen die vier Hersteller-Bäume: muss überall funktionieren, und die
     TLS-Mindestversion muss dort, wo es keine Attributes-Ressource gibt, sauber übersprungen werden statt
     als Fehler zu zählen."""
@@ -126,8 +126,8 @@ class TestHardeningAgainstMockups(unittest.TestCase):
 
 
 @need("openssl")
-class TestNetworkAgainstMockups(unittest.TestCase):
-    """svc_dns()/svc_vlan()/svc_ipv6() gegen die vier EthernetInterfaces-Mockups (Version 3.0.26)."""
+class TestNetworkAgainstTrees(unittest.TestCase):
+    """svc_dns()/svc_vlan()/svc_ipv6() gegen die vier EthernetInterfaces-Bäume (Version 3.0.26)."""
 
     def setUp(self):
         self.servers = {v: DmtfMockServer(v).start() for v in VENDORS}
@@ -189,8 +189,8 @@ class TestNetworkAgainstMockups(unittest.TestCase):
 
 
 @need("openssl")
-class TestUsersAgainstMockups(unittest.TestCase):
-    """UsersEngine (Version 3.0.26, Benutzerverwaltung) gegen die vier Konten-Mockups: Liste lesen,
+class TestUsersAgainstTrees(unittest.TestCase):
+    """UsersEngine (Version 3.0.26, Benutzerverwaltung) gegen die vier Konten-Bäume: Liste lesen,
     anlegen (POST bei HPE/Supermicro/Lenovo, PATCH eines freien Slots bei Dell), löschen, Rolle und
     Passwort setzen, SSH-Key anlegen/löschen (DMTF-Standard ManagerAccount „Keys“) - jeweils als echter
     HTTP-Roundtrip gegen tests/_dmtf_mock.py, nicht nur gemockte Python-Aufrufe wie in test_users.py."""

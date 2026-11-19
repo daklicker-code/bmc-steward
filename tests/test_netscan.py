@@ -1,5 +1,5 @@
 """Netzsuche nach BMCs (bmc_steward.netscan): Zielliste, Erkennung ohne Anmeldung, Läufe gegen die
-DMTF-Mockups (echte HTTPS-Antworten auf 127.0.0.1) und der IPMI-Ping gegen einen kleinen UDP-Antworter.
+selbst geschriebenen Testbäumen (echte HTTPS-Antworten auf 127.0.0.1) und der IPMI-Ping gegen einen kleinen UDP-Antworter.
 Es darf nie etwas anderes als ein GET ohne Zugangsdaten gesendet werden."""
 import ipaddress
 import socket
@@ -65,7 +65,7 @@ class TestClassify(unittest.TestCase):
 
 
 @need("openssl")
-class TestScanAgainstMockups(unittest.TestCase):
+class TestScanAgainstTrees(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.servers = {}
