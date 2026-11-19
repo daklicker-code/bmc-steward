@@ -1,15 +1,16 @@
 """Weboberflächen der virtuellen BMCs: Login, Verwaltungsoberfläche (SPA), Remote-Konsole.
 
-Jeder Hersteller hat einen eigenen Skin, der dem Bedienkonzept des Originals folgt: Seitenrahmen
-(Kopfleiste, Menü oben/links, Reiter), Menüstruktur, Begriffe, Dashboard, Anmeldeseite und Werkzeugleiste
-der Konsole. Die Seiten lesen live aus Redfish, es gibt keine Parallelwelt.
+Es gibt vier Darstellungsvarianten (Layout, Menüaufbau, Farbe) für die Fantasie-Hersteller Böll, Häpe, Venolo und
+Hypernano. Alle Texte, Menü- und Aktionsnamen, Farben und Symbole sind selbst gestaltet; sie folgen keiner
+Oberfläche eines echten Herstellers. Die Seiten lesen live aus Redfish, es gibt keine Parallelwelt.
 
-Rechtliche Leitplanken (bewusst so gebaut, bitte beim Weiterbauen beibehalten):
-- keine Logos, Wortmarken, Hersteller-Grafiken, -Icons oder -Schriften; alle Icons sind eigene, einfache SVGs
-- kein Code, CSS oder Bild aus Hersteller-Firmware übernommen; nachgebaut wird nur Aufbau und Bedienablauf
-- Marken (iDRAC, iLO, XClarity …) nicht als Seitentitel, nur beschreibend im Simulationshinweis
-  („…-Profil“); Farben angelehnt, aber nicht die exakten Markenfarben
+Leitplanken (bitte beim Weiterbauen beibehalten):
+- keine Logos, Wortmarken, Grafiken, Icons, Schriften, Farbschemata oder Texte echter Hersteller; Icons sind eigene SVGs
+- kein Code, CSS, Bild oder Meldungstext aus Hersteller-Firmware oder -Dokumentation übernommen
+- Markennamen echter Hersteller kommen in der Oberfläche nicht vor
 - jede Seite (auch die Anmeldung) trägt sichtbar den Hinweis, dass es eine Simulation ist
+- die internen Profil-Schlüssel "hpe", "dell", "lenovo", "smc" benennen nur das Schnittstellenverhalten, das der
+  virtuelle Server zeigt (damit BMC-Steward seine Erkennung testen kann), nicht das Aussehen
 """
 import json
 import re
@@ -178,16 +179,16 @@ DE.update({
 })
 
 # Power-Aktionen: (Beschriftung, Redfish-ResetType, gefährlich)
-ACT_HPE = [("Momentary Press", "PushPowerButton", 0), ("Press and Hold", "ForceOff", 1), ("Reset", "ForceRestart", 1),
-           ("Cold Boot", "PowerCycle", 1), ("Graceful Shutdown", "GracefulShutdown", 0), ("Power On", "On", 0)]
-ACT_DELL = [("Power On System", "On", 0), ("Power Off System", "ForceOff", 1), ("Graceful Shutdown", "GracefulShutdown", 0),
-            ("NMI (Non-Masking Interrupt)", "Nmi", 1), ("Reset System (warm boot)", "ForceRestart", 1),
-            ("Power Cycle System (cold boot)", "PowerCycle", 1)]
-ACT_XCC = [("Power On", "On", 0), ("Shut Down OS and Power Off", "GracefulShutdown", 0),
-           ("Power Off Immediately", "ForceOff", 1), ("Restart OS", "GracefulRestart", 0),
-           ("Restart Immediately", "ForceRestart", 1), ("NMI", "Nmi", 1)]
-ACT_SMC = [("Power On", "On", 0), ("Power Off – Immediate", "ForceOff", 1), ("Power Off – Orderly Shutdown", "GracefulShutdown", 0),
-           ("Power Cycle", "PowerCycle", 1), ("Reset", "ForceRestart", 1)]
+ACT_HAEPE = [("Press power button", "PushPowerButton", 0), ("Hold power button", "ForceOff", 1),
+           ("Restart (forced)", "ForceRestart", 1), ("Power cycle", "PowerCycle", 1),
+           ("Shut down (graceful)", "GracefulShutdown", 0), ("Power on", "On", 0)]
+ACT_BOELL = [("Power on", "On", 0), ("Power off (forced)", "ForceOff", 1), ("Shut down (graceful)", "GracefulShutdown", 0),
+            ("Send NMI", "Nmi", 1), ("Restart (forced)", "ForceRestart", 1), ("Power cycle", "PowerCycle", 1)]
+ACT_VENOLO = [("Power on", "On", 0), ("Shut down OS", "GracefulShutdown", 0),
+           ("Power off (forced)", "ForceOff", 1), ("Restart OS", "GracefulRestart", 0),
+           ("Restart (forced)", "ForceRestart", 1), ("Send NMI", "Nmi", 1)]
+ACT_HYPERNANO = [("Power on", "On", 0), ("Power off (forced)", "ForceOff", 1), ("Shut down (graceful)", "GracefulShutdown", 0),
+           ("Power cycle", "PowerCycle", 1), ("Restart (forced)", "ForceRestart", 1)]
 
 
 def N(k, label):
@@ -200,84 +201,81 @@ def G(label, *items, icon=""):
 
 # Konsolen-Menüs: (Beschriftung, Aktion oder Liste von (Beschriftung, Aktion))
 #   p:<ResetType>  boot:<Target>  cad  full  refresh  close  na
-CON_POWER_DELL = [("Power On System", "p:On"), ("Power Off System", "p:ForceOff"), ("Graceful Shutdown", "p:GracefulShutdown"),
-                  ("Reset System (warm boot)", "p:ForceRestart"), ("Power Cycle System (cold boot)", "p:PowerCycle")]
+CON_POWER_BOELL = [("Power on", "p:On"), ("Power off (forced)", "p:ForceOff"), ("Shut down (graceful)", "p:GracefulShutdown"),
+                  ("Restart (forced)", "p:ForceRestart"), ("Power cycle", "p:PowerCycle")]
 
 SKINS = {
     "hpe": dict(
-        shell="hpe", product="Lights-Out Management", home="/index.html", login_btn="Log In", console_path="/irc.html", nic="1",
-        menu=[G("Information", N("overview", "Overview"), N("events", "Event Log"), icon="info"),
-              G("System Information", N("sysinfo", "Summary"), N("storage", "Storage"), icon="server"),
-              G("Firmware & OS Software", N("firmware", "Installed Firmware"), icon="chip"),
-              G("Remote Console & Media", N("console", "Remote Console"), N("vmedia", "Virtual Media"), icon="screen"),
-              G("Power & Thermal", N("power", "Server Power"), N("thermal", "Fans & Temperatures"), icon="power"),
-              G("Dedicated Network Port", N("network", "Summary"), icon="net"),
-              G("Administration", N("users", "User Administration"), N("license", "Licensing"), icon="gear"),
-              G("Security", N("certificate", "SSL Certificate"), icon="lock"),
-              G("System Configuration", N("bios", "BIOS/Platform Configuration"), icon="sliders")],
-        actions=ACT_HPE,
-        console_menu=[("Power Switch", [("Momentary Press", "p:PushPowerButton"), ("Press and Hold", "p:ForceOff"),
-                                        ("Cold Boot", "p:PowerCycle"), ("Reset", "p:ForceRestart")]),
-                      ("Virtual Drives", [("Image File CD/DVD-ROM", "na"), ("URL CD/DVD-ROM", "na")]),
-                      ("Keyboard", [("Ctrl-Alt-Del", "cad")]), ("Fullscreen", "full"), ("Help", "na")],
+        shell="hpe", brand="Häpe", product="Häpe Controller", home="/index.html", login_btn="Log in", console_path="/irc.html", nic="1",
+        menu=[G("Overview", N("overview", "Overview"), N("events", "Events"), icon="info"),
+              G("Hardware", N("sysinfo", "Summary"), N("storage", "Drives"), icon="server"),
+              G("Firmware", N("firmware", "Versions"), icon="chip"),
+              G("Console and media", N("console", "Remote console"), N("vmedia", "Virtual media"), icon="screen"),
+              G("Power and cooling", N("power", "Power"), N("thermal", "Fans and temperatures"), icon="power"),
+              G("Network", N("network", "Controller port"), icon="net"),
+              G("Administration", N("users", "Users"), N("license", "License"), icon="gear"),
+              G("Security", N("certificate", "Certificate"), icon="lock"),
+              G("Configuration", N("bios", "UEFI settings"), icon="sliders")],
+        actions=ACT_HAEPE,
+        console_menu=[("Power", [("Press power button", "p:PushPowerButton"), ("Hold power button", "p:ForceOff"),
+                                 ("Power cycle", "p:PowerCycle"), ("Restart (forced)", "p:ForceRestart")]),
+                      ("Media", [("Image file", "na"), ("Image URL", "na")]),
+                      ("Keyboard", [("Ctrl-Alt-Del", "cad")]), ("Full screen", "full"), ("Help", "na")],
         t={"en": {}, "de": {}}),
     "dell": dict(
-        shell="dell", product="Remote Access Controller", home="/restgui/start.html", login_btn="Log In",
+        shell="dell", brand="Böll", product="Böll Controller", home="/restgui/start.html", login_btn="Log in",
         console_path="/console", nic="1",
         menu=[G("Dashboard", N("overview", "Dashboard")),
               G("System", N("sysinfo", "Inventory"), N("power", "Power"), N("thermal", "Cooling")),
-              G("Storage", N("storage", "Physical Disks")),
-              G("Configuration", N("bios", "BIOS Settings"), N("vmedia", "Virtual Media"), N("console", "Virtual Console"),
-                N("license", "Licenses")),
-              G("Maintenance", N("events", "Lifecycle Log"), N("firmware", "System Update")),
-              G("Controller Settings", N("network", "Network"), N("users", "Users"), N("certificate", "SSL Certificate"))],
-        actions=ACT_DELL,
-        console_menu=[("Boot", [("BIOS Setup", "boot:BiosSetup"), ("Virtual CD/DVD/ISO", "boot:Cd"), ("PXE", "boot:Pxe"),
-                                ("Normal Boot", "boot:None")]),
-                      ("Power", CON_POWER_DELL), ("Chat", "na"), ("Keyboard", [("Ctrl+Alt+Del", "cad")]),
-                      ("Screen Capture", "na"), ("Refresh", "refresh"), ("Full Screen", "full"),
-                      ("Disconnect Viewer", "close"), ("Console Controls", "na"), ("Virtual Media", "na")],
-        t={"en": {"on": "ON", "off": "OFF", "serial": "Service Tag", "bmcFw": "Controller Firmware Version",
-                  "systemRom": "BIOS Version"},
-           "de": {"on": "EIN", "off": "AUS", "serial": "Service-Tag", "bmcFw": "Controller-Firmware-Version",
-                  "systemRom": "BIOS-Version"}}),
+              G("Storage", N("storage", "Drives")),
+              G("Configuration", N("bios", "UEFI settings"), N("vmedia", "Virtual media"), N("console", "Console"),
+                N("license", "License")),
+              G("Maintenance", N("events", "Event log"), N("firmware", "Firmware")),
+              G("Controller", N("network", "Network"), N("users", "Users"), N("certificate", "Certificate"))],
+        actions=ACT_BOELL,
+        console_menu=[("Boot", [("UEFI setup", "boot:BiosSetup"), ("Virtual CD/DVD", "boot:Cd"), ("Network boot", "boot:Pxe"),
+                                ("Normal boot", "boot:None")]),
+                      ("Power", CON_POWER_BOELL), ("Chat", "na"), ("Keyboard", [("Ctrl+Alt+Del", "cad")]),
+                      ("Screenshot", "na"), ("Refresh", "refresh"), ("Full screen", "full"),
+                      ("Disconnect", "close"), ("Console options", "na"), ("Media", "na")],
+        t={"en": {"on": "ON", "off": "OFF"}, "de": {"on": "EIN", "off": "AUS"}}),
     "lenovo": dict(
-        shell="lenovo", product="Systems Management Controller", home="/", login_btn="Log In",
+        shell="lenovo", brand="Venolo", product="Venolo Controller", home="/", login_btn="Log in",
         console_path="/vbsim/xcc-console", nic="NIC",
-        menu=[G("Home", N("overview", "Home"), icon="home"), G("Events", N("events", "Event Log"), icon="bell"),
-              G("Inventory", N("sysinfo", "Inventory"), icon="list"), G("Utilization", N("thermal", "Utilization"), icon="gauge"),
-              G("Storage", N("storage", "Detail"), icon="disk"), G("Remote Console", N("console", "Remote Console"), icon="screen"),
-              G("Firmware Update", N("firmware", "Firmware Update"), icon="chip"),
-              G("Server Configuration", N("power", "Power Policy & Actions"), N("vmedia", "Media Mount"),
-                N("bios", "System Settings"), icon="server"),
-              G("BMC Configuration", N("network", "Network"), N("users", "User/LDAP"), N("certificate", "Security"),
+        menu=[G("Home", N("overview", "Home"), icon="home"), G("Events", N("events", "Event log"), icon="bell"),
+              G("Inventory", N("sysinfo", "Inventory"), icon="list"), G("Sensors", N("thermal", "Sensors"), icon="gauge"),
+              G("Storage", N("storage", "Drives"), icon="disk"), G("Console", N("console", "Remote console"), icon="screen"),
+              G("Firmware", N("firmware", "Firmware"), icon="chip"),
+              G("Server", N("power", "Power actions"), N("vmedia", "Media"),
+                N("bios", "UEFI settings"), icon="server"),
+              G("Controller", N("network", "Network"), N("users", "Users"), N("certificate", "Certificate"),
                 N("license", "License"), icon="gear")],
-        actions=ACT_XCC,
-        console_menu=[("Screen Capture", "na"), ("Keyboard", [("Ctrl+Alt+Del", "cad")]), ("Mouse", "na"),
-                      ("Media", "na"), ("Power", [(a[0], "p:" + a[1]) for a in ACT_XCC]), ("Full Screen", "full"),
+        actions=ACT_VENOLO,
+        console_menu=[("Screenshot", "na"), ("Keyboard", [("Ctrl+Alt+Del", "cad")]), ("Mouse", "na"),
+                      ("Media", "na"), ("Power", [(a[0], "p:" + a[1]) for a in ACT_VENOLO]), ("Full screen", "full"),
                       ("Quit", "close")],
-        t={"en": {"serial": "Serial Number"}, "de": {}}),
+        t={"en": {}, "de": {}}),
     "smc": dict(
-        shell="smc", product="Baseboard Management Controller", home="/cgi/url_redirect.cgi?url_name=mainmenu",
+        shell="smc", brand="Hypernano", product="Hypernano Controller", home="/cgi/url_redirect.cgi?url_name=mainmenu",
         login_btn="Login", console_path="/cgi/url_redirect.cgi", nic="1",
-        menu=[G("System", N("overview", "Summary"), N("sysinfo", "Hardware Information")),
-              G("Server Health", N("thermal", "Sensor Readings"), N("events", "Event Log"), N("storage", "Storage Monitoring")),
-              G("Configuration", N("network", "Network"), N("users", "Users"), N("certificate", "SSL Certification")),
-              G("Remote Control", N("console", "Console Redirection"), N("power", "Power Control")),
-              G("Virtual Media", N("vmedia", "CD-ROM Image")),
-              G("Maintenance", N("firmware", "Firmware Update"), N("bios", "BIOS Configuration")),
-              G("Miscellaneous", N("license", "License Activation"))],
-        actions=ACT_SMC,
-        console_menu=[("Virtual Media", "na"), ("Record", "na"), ("Macro", [("Ctrl+Alt+Del", "cad")]),
-                      ("Options", [("Full Screen", "full"), ("Refresh", "refresh")]), ("User List", "na"),
-                      ("Capture", "na"), ("Power Control", [(a[0], "p:" + a[1]) for a in ACT_SMC]), ("Exit", "close")],
+        menu=[G("System", N("overview", "Summary"), N("sysinfo", "Hardware")),
+              G("Health", N("thermal", "Sensors"), N("events", "Events"), N("storage", "Drives")),
+              G("Settings", N("network", "Network"), N("users", "Users"), N("certificate", "Certificate")),
+              G("Remote", N("console", "Console"), N("power", "Power")),
+              G("Media", N("vmedia", "Virtual media")),
+              G("Maintenance", N("firmware", "Firmware"), N("bios", "UEFI settings")),
+              G("More", N("license", "License"))],
+        actions=ACT_HYPERNANO,
+        console_menu=[("Media", "na"), ("Record", "na"), ("Macro", [("Ctrl+Alt+Del", "cad")]),
+                      ("Options", [("Full screen", "full"), ("Refresh", "refresh")]), ("Users", "na"),
+                      ("Screenshot", "na"), ("Power", [(a[0], "p:" + a[1]) for a in ACT_HYPERNANO]), ("Exit", "close")],
         t={"en": {}, "de": {}}),
 }
 
 PAGES = {"overview", "sysinfo", "events", "console", "power", "thermal", "network", "users", "firmware", "bios",
          "vmedia", "license", "certificate", "storage"}
 
-# Seitenbeschreibungen (Supermicro zeigt unter jedem Seitentitel einen Erklärungssatz)
+# Seitenbeschreibungen (Variante Hypernano zeigt unter jedem Seitentitel einen Erklärungssatz)
 DESC = {"overview": "Summary of the system and the management controller.",
         "sysinfo": "Processors, memory and network adapters of the host.",
         "thermal": "Readings of all temperature and fan sensors.", "events": "Events logged by the management controller.",
@@ -312,16 +310,16 @@ def product(sk, b):
     return f"{sk['product']} {n}".strip()
 
 
-VENDOR = {"dell": "Dell", "hpe": "HPE", "lenovo": "Lenovo", "smc": "Supermicro"}
+VENDOR = {"dell": "Böll", "hpe": "Häpe", "lenovo": "Venolo", "smc": "Hypernano"}
 
 
 def edition(name):
-    """Lizenz-Edition ohne Produktmarke („iDRAC9 Enterprise“ → „Enterprise“) für Kopfzeile/Anmeldung."""
-    return re.sub(r"^(iDRAC\d*|iLO\s*\d*|XCC\d*)\s+", "", name or "")
+    """Lizenz-Edition ohne Produktname („Böll 9 Enterprise“ → „Enterprise“) für Kopfzeile/Anmeldung."""
+    return re.sub(r"^(Böll|Häpe|Venolo|Hypernano)\s*\d*\s+", "", name or "")
 
 
 def profile(b):
-    """Beschreibende (nominative) Nennung des nachgebildeten Geräts, nur im Simulationshinweis."""
+    """Name des virtuellen Geräts (Fantasie-Hersteller und Generation) für den Simulationshinweis."""
     return f"{VENDOR.get(b.family, b.family)} {b.gen_label}"
 
 
@@ -366,9 +364,9 @@ table{border-collapse:collapse;width:100%}
 """
 
 CSS = {
-    # ---- HPE: Navigation links (hell), Seitentitel „Gruppe - Seite“, Reiter mit grüner Linie, Symbolleiste oben rechts
+    # ---- Variante Häpe: Navigation links (hell), Seitentitel „Gruppe - Seite“, Reiter mit grüner Linie, Symbolleiste oben rechts
     "hpe": """
-:root{--acc:#139b76;--mut:#646a71;--line:#d9dcdf;--line2:#eceef0}
+:root{--acc:#8a4fc0;--mut:#646a71;--line:#d9dcdf;--line2:#eceef0}
 body{font:13px/1.45 Arial,Helvetica,sans-serif;background:#fff;color:#1e2226}
 .lay{flex:1;display:flex;min-height:0}
 .nav{width:236px;flex-shrink:0;background:#f2f3f4;border-right:1px solid var(--line);display:flex;flex-direction:column}
@@ -395,9 +393,9 @@ main{padding:18px 20px;flex:1;min-width:0}
 .grid th{background:#f2f3f4;border-bottom:1px solid var(--line);font-size:12px;color:#40464c}.grid td{border-bottom:1px solid var(--line2)}
 .btn{border-radius:2px}.btn.pri{font-weight:700}
 """,
-    # ---- Dell: dunkle Kopfleiste, waagerechtes Menü mit Aufklappern, große Seitentitel mit Reitern, weiße Kacheln
+    # ---- Variante Böll: dunkle Kopfleiste, waagerechtes Menü mit Aufklappern, große Seitentitel mit Reitern, weiße Kacheln
     "dell": """
-:root{--acc:#1a6fbf;--mut:#5f656c;--line:#d5d8dc;--line2:#ebedef}
+:root{--acc:#c9741a;--mut:#5f656c;--line:#d5d8dc;--line2:#ebedef}
 body{font:14px/1.45 "Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f1f2f3;color:#1f2327}
 .top{display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 18px;background:#232425;color:#fff}
 .brand{display:flex;align-items:center;gap:12px}.brand .mk{width:26px;height:26px;border:2px solid #fff;border-radius:3px;display:grid;place-items:center;font-size:10px;font-weight:700}
@@ -423,9 +421,9 @@ main{padding:16px 24px;flex:1;min-width:0}
 .grid th{border-bottom:2px solid var(--line);font-size:12.5px;color:#4a5057;font-weight:600}.grid td{border-bottom:1px solid var(--line2)}
 .btn{border-radius:2px;border-color:#8f969e}.btn.pri{font-weight:600}
 """,
-    # ---- Lenovo: dunkle Kopfleiste, dunkle Navigation mit Symbolen links, Kacheln auf hellgrauem Grund
+    # ---- Variante Venolo: dunkle Kopfleiste, dunkle Navigation mit Symbolen links, Kacheln auf hellgrauem Grund
     "lenovo": """
-:root{--acc:#2f7fcf;--mut:#5d636a;--line:#d8dbdf;--line2:#edeff1}
+:root{--acc:#1f8f8f;--mut:#5d636a;--line:#d8dbdf;--line2:#edeff1}
 body{font:13.5px/1.45 "Helvetica Neue",Helvetica,Arial,sans-serif;background:#eef0f2;color:#1e2226}
 .top{display:flex;align-items:center;justify-content:space-between;height:50px;padding:0 16px;background:#16191c;color:#fff}
 .brand{display:flex;align-items:center;gap:12px}.brand .mk{width:30px;height:20px;border:2px solid #c9ced4;display:grid;place-items:center;font-size:9px;font-weight:700;color:#c9ced4}
@@ -448,9 +446,9 @@ main{padding:14px 20px;flex:1;min-width:0}
 .grid th{background:#f4f5f6;border-bottom:1px solid var(--line);font-size:12px;color:#4a5057;font-weight:600}.grid td{border-bottom:1px solid var(--line2)}
 .btn{border-radius:3px}.form select{min-width:240px}
 """,
-    # ---- Supermicro (klassisch): Banner, blaue Menüleiste, graue Untermenü-Spalte, blaue Seitentitel mit Beschreibung
+    # ---- Variante Hypernano: Banner, blaue Menüleiste, graue Untermenü-Spalte, blaue Seitentitel mit Beschreibung
     "smc": """
-:root{--acc:#2557a7;--mut:#555b62;--line:#c4ccd8;--line2:#e1e6ee}
+:root{--acc:#4a8f2a;--mut:#555b62;--line:#c4ccd8;--line2:#e1e6ee}
 body{font:12.5px/1.4 Arial,Helvetica,sans-serif;background:#fff;color:#1c1f23}
 .banner{display:flex;align-items:center;justify-content:space-between;height:58px;padding:0 16px;background:linear-gradient(#fff,#eef1f5);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:12px}.brand .mk{width:32px;height:32px;border:3px solid var(--acc);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--acc)}
@@ -512,7 +510,7 @@ VARIANT = {("dell", "idrac8"): "dell8", ("dell", "idrac8_alt"): "dell8", ("hpe",
            ("lenovo", "xcc1"): "lenovo1", ("smc", "x13"): "smc13"}
 
 CSS["dell8"] = """
-:root{--acc:#2a6db5;--mut:#5c6269;--line:#c9ced6;--line2:#e6e9ed}
+:root{--acc:#4a8f2a;--mut:#5c6269;--line:#c9ced6;--line2:#e6e9ed}
 body{font:12.5px/1.45 Arial,Helvetica,sans-serif;background:#fff;color:#1d2125}
 .lay{flex:1;display:flex;min-height:0}
 .nav{width:230px;flex-shrink:0;background:linear-gradient(90deg,#e9edf2,#f5f7f9);border-right:1px solid var(--line);display:flex;flex-direction:column}

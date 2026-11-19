@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """vbmc - Virtuelle BMC-Flotte zum Testen und Vorführen von BMC-Steward.
 
-Erzeugt und startet beliebig viele "virtuelle" Server der Hersteller Dell (iDRAC),
-HPE (iLO), Lenovo (XCC) und Supermicro. Jeder virtuelle Server verhält sich nach
-außen wie ein echter BMC:
+Erzeugt und startet beliebig viele "virtuelle" Server mit den Fantasie-Herstellern Böll, Häpe, Venolo
+und Hypernano. Jeder virtuelle Server verhält sich in seiner Schnittstelle (Redfish, IPMI, RIBCL) wie ein
+echter BMC; Marken, Logos, Oberflächen und Texte der echten Hersteller werden nicht nachgebaut:
 
   * Redfish über HTTPS: Herstellererkennung, Benutzer/Netzwerk/Hostname,
     UEFI/BIOS-Attribute, NTP/Syslog/LDAP/Zertifikat, Power/Reset; beim
     Umkonfigurieren wechselt er tatsächlich die Adresse (Kontroll- und
-    Inventarphase von BMC-Steward läuft durch). iLO 3/4 zusätzlich über RIBCL/XML.
+    Inventarphase von BMC-Steward läuft durch). Die alten Häpe-Generationen 3/4 zusätzlich über RIBCL/XML.
   * Echtes SSH (paramiko) und echtes IPMI-Serial-over-LAN (pyghmi) für die
     UEFI-/Text-Konsole von BMC-Steward - nur im Modus --console, weil BMC-Steward
     dafür die Standardports 22 (SSH) und 623 (IPMI) sowie Redfish auf 443 anspricht.
@@ -93,8 +93,11 @@ except ImportError:
     _ipmibmc = None
 
 VENDORS = ("dell", "hpe", "smc", "lenovo", "hpe_old")
-NAME = {"dell": "Dell (iDRAC)", "hpe": "HPE (iLO 5/6)", "hpe_old": "HPE (iLO 3/4, RIBCL)",
-        "smc": "Supermicro", "lenovo": "Lenovo (XCC)"}
+# Anzeigenamen der virtuellen Hersteller (Fantasienamen). Die Schlüssel "dell", "hpe", "lenovo", "smc" bleiben als
+# interne Profil-Kennungen: Sie bestimmen, welches Schnittstellenverhalten (Redfish-Pfade, Kennungen) der
+# virtuelle Server zeigt, damit BMC-Steward seine Erkennung echter Geräte prüfen kann.
+NAME = {"dell": "Böll", "hpe": "Häpe (Generation 5/6)", "hpe_old": "Häpe (Generation 3/4, RIBCL)",
+        "smc": "Hypernano", "lenovo": "Venolo"}
 FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
            "hpe_old": ("Administrator", "Admin123!"), "smc": ("ADMIN", "ADMIN"),
            "lenovo": ("USERID", "PASSW0RD")}
@@ -102,33 +105,34 @@ MGR = {"dell": "iDRAC.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
 SYS = {"dell": "System.Embedded.1", "hpe": "1", "smc": "1", "lenovo": "1"}
 NIC = {"hpe": "1", "smc": "1", "lenovo": "NIC"}
 webui.configure(SYS=SYS, MGR=MGR)
-MODELS = {"dell": "PowerEdge R6625", "hpe": "ProLiant DL365 Gen11",
-          "hpe_old": "ProLiant DL360p Gen8", "smc": "AS-2015HS-TNR",
-          "lenovo": "ThinkSystem SR655 V3"}
+# Modellnamen tragen ein "_v" (virtuell), damit sie nie mit einem echten Gerät verwechselt werden.
+MODELS = {"dell": "R6625_v", "hpe": "DL365 Gen11_v",
+          "hpe_old": "DL360p Gen8_v", "smc": "AS-2015HS-TNR_v",
+          "lenovo": "SR655 V3_v"}
 FW = {"dell": "7.10.30.00", "hpe": "3.09", "hpe_old": "2.78", "smc": "01.05.02", "lenovo": "5.30"}
 
 # Pfad der HTML5-Konsole je Hersteller - identisch zu CONSOLE_PATH in bmc_steward/console.py, damit
 # der virtuelle Server dort landet, wo BMC-Steward nach der Anmeldung automatisch hinspringt.
 CONSOLE_UI_PATH = {"dell": "/console", "hpe": "/irc.html", "hpe_old": "/irc.html",
                    "smc": "/cgi/url_redirect.cgi", "lenovo": "/"}
-ACCENT = {"dell": "#2f7dd1", "hpe": "#2fae59", "hpe_old": "#2fae59", "smc": "#c98a2b", "lenovo": "#d1352f"}
+ACCENT = {"dell": "#c9741a", "hpe": "#8a4fc0", "hpe_old": "#8a4fc0", "smc": "#4a8f2a", "lenovo": "#1f8f8f"}
 
 # Firmware-Generationen je Hersteller: Kürzel -> (Anzeige, Firmware, Modell)
 GENS = {
-    "dell": {"idrac9": ("iDRAC9", "7.10.30.00", "PowerEdge R6625"),
-             "idrac10": ("iDRAC10", "1.20.25.00", "PowerEdge R770"),
-             "idrac8": ("iDRAC8", "2.83.83.83", "PowerEdge R630"),
-             "idrac8_alt": ("iDRAC8 (Firmware < 2.50.50.50)", "2.40.40.40", "PowerEdge R630")},
-    "hpe": {"ilo6": ("iLO 6", "1.62", "ProLiant DL365 Gen11"),
-            "ilo5": ("iLO 5", "3.09", "ProLiant DL360 Gen10 Plus"),
-            "ilo4": ("iLO 4", "2.78", "ProLiant DL360p Gen8"),
-            "ilo3": ("iLO 3", "1.94", "ProLiant DL380 G7")},
-    "lenovo": {"xcc2": ("XCC2", "5.30", "ThinkSystem SR655 V3"),
-               "xcc3": ("XCC3", "1.10", "ThinkSystem SR650 V4"),
-               "xcc1": ("XCC", "9.90", "ThinkSystem SR650")},
-    "smc": {"x13": ("X13/H13", "01.05.02", "AS-2015HS-TNR"),
-            "x12": ("X12", "01.03.09", "SYS-120U-TNR"),
-            "x11": ("X11", "01.74.11", "SYS-1029U-TR4")},
+    "dell": {"idrac9": ("Böll 9", "7.10.30.00", "R6625_v"),
+             "idrac10": ("Böll 10", "1.20.25.00", "R770_v"),
+             "idrac8": ("Böll 8", "2.83.83.83", "R630_v"),
+             "idrac8_alt": ("Böll 8 (Firmware < 2.50.50.50)", "2.40.40.40", "R630_v")},
+    "hpe": {"ilo6": ("Häpe 6", "1.62", "DL365 Gen11_v"),
+            "ilo5": ("Häpe 5", "3.09", "DL360 Gen10 Plus_v"),
+            "ilo4": ("Häpe 4", "2.78", "DL360p Gen8_v"),
+            "ilo3": ("Häpe 3", "1.94", "DL380 G7_v")},
+    "lenovo": {"xcc2": ("Venolo 2", "5.30", "SR655 V3_v"),
+               "xcc3": ("Venolo 3", "1.10", "SR650 V4_v"),
+               "xcc1": ("Venolo 1", "9.90", "SR650_v")},
+    "smc": {"x13": ("Hypernano 13", "01.05.02", "AS-2015HS-TNR_v"),
+            "x12": ("Hypernano 12", "01.03.09", "SYS-120U-TNR_v"),
+            "x11": ("Hypernano 11", "01.74.11", "SYS-1029U-TR4_v")},
 }
 DEFAULT_GEN = {"dell": "idrac9", "hpe": "ilo6", "hpe_old": "ilo4", "lenovo": "xcc2", "smc": "x13"}
 OLD_ILO = ("ilo3", "ilo4")              # laufen über RIBCL (Hersteller-Kürzel hpe_old)
@@ -320,9 +324,9 @@ BIOS_ATTRS = {
 # ------------------------------------------------------------------ Konsole (gemeinsamer Inhalt)
 def console_banner(bmc):
     v = bmc.vendor
-    title = {"dell": "Dell iDRAC - Serial Console (COM2)", "hpe": "HPE iLO Virtual Serial Port",
-             "hpe_old": "HPE iLO 4 Virtual Serial Port", "smc": "Supermicro SOL Console",
-             "lenovo": "Lenovo XCC Serial Console"}[v]
+    title = {"dell": "Böll - Serial Console (COM2)", "hpe": "Häpe - Virtual Serial Port",
+             "hpe_old": "Häpe 4 - Virtual Serial Port", "smc": "Hypernano - SOL Console",
+             "lenovo": "Venolo - Serial Console"}[v]
     return (f"\r\n{'='*58}\r\n {title}\r\n {bmc.model}   S/N {bmc.serial}\r\n{'='*58}\r\n"
             "\r\n  *** UEFI/BIOS Boot Menu (virtuell) ***\r\n"
             "   [1] Continue   [2] Boot Manager   [3] Device Manager\r\n"
@@ -2060,7 +2064,7 @@ def legacy_tls_ctx(cert, key):
 def main():
     global netlab
     ap = argparse.ArgumentParser(
-        description="Virtuelle BMC-Flotte (Dell/HPE/Lenovo/Supermicro) zum Testen von BMC-Steward.")
+        description="Virtuelle BMC-Flotte (Böll/Häpe/Venolo/Hypernano) zum Testen von BMC-Steward.")
     ap.add_argument("specs", nargs="*", help="Server, z. B. dell  hpe@127.9.0.12  lenovo@127.9.0.13:8443")
     ap.add_argument("--preset", action="store_true", help="je ein Server pro Hersteller")
     ap.add_argument("--vendor", choices=VENDORS, help="mit --count: N Server eines Herstellers")

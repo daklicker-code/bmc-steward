@@ -272,7 +272,7 @@
       el.querySelector("#ql-console").onclick = launchConsole;
       el.querySelector("#ql2").onclick = function (e) { e.preventDefault(); launchConsole(); };
       el.querySelector("#dthumb").onclick = launchConsole;
-      setHTML("hdr-lic", esc((lic.Name || "").replace(/^(iDRAC\d*|iLO\s*\d*|XCC\d*)\s+/, "")));
+      setHTML("hdr-lic", esc((lic.Name || "").replace(/^(Böll|Häpe|Venolo|Hypernano)\s*\d*\s+/, "")));
       header(s);
       return fillThumb(el.querySelector("#dthumb"));
     });

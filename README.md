@@ -271,9 +271,19 @@ tools/verify-release.sh v3.4.1
 The script rebuilds the archive from the tag – byte-identical – and lets `gh attestation verify` check the
 certificate. If the tag was moved or the content changed, the check fails.
 
-## License
+## License, liability and trademarks
 
-MIT, see [LICENSE](LICENSE). The software is provided without warranty; you use it at your own risk.
+MIT, see [LICENSE](LICENSE). Code provenance and dependency licences: [docs/HERKUNFT.md](docs/HERKUNFT.md).
+BMC-Steward contains no vendor code or vendor texts.
+
+**Disclaimer of liability.** The software is provided without warranty of any kind. The author accepts no liability for
+damage or consequences arising from use of the tool, and expressly none for what third parties do with it (including
+misconfiguration, data loss, outages, unauthorised or unlawful use). You use it at your own responsibility, test first
+with the dry run and a backup, and only on devices you are authorised to manage. To the extent mandatory law allows.
+
+**Trademarks.** Dell, iDRAC, HPE, iLO, Lenovo, XClarity, Supermicro and other names mentioned are trademarks of their
+respective owners and are used descriptively only. BMC-Steward is not affiliated with or endorsed by these companies.
+The bundled simulator uses invented names (Böll, Häpe, Venolo, Hypernano).
 
 ## Author
 
