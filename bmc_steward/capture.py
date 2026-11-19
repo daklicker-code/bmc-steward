@@ -259,9 +259,9 @@ def _pseudonym(kind, n):
     return "%s-%03d" % (kind, n)
 
 
-def redact(cap):
-    """Schwärzt die Aufnahme an Ort und Stelle. Gibt einen Bericht zurück {Art: Anzahl} (ohne die Werte selbst).
-    Wirft ValueError, wenn nach dem Schwärzen noch ein gesammelter Wert zu finden ist."""
+def _collect(cap):
+    """Sammelt die persönlichen Werte einer Aufnahme: {Art: Menge der Werte} (Grundlage für redact und
+    submission_problems)."""
     found = {k: set() for k in ("SERIAL", "ASSET", "UUID", "HOST", "MAC", "IPV4", "IPV6", "USER")}
 
     def add(kind, value, force=False):
@@ -313,6 +313,13 @@ def redact(cap):
         for m in CTX_IPV4.findall(t):                     # Freitext, z. B. "angemeldet von 10.0.0.5" im Ereignisprotokoll
             add("IPV4", m)
 
+    return found
+
+
+def redact(cap):
+    """Schwärzt die Aufnahme an Ort und Stelle. Gibt einen Bericht zurück {Art: Anzahl} (ohne die Werte selbst).
+    Wirft ValueError, wenn nach dem Schwärzen noch ein gesammelter Wert zu finden ist."""
+    found = _collect(cap)
     for name in list(found["HOST"]):                      # Domäne eines vollständigen Namens ebenfalls schwärzen
         if name.count(".") >= 2:
             found["HOST"].add(name.split(".", 1)[1])
@@ -661,6 +668,73 @@ def diff_text(findings):
 
 
 # ---------------------------------------------------------------- Aufruf ohne Oberfläche
+
+# ---------------------------------------------------------------- Einsenden
+
+ISSUE_URL = "https://github.com/daklicker-code/bmc-steward/issues/new?template=aufnahme.yml"
+_PSEUDO = re.compile(r"^(?:02:00:00:00:[0-9a-f]{2}:[0-9a-f]{2}|00000000-0000-4000-8000-[0-9a-f]{12}|"
+                     r"(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}|2001:db8::[0-9a-f]+|"
+                     r"[A-Z0-9]+-\d{3}|ADDR-\d{3}|REDACTED)$", re.IGNORECASE)
+_SECRET_TEXT = re.compile(r"-----BEGIN [A-Z ]+-----|PRIVATE KEY|ssh-(?:rsa|ed25519|dss) [A-Za-z0-9+/]{20}|"
+                          r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def submission_problems(cap):
+    """Prüft eine Aufnahme unabhängig von der Schwärzung noch einmal, bevor sie weitergegeben wird.
+    Gibt eine Liste von Problemen zurück (leer = darf gepackt werden). Die Werte selbst werden nie genannt."""
+    problems = []
+    if not cap["meta"].get("redacted"):
+        problems.append(T("Die Aufnahme ist nicht geschwärzt. Bitte mit „Persönliche Daten schwärzen“ neu aufnehmen."))
+        return problems
+    left = collections.Counter()
+    for kind, values in _collect(cap).items():
+        for v in values:
+            if not _PSEUDO.match(v.strip()):
+                left[kind] += 1
+    if left:
+        problems.append(T("Noch nicht ersetzte Werte gefunden: {0}").format(
+            ", ".join("%s %d" % kv for kv in sorted(left.items()))))
+    dump = json.dumps([cap["tree"], cap["meta"]], ensure_ascii=False)
+    hits = len(_SECRET_TEXT.findall(dump))
+    if hits:
+        problems.append(T("{0} Stelle(n) sehen nach Zertifikat, Schlüssel oder E-Mail-Adresse aus.").format(hits))
+    return problems
+
+
+def _slug(text):
+    return re.sub(r"[^A-Za-z0-9.]+", "-", str(text or "")).strip("-")[:40] or "unbekannt"
+
+
+def pack_submission(folder, out_dir):
+    """Packt einen geprüften Aufnahme-Ordner als ZIP zum Einsenden. Gibt den Pfad der ZIP-Datei zurück.
+    Wirft ValueError mit allen Problemen, wenn die Prüfung (submission_problems) nicht besteht."""
+    import zipfile
+    folder = Path(folder)
+    cap = load_capture(folder)
+    problems = submission_problems(cap)
+    if problems:
+        raise ValueError("\n".join(problems))
+    m = cap["meta"]
+    name = "bmc-steward-aufnahme-%s-%s-%s.zip" % (_slug(m.get("vendor")), _slug(m.get("model")), _slug(m.get("firmware")))
+    out = Path(out_dir) / name
+    report = report_text(cap)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(folder.rglob("*")):
+            if p.is_file() and not p.is_symlink():
+                z.write(p, Path(folder.name) / p.relative_to(folder))
+        z.writestr(f"{folder.name}/FAEHIGKEITEN.txt", report + "\n")
+    return out
+
+
+def issue_url(cap):
+    """Link auf das vorbereitete GitHub-Formular „Aufnahme einsenden“ mit Hersteller, Modell und Firmware."""
+    m = cap["meta"]
+    q = {"title": "Aufnahme: %s %s (Firmware %s)" % (m.get("vendor_name") or m.get("vendor") or "?",
+                                                    m.get("model") or "?", m.get("firmware") or "?"),
+         "vendor": str(m.get("vendor_name") or m.get("vendor") or ""), "model": str(m.get("model") or ""),
+         "firmware": str(m.get("firmware") or "")}
+    return ISSUE_URL + "&" + urllib.parse.urlencode(q)
+
 
 def run_capture(ip, user, pw, out, vendor=None, do_redact=True, log=print, stopped=lambda: False,
                 progress=lambda n, p: None):

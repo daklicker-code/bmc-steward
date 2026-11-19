@@ -106,10 +106,16 @@ class CaptureTabMixin:
         self.cap_open = QPushButton(T("Ordner öffnen"))
         self.cap_open.setEnabled(False)
         self.cap_open.clicked.connect(self.capture_open_folder)
+        self.cap_submit = QPushButton(T("Zum Einsenden packen …"))
+        self.cap_submit.setToolTip(T("Prüft eine geschwärzte Aufnahme noch einmal unabhängig (keine Seriennummern, "
+                                     "Adressen, Zertifikate oder Schlüssel), packt sie als ZIP und öffnet das "
+                                     "Formular „Aufnahme einsenden“ auf GitHub. Hochgeladen wird nichts von selbst."))
+        self.cap_submit.clicked.connect(self.capture_submit)
         btns = QHBoxLayout()
         btns.addWidget(self.cap_start)
         btns.addWidget(self.cap_stop)
         btns.addWidget(self.cap_open)
+        btns.addWidget(self.cap_submit)
         btns.addStretch(1)
         self.cap_status = QLabel()
         self.cap_status.setWordWrap(True)
@@ -244,6 +250,34 @@ class CaptureTabMixin:
             if not edit.text().strip():
                 edit.setText(str(out))
                 break
+
+    def capture_submit(self):
+        """Aufnahme prüfen, als ZIP packen und das GitHub-Formular öffnen. Nimmt die letzte Aufnahme, sonst
+        fragt es nach einem Aufnahme-Ordner."""
+        folder = self.cap_last_dir
+        if not folder:
+            folder = QFileDialog.getExistingDirectory(self, T("Aufnahme-Ordner wählen"), self.cap_dir.text())
+            if not folder:
+                return
+        try:
+            cap = capture.load_capture(folder)
+            target = QFileDialog.getExistingDirectory(self, T("Wohin mit der ZIP-Datei?"), str(Path(folder).parent))
+            if not target:
+                return
+            zip_path = capture.pack_submission(folder, target)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, T("Zum Einsenden packen"),
+                                T("Die Aufnahme wird so nicht gepackt:\n\n{0}").format(e))
+            return
+        LOG.info(T("Aufnahme zum Einsenden gepackt: {0}").format(zip_path))
+        self.cap_out.appendPlainText("\n" + T("Zum Einsenden gepackt: {0}").format(zip_path))
+        ask = QMessageBox.question(
+            self, T("Zum Einsenden packen"),
+            T("Geprüft und gepackt:\n{0}\n\nJetzt das Formular „Aufnahme einsenden“ auf GitHub öffnen? Dort die "
+              "ZIP-Datei hineinziehen. Anhänge in einem Issue sind öffentlich.").format(zip_path))
+        if ask == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(zip_path).parent)))
+            QDesktopServices.openUrl(QUrl(capture.issue_url(cap)))
 
     def capture_open_folder(self):
         if self.cap_last_dir:
