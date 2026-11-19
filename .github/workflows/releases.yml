@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write                 # nur dieser Job: Releases und fehlende Tags anlegen
+      actions: write                  # danach „Signieren“ starten (vom Token angelegte Tags lösen nichts aus)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -48,4 +49,6 @@ jobs:
               gh release create "$tag" --target "$ZIEL" --title "$title" --notes-file notes.md --latest="$latest"
             fi
             echo "angelegt: $tag"
+            gh workflow run attest.yml --ref main -f tag="$tag"
+            echo "Signieren gestartet: $tag"
           done

@@ -257,6 +257,20 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
 - Eine gespeicherte Liste enthält Passwörter nur auf ausdrücklichen Wunsch, dann im Klartext. So eine Datei
   nach dem Rollout löschen.
 
+## Version prüfen
+
+Jeder Versions-Tag wird ohne persönlichen Schlüssel signiert (Sigstore „keyless“ über GitHub-Attestierungen):
+Der Workflow *Signieren* erzeugt das Quellarchiv des Tags reproduzierbar (`tools/release-archive.sh`), und
+GitHub bescheinigt, aus welchem Repository, Workflow und Commit es stammt. Prüfen einer heruntergeladenen oder
+ausgecheckten Version (braucht `git` und eine angemeldete GitHub-CLI `gh`):
+
+```bash
+tools/verify-release.sh v3.4.1
+```
+
+Das Skript baut das Archiv aus dem Tag byte-gleich nach und lässt `gh attestation verify` die Bescheinigung
+prüfen. Wurde der Tag verschoben oder der Inhalt verändert, schlägt die Prüfung fehl.
+
 ## Lizenz
 
 MIT, siehe [LICENSE](LICENSE). Die Software kommt ohne Gewähr; die Nutzung erfolgt auf eigenes Risiko.

@@ -257,6 +257,20 @@ for such devices automatically and notes it in the log.
 - A saved list contains passwords only if you choose so, and then in plain text. Delete such a file after
   the rollout.
 
+## Verify a release
+
+Every version tag is signed without a personal key (Sigstore “keyless” via GitHub artifact attestations): the
+workflow *Signieren* builds the source archive of the tag reproducibly (`tools/release-archive.sh`) and GitHub
+certifies which repository, workflow and commit it came from. To check a version you downloaded or checked out
+(needs `git` and a logged-in GitHub CLI `gh`):
+
+```bash
+tools/verify-release.sh v3.4.1
+```
+
+The script rebuilds the archive from the tag – byte-identical – and lets `gh attestation verify` check the
+certificate. If the tag was moved or the content changed, the check fails.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). The software is provided without warranty; you use it at your own risk.
