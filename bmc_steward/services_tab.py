@@ -4,14 +4,14 @@ import html
 import os
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                              QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
-                             QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
+                             QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout,
                              QWidget)
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtCore import Qt
 
-from . import i18n
+from . import capabilities, i18n
 from .applog import LOG
 from .core import LIVE_CSS
 from .i18n import HERE, T
@@ -43,6 +43,11 @@ class ServicesTabMixin:
                      T("Leer lassen: Dann wird je Hersteller der Werksbenutzer verwendet."))
         self.tip_row(f, T("Passwort"), self._with_eye(self.svc_pass),
                      T("Fällt für Zeilen ein, deren Spalte „Passwort“ in der Serverliste leer ist."))
+        caps_btn = QPushButton(T("Fähigkeiten je Hersteller …"))
+        caps_btn.setToolTip(T("Zeigt, welche Einstellung BMC-Steward bei welchem Hersteller setzen kann."))
+        caps_btn.clicked.connect(self.show_capabilities)
+        f.addRow("", caps_btn)
+        self.svc_vendor.currentIndexChanged.connect(self.services_update_caps)
 
         self.ntp_box = QGroupBox(T("NTP (Zeitserver)"))
         self.ntp_box.setCheckable(True)
@@ -279,7 +284,85 @@ class ServicesTabMixin:
         split.addWidget(low)
         split.setSizes([470, 210])
         pl.addWidget(split, 1)
+        self.services_update_caps()
         return page
+
+    # ---------- Fähigkeitsmatrix ----------
+    def services_vendors(self):
+        """Hersteller, für die die Dienste gelten: die feste Wahl oben, sonst die erkannten der Serverliste."""
+        fixed = self.svc_vendor.currentData()
+        if fixed:
+            return {fixed}
+        col = getattr(self, "vendor_col", None)
+        if col is None or not hasattr(self, "table"):
+            return set()
+        out = set()
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, col)
+            v = capabilities.vendor_from_label(item.text() if item else "")
+            if v:
+                out.add(v)
+        return out
+
+    def services_update_caps(self, *_):
+        """Graut Bereiche aus, die bei keinem Server der Liste gehen, und nennt die Hersteller, bei denen ein
+        Bereich übersprungen wird (Fähigkeitsmatrix, capabilities.py)."""
+        if not hasattr(self, "hard_box"):
+            return
+        vendors = self.services_vendors()
+        pairs = [(self.ntp_box, "ntp"), (self.syslog_box, "syslog"), (self.ldap_box, "ldap"),
+                 (self.cert_box, "cert"), (self.dns_box, "dns"), (self.vlan_box, "vlan"),
+                 (self.ipv6_box, "ipv6"), (self.nicmode_box, "nicmode"), (self.hard_box, "hard")]
+        hints = getattr(self, "_cap_hints", None)
+        if hints is None:
+            hints = self._cap_hints = {}
+            for box, key in pairs:
+                lab = QLabel()
+                lab.setObjectName("capHint")
+                lab.setWordWrap(True)
+                lab.setStyleSheet("color: #c9a100;")
+                lab.hide()
+                lay = box.layout()
+                if isinstance(lay, QFormLayout):
+                    lay.insertRow(0, lab)
+                else:
+                    lay.insertWidget(0, lab)
+                hints[key] = lab
+        for box, key in pairs:
+            usable, hint = capabilities.check(key, vendors)
+            if not usable and box.isChecked():
+                box.setChecked(False)
+            box.setEnabled(usable)
+            box.setToolTip(hint or "")
+            hints[key].setText(hint)
+            hints[key].setVisible(bool(hint))
+        for widget, key in ((self.ntp_tz, "timezone"), (self.hard_tls_min, "tls_min")):
+            usable, hint = capabilities.check(key, vendors)
+            widget.setEnabled(usable)
+            if not usable and isinstance(widget, QLineEdit):
+                widget.clear()
+            if not usable and isinstance(widget, QComboBox):
+                widget.setCurrentIndex(0)
+
+    def show_capabilities(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(T("Fähigkeiten je Hersteller"))
+        dlg.resize(760, 620)
+        lay = QVBoxLayout(dlg)
+        intro = QLabel(T("Was BMC-Steward je Hersteller einstellen kann. Was bei keinem Server der Liste geht, "
+                         "ist auf den Seiten ausgegraut; bei gemischten Listen wird es bei den übrigen "
+                         "Herstellern ohne Fehler übersprungen. Was ein bestimmtes Gerät wirklich kann, zeigt "
+                         "eine Aufnahme (Seite „Aufnahme“, Fähigkeitsbericht)."))
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        view = QTextBrowser()
+        view.setHtml(capabilities.matrix_html())
+        lay.addWidget(view, 1)
+        box = QDialogButtonBox()
+        box.addButton(T("Schließen"), QDialogButtonBox.ButtonRole.RejectRole)
+        box.rejected.connect(dlg.reject)
+        lay.addWidget(box)
+        dlg.exec()
 
     def ldap_group_add(self):
         r = self.ldap_groups.rowCount()

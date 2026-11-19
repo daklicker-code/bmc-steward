@@ -656,6 +656,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs.currentChanged.connect(self.page_logged)
         self.tabs.currentChanged.connect(
             lambda i: self.planner_page_shown() if i == self.tabs.indexOf(self.planner_page) else None)
+        self.tabs.currentChanged.connect(
+            lambda i: self.services_update_caps() if i == self.tabs.indexOf(self.services_page) else None)
         applog.watch(self)
         w, h = self.width(), self.height()
         LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
@@ -1166,6 +1168,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                     vitem.setText(text)
                     vitem.setToolTip(tip)
         self.table.blockSignals(False)
+        self.services_update_caps()                 # Fähigkeitsmatrix: erkannte Hersteller berücksichtigen
 
     def on_serial_read(self, ip, serial):
         """Ausgelesene Seriennummer in die Zeilen dieser Adresse eintragen; Eingetipptes bleibt unangetastet."""
