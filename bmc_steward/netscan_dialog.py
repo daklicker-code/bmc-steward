@@ -189,10 +189,13 @@ class NetScanDialog(QDialog):
         self.thread = ScanThread(self, targets, ports, self.workers.value(), self.ipmi.isChecked(),
                                  self.ssdp.isChecked())
         self.thread.found.connect(self.on_found)
-        self.thread.progress.connect(lambda d, t: self.bar.setValue(d))
+        self.thread.progress.connect(self.on_progress)       # Methode statt Lambda: Qt trennt sie mit dem Dialog
         self.thread.phase.connect(self.info.setText)
         self.thread.finished_ok.connect(self.on_finished)
         self.thread.start()
+
+    def on_progress(self, done, total):
+        self.bar.setValue(done)
 
     def stop(self):
         if self.thread and self.thread.isRunning():

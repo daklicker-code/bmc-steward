@@ -374,7 +374,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             QWidget.setTabOrder(self.new_user, self.new_pass)
             QWidget.setTabOrder(self.new_pass, self.def_mask)
             QWidget.setTabOrder(self.def_mask, self.def_gw)
-        QTimer.singleShot(0, tab_order)
+        t = QTimer(self)                    # hängt am Fenster: wird es vorher gelöscht, feuert der Timer nicht mehr
+        t.setSingleShot(True)
+        t.timeout.connect(tab_order)
+        t.start(0)
 
         top = QHBoxLayout()
         top.setSpacing(6)

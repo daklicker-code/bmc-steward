@@ -178,6 +178,10 @@ class TestMainWindow(unittest.TestCase):
 
     def test_testlab_output_lines_land_in_the_log(self):
         class Proc:
+            def state(self):                    # gilt als beendet: beim Schließen des Fensters wird nichts gestoppt
+                from PyQt6.QtCore import QProcess
+                return QProcess.ProcessState.NotRunning
+
             def readAllStandardOutput(self):
                 return b"[12:00:00] Server CN123 gestartet\n@@STATE []\n"
         self.w.vbmc_proc = Proc()

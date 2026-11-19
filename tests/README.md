@@ -11,9 +11,16 @@ python3 tests/run.py --quick      # ohne Fuzzing (schnell)
 python3 tests/run.py --audit      # nur statisches Audit
 python3 tests/run.py --tests      # nur Unit-Tests
 python3 tests/run.py --fuzz 50000 # intensiveres Fuzzing
+python3 tests/run.py -j 1         # Unit-Tests nacheinander in einem Prozess (langsam, nur zur Fehlersuche)
 ```
 
 Exit-Code `0` = alles grün, sonst `1` (für CI/Pre-Push geeignet).
+
+Die Unit-Tests laufen standardmäßig **parallel**: jedes Testmodul in einem eigenen Prozess (bis zu 8 gleichzeitig,
+`-j N` ändert das). Das dauert rund zwei Minuten statt fast einer halben Stunde und verhindert, dass ein Modul
+Zustand oder offene Fenster an das nächste vererbt. Zusätzlich schließt `tests/__init__.py` nach jedem Test die
+Fenster, die der Test geöffnet hat (ohne Rückfragen); so bleibt auch ein Lauf mit `-j 1` oder
+`python3 -m unittest discover` schnell genug.
 
 ## Was geprüft wird
 
