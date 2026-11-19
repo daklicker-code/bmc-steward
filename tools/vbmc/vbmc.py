@@ -35,6 +35,7 @@ __license__ = "MIT"
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -1232,7 +1233,10 @@ class Handler(BaseHTTPRequestHandler):
                 "Managers": {"@odata.id": "/redfish/v1/Managers"},
                 "Systems": {"@odata.id": "/redfish/v1/Systems"},
                 "AccountService": {"@odata.id": "/redfish/v1/AccountService"},
-                "UUID": "00000000-0000-0000-0000-" + b.serial[-12:].rjust(12, "0")}
+                "SessionService": {"@odata.id": "/redfish/v1/SessionService"},
+                "Links": {"Sessions": {"@odata.id": "/redfish/v1/SessionService/Sessions"}},   # Pflicht laut Schema
+                # stabil je Gerät und nur aus Hexziffern (die Seriennummer enthält Buchstaben außerhalb von a-f)
+                "UUID": "00000000-0000-0000-0000-" + hashlib.sha256(b.serial.encode()).hexdigest()[:12]}
 
     def manager_doc(self):
         b = self.bmc
@@ -1247,9 +1251,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def nic_doc(self, p):
         b = self.bmc
+        addr = {k: (v or None) for k, v in b.ipv4.items()}     # leer = null, "" verletzt das IP-Muster
         d = {"@odata.id": p, "Id": NIC.get(b.vendor, "1"), "HostName": b.hostname,
-             "IPv4Addresses": [dict(b.ipv4)],
-             "IPv4StaticAddresses": [dict(b.ipv4)] if not b.dhcp else [],
+             "IPv4Addresses": [dict(addr)],
+             "IPv4StaticAddresses": [dict(addr)] if not b.dhcp else [],
              "DHCPv4": {"DHCPEnabled": b.dhcp}}
         if b.vendor == "hpe":
             d["Oem"] = {"Hpe": {"HostName": b.hostname, "DHCPv4": {"Enabled": b.dhcp}}}
@@ -1365,9 +1370,10 @@ class Handler(BaseHTTPRequestHandler):
         if name:
             a = b.accounts[name]
             return self.send(200, {"@odata.id": self.path.split("?")[0], "Id": token,
-                                   "UserName": name, "RoleId": a["role"], "Enabled": a["enabled"]})
+                                   "UserName": name, "RoleId": a["role"], "Enabled": a["enabled"],
+                                   "AccountTypes": ["Redfish"]})              # Pflicht laut Schema
         return self.send(200, {"@odata.id": self.path.split("?")[0], "Id": token,
-                               "UserName": "", "RoleId": "None", "Enabled": False})
+                               "UserName": "", "RoleId": "None", "Enabled": False, "AccountTypes": ["Redfish"]})
 
     def account_create(self, data):
         b = self.bmc
