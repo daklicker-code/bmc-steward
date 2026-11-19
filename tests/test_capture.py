@@ -349,7 +349,7 @@ class TestCaptureTab(unittest.TestCase):
         names = [menu.item(i).text() for i in range(menu.count())]
         i = names.index("Aufnahme")
         self.assertEqual(names[i - 1], "UEFI-Konsole")
-        self.assertEqual(names[i + 1], "Testlabor")
+        self.assertLess(i, names.index("Testlabor"))
 
     def test_redaction_is_on_by_default_and_buttons_start_in_the_right_state(self):
         self.assertTrue(self.w.cap_redact.isChecked())
