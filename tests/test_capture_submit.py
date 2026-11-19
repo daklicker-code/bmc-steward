@@ -8,22 +8,13 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._support import REPO, qapp
+from tests._support import REPO, forget_pins, qapp
 
 qapp()
 from bmc_steward import capture as C                  # noqa: E402
 from tests.test_capture import sample                 # noqa: E402
 
 VENDORS = ("dell", "hpe", "lenovo", "smc")
-
-
-def forget_pins(addr):
-    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
-    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse."""
-    from bmc_steward import trust
-    st = trust.store()
-    for key in list(st.for_addr(addr)):
-        st.forget(key)
 
 
 class TestSubmissionCheck(unittest.TestCase):

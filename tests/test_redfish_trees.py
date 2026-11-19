@@ -295,5 +295,32 @@ class TestUsersAgainstTrees(unittest.TestCase):
                 self.assertEqual(self.servers[v].resource(ACCOUNT1)["Password"], new_pw[self.servers[v].addr])
 
 
+@need("openssl")
+class TestPortReuseBetweenTestServers(unittest.TestCase):
+    """Zufällige Testports wiederholen sich in einem langen Lauf. Ein frischer Testserver darf nicht an der
+    Zertifikats-Merkung eines früheren Servers unter derselben Adresse scheitern (in der vollen Suite schlug
+    so test_rotate_password_on_every_vendor zufällig fehl). Nachgestellt: Beim Binden des Ports liegt für
+    genau diese Adresse schon ein fremder Fingerabdruck vor."""
+
+    def test_fresh_mock_server_ignores_pins_of_an_earlier_server_on_the_same_port(self):
+        from unittest.mock import patch
+        import tests._dmtf_mock as mock
+        from bmc_steward import trust
+
+        class ReusedPort(mock.ThreadingHTTPServer):
+            def server_bind(self):
+                super().server_bind()
+                addr = "127.0.0.1:%d" % self.server_address[1]
+                trust.store().check("frueherer-testserver-" + addr, "AA" * 32, addr)
+
+        with patch.object(mock, "ThreadingHTTPServer", ReusedPort):
+            srv = DmtfMockServer("dell").start()
+        self.addCleanup(srv.stop)
+        self.assertEqual(trust.store().for_addr(srv.addr), {})
+        self.assertTrue(UsersEngine(dry=False).rotate_password(srv.addr, "root", "pw", "dell", ACCOUNT1,
+                                                               "NeuesPw123!"))
+        self.assertEqual(srv.resource(ACCOUNT1)["Password"], "NeuesPw123!")
+
+
 if __name__ == "__main__":
     unittest.main()

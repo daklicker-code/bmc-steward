@@ -31,6 +31,17 @@ def qapp():
     return _app
 
 
+def forget_pins(addr):
+    """Zufällige Testports wiederholen sich in einem Lauf: alte Zertifikats-Merkungen für diese Adresse
+    entfernen, sonst sperrt die Prüfung (zu Recht) ein „anderes Gerät“ unter derselben Adresse. Aufrufen,
+    sobald ein frischer Testserver seinen Port hat – nie zwischen Neustarts desselben Servers, deren
+    Zertifikats-Merkung ein Test gerade prüfen will."""
+    from bmc_steward import trust
+    st = trust.store()
+    for key in list(st.for_addr(addr)):
+        st.forget(key)
+
+
 def need(*binaries):
     """unittest-Skip-Dekorator, wenn eines der externen Programme (openssl/zbarimg/tesseract) fehlt."""
     missing = [b for b in binaries if not shutil.which(b)]
