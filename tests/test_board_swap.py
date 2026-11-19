@@ -132,5 +132,117 @@ class TestBoardSwapLive(_WebBase):
         dlg.close()
 
 
+class TestRestoreFromBackupLive(_WebBase):
+    """Lizenz, Dienste und UEFI des alten Boards auf das neue: gegen virtuelle BMCs, echte Sicherung."""
+
+    def old_backup(self, vendor, tweak=None):
+        from bmc_steward.redfish import RedfishClient
+        old, port = self._start(vendor, idx=1)
+        if tweak:
+            tweak(old)
+        user, pw = FACTORY_LOGIN[vendor]
+        c = RedfishClient(dry=False, log=lambda *a, **k: None)
+        c.cur_user = user
+        path = c.backup(f"127.0.0.1:{port}", user, pw, vendor, "neuware")
+        c.close_sessions()
+        return old, json.loads(path.read_text(encoding="utf-8"))
+
+    def engine(self, dry, lines):
+        from bmc_steward.board_swap import BoardSwapEngine
+        return BoardSwapEngine(dry, lambda text, kind="": lines.append(text))
+
+    def test_license_services_and_uefi_come_back_on_the_new_board(self):
+        qapp()
+        def tweak(b):
+            b.bios.update(SysProfile="PerfPerWattOptimizedDapc", SerialNumber="ALT0000001", AdminPassword="x")
+            b.extra.setdefault("proto", {})["IPMI"] = False
+        old, doc = self.old_backup("hpe", tweak)
+        new, port = self._start("hpe", idx=2)
+        user, pw = FACTORY_LOGIN["hpe"]
+        lines = []
+        eng = self.engine(False, lines)
+        ok = eng.apply(f"127.0.0.1:{port}", "", pw, "hpe", license="ABCDE-12345-FGHIJ-67890-KLMNO", doc=doc,
+                       services=True, bios=True)
+        eng.close_sessions()
+        self.assertTrue(ok, "\n".join(lines))
+        self.assertEqual(new.bios["SysProfile"], "PerfPerWattOptimizedDapc")
+        self.assertNotEqual(new.bios.get("SerialNumber"), "ALT0000001")      # Kennung nie aus der Sicherung
+        self.assertNotIn("AdminPassword", new.bios)                          # Passwort-Attribute nie
+        self.assertFalse(new.extra["proto"]["IPMI"])
+        self.assertTrue(new.sim.licensed)
+        self.assertEqual(new.sim.lic["key"], "ABCDE-12345-FGHIJ-67890-KLMNO")
+
+    def test_dry_run_compares_for_real_but_changes_nothing(self):
+        qapp()
+        old, doc = self.old_backup("dell", lambda b: b.bios.update(SysProfile="Custom"))
+        new, port = self._start("dell", idx=2)
+        user, pw = FACTORY_LOGIN["dell"]
+        before = dict(new.bios)
+        lines = []
+        eng = self.engine(True, lines)
+        self.assertTrue(eng.apply(f"127.0.0.1:{port}", user, pw, "dell", doc=doc, services=True, bios=True),
+                        "\n".join(lines))
+        self.assertEqual(new.bios, before)
+        self.assertIn("SysProfile", "\n".join(lines))
+        self.assertIn("DRYRUN", "\n".join(lines))
+
+    def test_bad_license_key_sends_nothing(self):
+        qapp()
+        self._isolate_data()
+        new, port = self._start("hpe")
+        user, pw = FACTORY_LOGIN["hpe"]
+        lines = []
+        eng = self.engine(False, lines)
+        self.assertFalse(eng.apply(f"127.0.0.1:{port}", user, pw, "hpe", license="KAPUTT"))
+        self.assertIn("ungültig", "\n".join(lines))
+
+    def test_new_board_at_the_address_of_the_old_one_can_be_checked(self):
+        qapp()
+        from bmc_steward import trust
+        new, port = self._start("hpe")
+        addr = f"127.0.0.1:{port}"
+        trust.store().check("uuid:altes-board", "ab" * 32, addr)       # altes Board unter derselben Adresse gemerkt
+        lines = []
+        eng = self.engine(False, lines)
+        res = eng.read(addr, "", FACTORY_LOGIN["hpe"][1])
+        eng.close_sessions()
+        self.assertTrue(res["ok"], "\n".join(lines))
+        self.assertNotIn("GESPERRT", "\n".join(lines))
+
+    def test_dialog_offers_license_and_restore_only_where_they_fit(self):
+        qapp()
+        from PyQt6.QtWidgets import QApplication
+        from bmc_steward import i18n
+        from bmc_steward.board_swap import BoardSwapDialog
+        old, doc = self.old_backup("hpe")
+        label = "CZJ7654321"
+        d = i18n.DATA / "sicherungen" / label
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "20261101-100000-neuware.json").write_text(json.dumps(doc), encoding="utf-8")
+        new, port = self._start("hpe", idx=2)
+        dlg = BoardSwapDialog(None, (f"127.0.0.1:{port}", FACTORY_LOGIN["hpe"][1], label), "")
+        self.addCleanup(dlg.close)
+
+        def wait():
+            deadline = time.monotonic() + 30
+            while dlg.thread.isRunning() and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.02)
+            QApplication.processEvents()
+
+        dlg.check()
+        wait()
+        self.assertTrue(dlg.do_svc.isEnabled() and dlg.do_svc.isChecked(), dlg.out.toPlainText())
+        self.assertTrue(dlg.do_bios.isEnabled())
+        self.assertFalse(dlg.do_bios.isChecked())                       # UEFI nur bewusst
+        self.assertFalse(dlg.do_lic.isEnabled())
+        dlg.lic.setText("ABCDE-12345-FGHIJ-67890-KLMNO")                # auch nach dem Prüfen eingetippt
+        self.assertTrue(dlg.do_lic.isEnabled() and dlg.do_lic.isChecked())
+        dlg.dry.setChecked(False)
+        dlg.execute()
+        wait()
+        self.assertEqual(new.sim.lic["key"], "ABCDE-12345-FGHIJ-67890-KLMNO", dlg.out.toPlainText())
+
+
 if __name__ == "__main__":
     unittest.main()

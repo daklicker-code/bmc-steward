@@ -9,8 +9,11 @@ Service-Tag, Produkt-ID/Maschinentyp), hat ein neues BMC-Zertifikat und keine Ei
    - Dell: Service-Tag kommt über „Easy Restore“ beim nächsten Start; hier nur Prüfung und Anleitung
    - Lenovo: VPD nur über Provisioning Manager oder OneCLI; der Dialog erzeugt die Befehle (ohne Passwort)
    - Supermicro: DMI nur über SUM (GetDmiInfo/ChangeDmiInfo, Lizenz nötig); Anleitung
-4. vergisst auf Wunsch das gemerkte Zertifikat des alten Boards und
-5. trägt Hostname und Adresse aus der Sicherung in die Serverliste ein; Benutzer und Netzwerk richtet dann
+4. vergisst auf Wunsch das gemerkte Zertifikat des alten Boards,
+5. spielt auf Wunsch bei HPE die iLO-Lizenz neu ein und aus der Sicherung das Ein/Aus der Netzwerkdienste
+   (IPMI, SSDP, SNMP …) und die UEFI-Attribute zurück (nur vorhandene, nie Passwort-, TPM-, Lösch- oder
+   Kennungs-Attribute; Konten und Passwörter stehen nicht in der Sicherung) und
+6. trägt Hostname und Adresse aus der Sicherung in die Serverliste ein; Benutzer und Netzwerk richtet dann
    der normale Neuware-Lauf ein.
 Ändernde Schritte respektieren den Trockenlauf (voreingestellt) und laufen nach Sicherung und Eigenschutz.
 """
@@ -20,11 +23,15 @@ import re
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QLineEdit, QPushButton, QTextBrowser, QVBoxLayout)
+                             QLineEdit, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout)
 
 from . import i18n, trust
 from .i18n import T
-from .redfish import RedfishClient
+from .redfish import BiosEngine, RedfishClient
+
+# UEFI-Attribute, die zur Kennung des Gehäuses gehören: werden nie aus einer Sicherung übernommen
+IDENT_ATTRS = ("serialnumber", "productid", "servicetag", "assettag", "uuid", "sku")
+LICENSE_RE = re.compile(r"^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$")
 
 
 def folder_name(serial):
@@ -72,6 +79,14 @@ def backup_summary(doc):
     return res
 
 
+def backup_part(doc, suffix):
+    """Erste Ressource der Sicherung, deren Pfad auf suffix endet (z. B. "/Bios", "/NetworkProtocol")."""
+    for path, res in sorted(((doc or {}).get("resources") or {}).items()):
+        if path.rstrip("/").endswith(suffix) and isinstance(res, dict):
+            return res
+    return None
+
+
 def lenovo_commands(ip, user, mtm, serial):
     """OneCLI-Befehle für das VPD-Update nach Lenovo-Anleitung; das Passwort steht nie darin."""
     bmc = f"--bmc {user}:<Passwort>@{ip}"
@@ -85,7 +100,11 @@ def lenovo_commands(ip, user, mtm, serial):
 
 class BoardSwapEngine(RedfishClient):
     """Liest die Identität des neuen Boards (nur GET, ein Anmeldeversuch) und setzt bei HPE iLO 5/6 Seriennummer
-    und Produkt-ID."""
+    und Produkt-ID, die iLO-Lizenz sowie Dienste und UEFI-Attribute aus der Sicherung des alten Boards."""
+
+    # Ein neues Board unter einer Adresse, an der das alte gemerkt ist, ist hier der Normalfall: nur warnen
+    # (wie bei „Neuware“), statt schon das Prüfen zu sperren. Ein Zertifikatswechsel desselben Geräts sperrt weiter.
+    STRICT_NEW = False
 
     def read(self, ip, user, pw):
         res = {"ok": False, "vendor": "", "user": user, "serial": "", "sku": "", "model": "", "uuid": "",
@@ -120,19 +139,110 @@ class BoardSwapEngine(RedfishClient):
 
     def set_hpe_ident(self, ip, user, pw, serial, pid):
         """HPE iLO 5/6: SerialNumber/ProductId als UEFI-Attribute vormerken (gilt nach dem nächsten Neustart)."""
-        self.cur_user = user or self.DEFAULT_USER["hpe"]
-        attrs = {k: v for k, v in (("SerialNumber", serial), ("ProductId", pid)) if v}
-        if not attrs:
+        return self.apply(ip, user, pw, "hpe", serial=serial, pid=pid)
+
+    def apply(self, ip, user, pw, vendor, serial="", pid="", license="", doc=None, services=False, bios=False):
+        """Alle ändernden Schritte für ein Board, nach Eigenschutz und Sicherung des neuen Boards:
+        HPE-Kennung, HPE-Lizenz, dann Dienste und UEFI aus der Sicherung `doc` des alten Boards."""
+        self.cur_user = user or self.DEFAULT_USER[vendor]
+        attrs = {k: v for k, v in (("SerialNumber", serial), ("ProductId", pid)) if v} if vendor == "hpe" else {}
+        license = license if vendor == "hpe" else ""
+        services, bios = bool(doc and services), bool(doc and bios)
+        if not (attrs or license or services or bios):
             return True
-        if not self.self_guard(ip, self.cur_user, pw, "hpe"):
+        if license and not LICENSE_RE.match(license):
+            self.log(T("  FEHLER: Lizenzschlüssel ungültig (erwartet: fünf Gruppen zu fünf Zeichen)."), "err")
+            return False
+        if not self.self_guard(ip, self.cur_user, pw, vendor):
             return False
         if not self.dry:
-            self.backup(ip, self.cur_user, pw, "hpe", "mainboard")
-        if not self.attempt(T("Seriennummer/Produkt-ID"), ip, pw, "PATCH", self.sys_path("hpe") + "/Bios/Settings",
-                            {"Attributes": attrs}):
+            self.backup(ip, self.cur_user, pw, vendor, "mainboard")
+        if attrs:
+            if not self.attempt(T("Seriennummer/Produkt-ID"), ip, pw, "PATCH", self.sys_path("hpe") + "/Bios/Settings",
+                                {"Attributes": attrs}):
+                return False
+            self.log(T("  Seriennummer/Produkt-ID vorgemerkt: {0} (gilt nach dem nächsten Neustart des Servers)").format(
+                ", ".join(f"{k}={v}" for k, v in attrs.items())), "ok")
+        if license:
+            if not self.attempt(T("iLO-Lizenz einspielen"), ip, pw, "POST", "/redfish/v1/Managers/1/LicenseService",
+                                {"LicenseKey": license}):
+                return False
+            self.log(T("  iLO-Lizenz eingespielt (…{0}).").format(license[-5:]), "ok")
+        if services and not self.restore_services(ip, pw, vendor, doc):
             return False
-        self.log(T("  Seriennummer/Produkt-ID vorgemerkt: {0} (gilt nach dem nächsten Neustart des Servers)").format(
-            ", ".join(f"{k}={v}" for k, v in attrs.items())), "ok")
+        if bios and not self.restore_bios(ip, pw, vendor, doc):
+            return False
+        return True
+
+    def live(self, ip, pw, path):
+        """GET auch im Trockenlauf (nur lesen, wie beim Eigenschutz); gibt das JSON-Objekt oder None."""
+        dry, self.dry = self.dry, False
+        try:
+            code = self.code = self.api(ip, self.cur_user, pw, "GET", path)
+        finally:
+            self.dry = dry
+        return self.body if self.ok(code) and isinstance(self.body, dict) else None
+
+    def restore_services(self, ip, pw, vendor, doc):
+        """Ein/Aus der Netzwerkdienste wie in der Sicherung; nur was auf dem neuen Board anders steht."""
+        saved = backup_part(doc, "/NetworkProtocol")
+        if not isinstance(saved, dict):
+            self.log(T("  Dienste: in der Sicherung stehen keine Netzwerkdienste."))
+            return True
+        path = self.MGR_PATH.get(vendor, "/redfish/v1/Managers/1") + "/NetworkProtocol"
+        now = self.live(ip, pw, path)
+        if now is None:
+            self.fail(T("Netzwerkdienste lesen"), self.code)
+            return False
+        wanted = {}
+        for name, val in saved.items():
+            cur = now.get(name)
+            if isinstance(val, dict) and isinstance(val.get("ProtocolEnabled"), bool) and isinstance(cur, dict) \
+                    and cur.get("ProtocolEnabled") != val["ProtocolEnabled"]:
+                wanted[name] = {"ProtocolEnabled": val["ProtocolEnabled"]}
+        if not wanted:
+            self.log(T("  Dienste: stimmen schon mit der Sicherung überein."), "ok")
+            return True
+        if not self.attempt(T("Netzwerkdienste setzen"), ip, pw, "PATCH", path, wanted):
+            return False
+        self.log(T("  Dienste wie in der Sicherung: {0}").format(", ".join(
+            f"{k} {T('an') if v['ProtocolEnabled'] else T('aus')}" for k, v in sorted(wanted.items()))), "ok")
+        return True
+
+    def restore_bios(self, ip, pw, vendor, doc):
+        """UEFI-Attribute wie in der Sicherung: nur auf dem neuen Board vorhandene und abweichende, nie
+        Passwort-, TPM-, Lösch- oder Kennungs-Attribute. Wirksam nach dem nächsten Neustart, keiner wird ausgelöst."""
+        saved = backup_part(doc, "/Bios")
+        saved = saved.get("Attributes") if isinstance(saved, dict) else None
+        if not isinstance(saved, dict) or not saved:
+            self.log(T("  UEFI: in der Sicherung stehen keine UEFI-Attribute."))
+            return True
+        body = self.live(ip, pw, self.sys_path(vendor) + "/Bios")
+        now = body.get("Attributes") if body else None
+        if not isinstance(now, dict):
+            self.fail(T("BIOS-Attribute lesen"), self.code)
+            return False
+        settings = self.sys_path(vendor) + "/Bios/Settings"
+        rs = body.get("@Redfish.Settings")
+        if isinstance(rs, dict) and isinstance(rs.get("SettingsObject"), dict):
+            settings = rs["SettingsObject"].get("@odata.id") or settings
+        wanted, missing = {}, []
+        for k, v in saved.items():
+            if BiosEngine.blocked(k) or any(i in k.lower() for i in IDENT_ATTRS):
+                continue
+            if k not in now:
+                missing.append(k)
+            elif now[k] != v:
+                wanted[k] = v
+        if missing:
+            self.log(T("  UEFI: auf dem neuen Board nicht vorhanden, übersprungen: ") + ", ".join(sorted(missing)))
+        if not wanted:
+            self.log(T("  UEFI: alle Attribute stimmen schon mit der Sicherung überein."), "ok")
+            return True
+        if not self.attempt(T("BIOS-Attribute setzen"), ip, pw, "PATCH", settings, {"Attributes": wanted}):
+            return False
+        self.log(T("  UEFI: {0} Attribute aus der Sicherung vorgemerkt (gelten nach dem nächsten Neustart): {1}").format(
+            len(wanted), ", ".join(sorted(wanted))), "ok")
         return True
 
 
@@ -151,7 +261,7 @@ class BoardSwapThread(QThread):
             if self.job == "read":
                 res = eng.read(**self.kw)
             else:
-                res = {"ok": eng.set_hpe_ident(**self.kw)}
+                res = {"ok": eng.apply(**self.kw)}
         except Exception as e:                      # nie den Dialog mitreißen
             self.line.emit(T('  FEHLER: unerwarteter Abbruch: {0!r}').format(e), "err")
             res = {"ok": False, "text": repr(e)}
@@ -170,9 +280,10 @@ class BoardSwapDialog(QDialog):
     def __init__(self, parent=None, row=("", "", ""), user=""):
         super().__init__(parent)
         self.setWindowTitle(T("Mainboard getauscht"))
-        self.resize(760, 640)
+        self.resize(760, 780)
         self.info = None            # Ergebnis von „Prüfen“
         self.backup = None          # Zusammenfassung der letzten Sicherung
+        self.backup_doc = None      # die Sicherung selbst (Dienste und UEFI zum Zurückspielen)
         self.take = None
         self.thread = None
         lay = QVBoxLayout(self)
@@ -203,8 +314,16 @@ class BoardSwapDialog(QDialog):
         for w in (self.serial, self.pid):
             w.setMaxLength(24)
             w.textEdited.connect(lambda txt, w=w: w.setText(txt.upper()))
+        self.lic = QLineEdit()
+        self.lic.setPlaceholderText(T("HPE: iLO-Lizenz, optional (XXXXX-XXXXX-XXXXX-XXXXX-XXXXX)"))
+        self.lic.setToolTip(T("Die iLO-Lizenz (z. B. Advanced) hängt am Board und muss nach dem Tausch neu\n"
+                              "eingespielt werden. Leer lassen, wenn keine gebraucht wird."))
+        self.lic.setMaxLength(29)
+        self.lic.textEdited.connect(lambda txt: self.lic.setText(txt.upper()))
+        self.lic.textChanged.connect(self.lic_changed)
         f.addRow(T("Seriennummer"), self.serial)
         f.addRow(T("Produkt-ID / Typ"), self.pid)
+        f.addRow(T("Lizenzschlüssel"), self.lic)
         lay.addWidget(box)
 
         row_btn = QHBoxLayout()
@@ -219,11 +338,20 @@ class BoardSwapDialog(QDialog):
         lay.addWidget(self.out, 1)
 
         self.do_ident = QCheckBox(T("HPE: Seriennummer und Produkt-ID setzen (gilt nach dem nächsten Neustart)"))
+        self.do_lic = QCheckBox(T("HPE: iLO-Lizenz einspielen"))
         self.do_pin = QCheckBox(T("Gemerktes Zertifikat des alten Mainboards vergessen"))
+        self.do_svc = QCheckBox(T("Netzwerkdienste wie auf dem alten Board (IPMI, SSDP, SNMP …)"))
+        self.do_svc.setToolTip(T("Schaltet die Dienste so ein oder aus, wie sie in der Sicherung standen.\n"
+                                 "Konten und Passwörter stehen nicht in der Sicherung und bleiben unberührt."))
+        self.do_bios = QCheckBox(T("UEFI-Einstellungen aus der Sicherung übernehmen (gilt nach dem nächsten Neustart)"))
+        self.do_bios.setToolTip(T("Setzt jedes UEFI-Attribut, das auf dem neuen Board anders steht, auf den\n"
+                                  "Wert aus der Sicherung (z. B. Startreihenfolge, Energieprofil). Nie gesetzt\n"
+                                  "werden Passwort-, TPM- und Lösch-Attribute und die Kennung. Wirksam nach\n"
+                                  "dem nächsten Neustart; es wird kein Neustart ausgelöst."))
         self.do_take = QCheckBox(T("Hostname und Adresse aus der Sicherung in die Serverliste übernehmen"))
         self.dry = QCheckBox(T("Trockenlauf (nichts ändern, nur zeigen)"))
         self.dry.setChecked(True)
-        for w in (self.do_ident, self.do_pin, self.do_take):
+        for w in (self.do_ident, self.do_lic, self.do_pin, self.do_svc, self.do_bios, self.do_take):
             w.setEnabled(False)
             lay.addWidget(w)
         lay.addWidget(self.dry)
@@ -278,6 +406,10 @@ class BoardSwapDialog(QDialog):
         # Sicherung des alten Boards
         path, doc = latest_backup(label_sn)
         self.backup = backup_summary(doc) if doc else None
+        self.backup_doc = doc if doc and self.backup["vendor"] in ("", v) else None
+        if doc and self.backup_doc is None:
+            self.say(T("  Die Sicherung stammt von einem anderen Hersteller ({0}); Dienste und UEFI werden nicht "
+                       "daraus übernommen.").format(RedfishClient.NAME.get(self.backup["vendor"], self.backup["vendor"])), "warn")
         if self.backup:
             b = self.backup
             self.say(T("  Sicherung des alten Boards gefunden: {0} ({1})").format(path.name, b["time"]), "ok")
@@ -321,6 +453,12 @@ class BoardSwapDialog(QDialog):
         can_ident = v == "hpe" and bool(label_sn or label_pid)
         self.do_ident.setEnabled(can_ident)
         self.do_ident.setChecked(can_ident and res.get("serial", "").upper() != label_sn)
+        self.lic_changed()
+        can_restore = self.backup_doc is not None and v in ("hpe", "dell", "lenovo", "smc")
+        self.do_svc.setEnabled(can_restore and backup_part(self.backup_doc, "/NetworkProtocol") is not None)
+        self.do_svc.setChecked(self.do_svc.isEnabled())
+        self.do_bios.setEnabled(can_restore and backup_part(self.backup_doc, "/Bios") is not None)
+        self.do_bios.setChecked(False)              # UEFI nur bewusst: falsche Werte können den Start verhindern
         key = (self.backup or {}).get("device", "")
         has_pin = bool(key) and key in trust.store().pins
         self.do_pin.setEnabled(has_pin)
@@ -332,11 +470,26 @@ class BoardSwapDialog(QDialog):
         self.do_take.setChecked(can_take)
         self.busy(False)
 
+    def lic_changed(self, *_):
+        """Haken „Lizenz einspielen“ folgt dem Feld, sobald ein HPE iLO 5/6 erkannt ist."""
+        on = bool(self.info and self.info.get("ok") and self.info.get("vendor") == "hpe" and self.lic.text().strip())
+        self.do_lic.setEnabled(on)
+        self.do_lic.setChecked(on)
+
     # ---------- Ausführen ----------
     def execute(self):
         if self.info is None:
             return
         dry = self.dry.isChecked()
+        lic = self.lic.text().strip().upper() if self.do_lic.isChecked() else ""
+        if lic and not LICENSE_RE.match(lic):
+            self.say(T("  FEHLER: Lizenzschlüssel ungültig (erwartet: fünf Gruppen zu fünf Zeichen)."), "err")
+            return
+        if not dry and self.do_bios.isChecked() and QMessageBox.question(
+                self, T("Mainboard getauscht"),
+                T("UEFI-Einstellungen aus der Sicherung übernehmen? Falsche UEFI-Werte können dazu führen, dass ein "
+                  "Server nicht mehr startet.")) != QMessageBox.StandardButton.Yes:
+            return
         self.say("")
         self.say(T("— Trockenlauf —") if dry else T("— Scharfer Lauf —"), "head")
         if self.do_pin.isChecked() and self.backup:
@@ -355,11 +508,16 @@ class BoardSwapDialog(QDialog):
                 self.take = (b["hostname"], b["ip"], b["mask"], b["gw"], self.serial.text().strip().upper())
                 self.say(T("  In die Serverliste übernommen: Hostname {0}, Adresse {1}").format(
                     b["hostname"] or "–", b["ip"] or "–"), "ok")
-        if self.do_ident.isChecked():
+        ident = self.do_ident.isChecked()
+        if ident or lic or self.do_svc.isChecked() or self.do_bios.isChecked():
             self.busy(True)
-            self.thread = BoardSwapThread(self, "ident", dry=dry, ip=self.addr.text().strip(),
+            self.thread = BoardSwapThread(self, "apply", dry=dry, ip=self.addr.text().strip(),
                                           user=self.info.get("user", ""), pw=self.pw.text(),
-                                          serial=self.serial.text().strip().upper(), pid=self.pid.text().strip().upper())
+                                          vendor=self.info.get("vendor", ""),
+                                          serial=self.serial.text().strip().upper() if ident else "",
+                                          pid=self.pid.text().strip().upper() if ident else "", license=lic,
+                                          doc=self.backup_doc, services=self.do_svc.isChecked(),
+                                          bios=self.do_bios.isChecked())
             self.thread.line.connect(self.say)
             self.thread.done.connect(self.ident_done)
             self.thread.start()
