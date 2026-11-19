@@ -57,7 +57,8 @@ def validate(vendor, host, reports, schemas):
             "serv_http_proxy": None, "serv_https_proxy": None,
             "schema_directory": str(schemas), "logdir": str(reports / vendor), "debugging": False,
             "rhost": f"https://{host}:{PORT}", "user": user, "password": pw, "timeout": 30,
-            "authtype": "Session", "mockup": None, "collectionlimit": ["LogEntry", "20"], "nooemcheck": False,
+            "authtype": "Session", "mockup": None, "collectionlimit": ["LogEntry", "20"],
+            "nooemcheck": True,                   # Herstellererweiterungen: Schemata nicht im DMTF-Paket
             "skipschema": schemas.joinpath(".geladen").exists(),
         })
     finally:

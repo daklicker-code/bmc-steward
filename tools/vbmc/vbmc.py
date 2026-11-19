@@ -51,7 +51,7 @@ from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vbsim.state import ServerSim, RESET_TYPES      # noqa: E402
-from vbsim import redfish_ext, ssdp, webui           # noqa: E402
+from vbsim import odata, redfish_ext, ssdp, webui    # noqa: E402
 from vbsim.ossl import find_openssl, hint as openssl_hint   # noqa: E402
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
@@ -815,6 +815,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.bmc
 
     def send(self, code, obj=None):
+        if code == 200 and isinstance(obj, dict):
+            odata.annotate(obj)                 # @odata.type, Id, Name nach Redfish-Standard ergänzen
         body = b"" if obj is None else jbody(obj)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -1001,6 +1003,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, rf_error("kein Redfish"))
         if p in ("/redfish/v1", "/redfish/v1/"):
             return self.send(200, self.root_doc())
+        if p == "/redfish/v1/$metadata":                 # ohne Anmeldung, wie im Standard verlangt
+            return self.send_text(200, odata.metadata_xml(), "application/xml")
         if p == "/xmldata":
             return self.xmldata()
         if webui.handle(self, "GET", p):
@@ -1018,8 +1022,13 @@ class Handler(BaseHTTPRequestHandler):
         ext = redfish_ext.get(b, p, SYS, MGR)
         if ext is not None:
             return self.send(200, ext)
+        if p == "/redfish/v1/Managers":
+            return self.send(200, {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": mgr}]})
         if p == mgr:
             return self.send(200, self.manager_doc())
+        if p == mgr + "/EthernetInterfaces" and b.vendor in NIC:
+            nic = f"{mgr}/EthernetInterfaces/{NIC[b.vendor]}"
+            return self.send(200, {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": nic}]})
         if p == mgr + "/Attributes":
             if b.gen == "idrac8_alt":
                 return self.send(404, rf_error("Ressource nicht vorhanden (Firmware zu alt)"))

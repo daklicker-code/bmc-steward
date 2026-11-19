@@ -173,6 +173,9 @@ def get(bmc, p, SYS, MGR):
                 "Actions": {"#CertificateService.GenerateCSR": {"target": p + "/Actions/CertificateService.GenerateCSR"},
                             "#CertificateService.ReplaceCertificate": {
                                 "target": p + "/Actions/CertificateService.ReplaceCertificate"}}}
+    if p == "/redfish/v1/CertificateService/CertificateLocations":
+        return {"@odata.id": p, "Id": "CertificateLocations", "Name": "Certificate Locations",
+                "Links": {"Certificates": [{"@odata.id": f"{mgp}/NetworkProtocol/HTTPS/Certificates/1"}]}}
     if p == f"{mgp}/NetworkProtocol/HTTPS/Certificates":
         return {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": p + "/1"}]}
     if p == f"{mgp}/NetworkProtocol/HTTPS/Certificates/1":
@@ -216,6 +219,12 @@ def get(bmc, p, SYS, MGR):
             ev.reverse()
             return {"@odata.id": p, "Members@odata.count": len(ev),
                     "Members": [_entry(p, e) for e in ev]}
+        if p.startswith(f"{base}/LogServices/{ls}/Entries/"):
+            eid = p.rsplit("/", 1)[1]
+            with sim.lock:
+                hit = [e for e in sim.events if str(e["id"]) == eid]
+            if hit:
+                return _entry(p.rsplit("/", 1)[0], hit[0])
     return None
 
 
