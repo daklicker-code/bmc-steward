@@ -311,40 +311,14 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Nach dem Löschen müssen die Passwörter vor dem nächsten scharfen Lauf neu eingegeben werden."))
         f.addRow(self.lock_factory)                 # untereinander: die Seite bleibt auch auf 1366er-Bildschirmen schmal
         f.addRow(self.clear_pass_after)
-        # HPE: Produkt-ID und Seriennummer (nach Mainboard-Tausch), aufklappbar, Standard zugeklappt
-        self.hpe_ident_btn = QToolButton()
-        self.hpe_ident_btn.setText(T("HPE: Produkt-ID und Seriennummer ändern"))
-        self.hpe_ident_btn.setCheckable(True)
-        self.hpe_ident_btn.setAutoRaise(True)
-        self.hpe_ident_btn.setArrowType(Qt.ArrowType.RightArrow)
-        self.hpe_ident_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        ident_tip = T("Nur HPE iLO 5/6, z. B. nach einem Mainboard-Tausch: Das neue Board kennt Seriennummer und\n"
-                      "Produkt-ID des Gehäuses nicht. Beide Werte stehen auf dem Aufkleber am Gehäuse und müssen\n"
-                      "genau übereinstimmen. Sie werden als UEFI-Einstellung gesetzt und gelten nach dem nächsten\n"
-                      "Neustart des Servers. Nur für genau einen Server je Lauf; leere Felder bleiben unverändert.\n"
-                      "iLO 3/4 und andere Hersteller werden übersprungen.")
-        self.hpe_ident_btn.setToolTip(ident_tip)
-        self.hpe_ident = QWidget()
-        hf = QFormLayout(self.hpe_ident)
-        hf.setContentsMargins(14, 0, 0, 0)
-        hf.setVerticalSpacing(3)
-        self.hpe_serial = QLineEdit()
-        self.hpe_serial.setPlaceholderText(T("z. B. CZJ1234567 (Aufkleber am Gehäuse)"))
-        self.hpe_pid = QLineEdit()
-        self.hpe_pid.setPlaceholderText(T("z. B. 868703-B21 (Aufkleber am Gehäuse)"))
-        for w in (self.hpe_serial, self.hpe_pid):
-            w.setMaxLength(20)
-            w.textEdited.connect(lambda txt, w=w: w.setText(txt.upper()))
-        self.tip_row(hf, T("Seriennummer"), self.hpe_serial, ident_tip)
-        self.tip_row(hf, T("Produkt-ID"), self.hpe_pid, ident_tip)
-        self.hpe_ident.setVisible(False)
-
-        def toggle_ident(on):
-            self.hpe_ident.setVisible(on)
-            self.hpe_ident_btn.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow)
-        self.hpe_ident_btn.toggled.connect(toggle_ident)
-        f.addRow(self.hpe_ident_btn)
-        f.addRow(self.hpe_ident)
+        # Mainboard getauscht: eigener Dialog für genau einen Server (Identität, Sicherung, Zertifikat)
+        self.swap_btn = QPushButton(T("Mainboard getauscht …"))
+        self.swap_btn.setToolTip(T("Für einen Server nach dem Tausch der Systemplatine: vergleicht das neue Board mit dem "
+                                   "Aufkleber am Gehäuse,\nsucht die Sicherung des alten Boards, setzt bei HPE "
+                                   "Seriennummer und Produkt-ID und zeigt je Hersteller,\nwas zu tun ist. Nimmt die "
+                                   "markierte Zeile der Serverliste."))
+        self.swap_btn.clicked.connect(self.open_board_swap)
+        f.addRow(self.swap_btn)
 
         # --- Vorgaben für neue Zeilen ---
         self.def_mask = QLineEdit()
@@ -750,20 +724,27 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             LOG.debug(T("Seite: {0}").format(item.text()))
 
     # ---------- Hilfen ----------
-    def hpe_ident_values(self):
-        """(Seriennummer, Produkt-ID) aus dem aufklappbaren HPE-Bereich; None, wenn beide leer sind,
-        False nach einer Fehlermeldung (ungültige Zeichen)."""
-        serial, pid = self.hpe_serial.text().strip().upper(), self.hpe_pid.text().strip().upper()
-        if not serial and not pid:
-            return None
-        bad = [n for n, v in ((T("Seriennummer"), serial), (T("Produkt-ID"), pid))
-               if v and not re.fullmatch(r"[A-Z0-9][A-Z0-9-]{2,19}", v)]
-        if bad:
-            QMessageBox.warning(self, T("Seriennummer/Produkt-ID"),
-                                T("Ungültig: {0}. Erlaubt sind Großbuchstaben, Ziffern und Bindestrich, genau wie auf "
-                                  "dem Aufkleber am Gehäuse.").format(", ".join(bad)))
-            return False
-        return serial, pid
+    def open_board_swap(self):
+        """Dialog „Mainboard getauscht“ für die markierte (sonst erste) Zeile der Serverliste."""
+        from .board_swap import BoardSwapDialog
+        r = self.table.currentRow()
+        if r < 0 and self.table.rowCount():
+            r = 0
+        row = (self.cell(r, 0), self.cell(r, 1), self.cell(r, 6)) if r >= 0 else ("", self.cur_pass.text(), "")
+        dlg = BoardSwapDialog(self, row, self.cur_user.text().strip())
+        dlg.exec()
+        if dlg.take:
+            host, ip, mask, gw, serial = dlg.take
+            if r < 0:
+                self.add_row()
+                r = self.table.rowCount() - 1
+            for c, val in ((0, dlg.addr.text().strip()), (2, ip), (3, mask), (4, gw), (5, host), (6, serial)):
+                if val:
+                    item = self.table.item(r, c) or QTableWidgetItem()
+                    item.setText(val)
+                    self.table.setItem(r, c, item)
+            self.touch()
+            self.update_missing()
 
     @staticmethod
     def tip_row(form, label, widget, tip):
@@ -1635,14 +1616,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                                     "Neue Zeilen eintragen."))
             return
         n = len(todo)
-        ident = self.hpe_ident_values()
-        if ident and n != 1:
-            QMessageBox.warning(self, T("Seriennummer/Produkt-ID"),
-                                T("Seriennummer und Produkt-ID gehören zu genau einem Gehäuse. In der Liste sind aber {0} "
-                                  "offene Server.\n\nNur den einen Server offen lassen oder die Felder leeren.").format(n))
-            return
-        if ident is False:
-            return
         dry = self.dry.isChecked()
         if not dry:
             nets = [i.network for i in self.local_ifaces()]
@@ -1658,9 +1631,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             if far:
                 info += "\n\n" + (T("⚠ Die aktuelle IP liegt in keinem Netz, an dem dieser Rechner direkt hängt. "
                                   "Für ein Staging-Gerät ist das ungewöhnlich. Ist es wirklich das richtige Gerät?"))
-            if ident:
-                info += "\n\n" + T("HPE: Seriennummer {0}, Produkt-ID {1} (wirkt nach dem nächsten Neustart des Servers).").format(
-                    ident[0] or "–", ident[1] or "–")
             if self.lock_factory.isChecked():
                 info += "\n\n" + T("Nach erfolgreicher Kontrolle wird auf jedem Server das Werkskonto gesperrt. Danach "
                                     "gilt nur noch der neue Administrator – Passwort vorher sicher ablegen.")
@@ -1675,8 +1645,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.worker = EngineThread(
             self, rows=todo, cur_user=self.cur_user.text().strip(), cur_pass=self.cur_pass.text(),
             new_user=self.new_user.text(), new_pass=self.new_pass.text(), slot=self.slot.value(), dry=dry,
-            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked(),
-            hpe_ident=ident or None)
+            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked())
         self.worker.line.connect(self.show_line)
         self.worker.row_done.connect(self.mark_done)
         self.worker.result.connect(self.done)
