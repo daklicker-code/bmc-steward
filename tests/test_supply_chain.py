@@ -4,6 +4,7 @@ Läuft ohne Netz. Prüft nur Dateien im Repo, damit ein ungepinnter Eintrag oder
 (`@v4`) schon im Pull Request auffällt und nicht erst in der CI-Umgebung."""
 import re
 import unittest
+from pathlib import Path
 
 from tests._support import REPO
 
@@ -104,6 +105,47 @@ class TestWorkflows(unittest.TestCase):
     def test_expected_workflows_exist(self):
         names = {f.name for f in self._workflows()}
         self.assertLessEqual({"tests.yml", "codeql.yml", "sbom.yml"}, names)
+
+    def test_releases_are_signed_keyless(self):
+        """Jede Version wird über Sigstore bescheinigt (ohne Schlüssel), auch die vom Release-Workflow angelegte."""
+        wf = (REPO / ".github" / "workflows" / "attest.yml").read_text(encoding="utf-8")
+        self.assertIn("id-token: write", wf)
+        self.assertIn("attestations: write", wf)
+        self.assertIn("actions/attest-build-provenance@", wf)
+        self.assertIn("tools/release-archive.sh", wf)
+        rel = (REPO / ".github" / "workflows" / "releases.yml").read_text(encoding="utf-8")
+        self.assertIn("gh workflow run attest.yml", rel)
+
+    def test_redfish_validator_runs_in_ci_from_hashed_lock(self):
+        wf = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("pip install --require-hashes -r tools/ci/validator.lock", wf)
+        self.assertIn("tools/ci/validate_vbmc.py", wf)
+        pkgs = _lock_packages(REPO / "tools" / "ci" / "validator.lock")
+        self.assertIn("redfish-service-validator", pkgs)
+        for name, (version, hashes) in pkgs.items():
+            with self.subTest(package=name):
+                self.assertGreater(hashes, 0)
+
+    def test_sushy_counter_check_runs_in_ci_from_hashed_lock(self):
+        wf = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("--require-hashes -r tools/ci/sushy.lock", wf)
+        self.assertIn("SUSHY_EMULATOR=", wf)
+        pkgs = _lock_packages(REPO / "tools" / "ci" / "sushy.lock")
+        self.assertIn("sushy-tools", pkgs)
+        self.assertTrue(all(h > 0 for _, h in pkgs.values()))
+
+    def test_release_archive_is_reproducible(self):
+        import subprocess
+        import tempfile
+        tool = REPO / "tools" / "release-archive.sh"
+        with tempfile.TemporaryDirectory() as d:
+            outs = []
+            for n in ("a.tar", "b.tar"):
+                p = Path(d) / n
+                subprocess.run(["sh", str(tool), "HEAD", str(p)], cwd=REPO, check=True, capture_output=True)
+                outs.append(p.read_bytes())
+            self.assertEqual(outs[0], outs[1])
+            self.assertGreater(len(outs[0]), 10000)
 
     def test_dependabot_covers_pip_and_actions(self):
         text = (REPO / ".github" / "dependabot.yml").read_text(encoding="utf-8")

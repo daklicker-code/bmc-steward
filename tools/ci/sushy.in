@@ -1,0 +1,2 @@
+# Nur für die CI: OpenStack sushy-tools als unabhängige Redfish-Gegenprobe (tests/test_sushy.py). Kein Teil des Programms.
+sushy-tools==2.2.0

@@ -35,6 +35,7 @@ __license__ = "MIT"
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -51,7 +52,7 @@ from urllib.parse import urlsplit, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vbsim.state import ServerSim, RESET_TYPES      # noqa: E402
-from vbsim import redfish_ext, ssdp, webui           # noqa: E402
+from vbsim import odata, redfish_ext, ssdp, webui    # noqa: E402
 from vbsim.ossl import find_openssl, hint as openssl_hint   # noqa: E402
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vbmc"
@@ -819,6 +820,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.server.bmc
 
     def send(self, code, obj=None):
+        if code == 200 and isinstance(obj, dict):
+            odata.annotate(obj)                 # @odata.type, Id, Name nach Redfish-Standard ergänzen
         body = b"" if obj is None else jbody(obj)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -1005,6 +1008,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, rf_error("kein Redfish"))
         if p in ("/redfish/v1", "/redfish/v1/"):
             return self.send(200, self.root_doc())
+        if p == "/redfish/v1/$metadata":                 # ohne Anmeldung, wie im Standard verlangt
+            return self.send_text(200, odata.metadata_xml(), "application/xml")
         if p == "/xmldata":
             return self.xmldata()
         if webui.handle(self, "GET", p):
@@ -1022,8 +1027,13 @@ class Handler(BaseHTTPRequestHandler):
         ext = redfish_ext.get(b, p, SYS, MGR)
         if ext is not None:
             return self.send(200, ext)
+        if p == "/redfish/v1/Managers":
+            return self.send(200, {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": mgr}]})
         if p == mgr:
             return self.send(200, self.manager_doc())
+        if p == mgr + "/EthernetInterfaces" and b.vendor in NIC:
+            nic = f"{mgr}/EthernetInterfaces/{NIC[b.vendor]}"
+            return self.send(200, {"@odata.id": p, "Members@odata.count": 1, "Members": [{"@odata.id": nic}]})
         if p == mgr + "/Attributes":
             if b.gen == "idrac8_alt":
                 return self.send(404, rf_error("Ressource nicht vorhanden (Firmware zu alt)"))
@@ -1227,7 +1237,10 @@ class Handler(BaseHTTPRequestHandler):
                 "Managers": {"@odata.id": "/redfish/v1/Managers"},
                 "Systems": {"@odata.id": "/redfish/v1/Systems"},
                 "AccountService": {"@odata.id": "/redfish/v1/AccountService"},
-                "UUID": "00000000-0000-0000-0000-" + b.serial[-12:].rjust(12, "0")}
+                "SessionService": {"@odata.id": "/redfish/v1/SessionService"},
+                "Links": {"Sessions": {"@odata.id": "/redfish/v1/SessionService/Sessions"}},   # Pflicht laut Schema
+                # stabil je Gerät und nur aus Hexziffern (die Seriennummer enthält Buchstaben außerhalb von a-f)
+                "UUID": "00000000-0000-0000-0000-" + hashlib.sha256(b.serial.encode()).hexdigest()[:12]}
 
     def manager_doc(self):
         b = self.bmc
@@ -1242,9 +1255,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def nic_doc(self, p):
         b = self.bmc
+        addr = {k: (v or None) for k, v in b.ipv4.items()}     # leer = null, "" verletzt das IP-Muster
         d = {"@odata.id": p, "Id": NIC.get(b.vendor, "1"), "HostName": b.hostname,
-             "IPv4Addresses": [dict(b.ipv4)],
-             "IPv4StaticAddresses": [dict(b.ipv4)] if not b.dhcp else [],
+             "IPv4Addresses": [dict(addr)],
+             "IPv4StaticAddresses": [dict(addr)] if not b.dhcp else [],
              "DHCPv4": {"DHCPEnabled": b.dhcp}}
         if b.vendor == "hpe":
             d["Oem"] = {"Hpe": {"HostName": b.hostname, "DHCPv4": {"Enabled": b.dhcp}}}
@@ -1360,9 +1374,10 @@ class Handler(BaseHTTPRequestHandler):
         if name:
             a = b.accounts[name]
             return self.send(200, {"@odata.id": self.path.split("?")[0], "Id": token,
-                                   "UserName": name, "RoleId": a["role"], "Enabled": a["enabled"]})
+                                   "UserName": name, "RoleId": a["role"], "Enabled": a["enabled"],
+                                   "AccountTypes": ["Redfish"]})              # Pflicht laut Schema
         return self.send(200, {"@odata.id": self.path.split("?")[0], "Id": token,
-                               "UserName": "", "RoleId": "None", "Enabled": False})
+                               "UserName": "", "RoleId": "None", "Enabled": False, "AccountTypes": ["Redfish"]})
 
     def account_create(self, data):
         b = self.bmc

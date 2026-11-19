@@ -1,0 +1,4 @@
+# Nur für die CI: DMTF Redfish-Service-Validator gegen die virtuellen BMCs (tools/vbmc). Kein Teil des Programms.
+redfish_service_validator==3.1.8
+# Die CI läuft mit Python 3.12; dort braucht pyopenssl zusätzlich typing-extensions (unter 3.13 nicht).
+typing-extensions

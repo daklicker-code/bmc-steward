@@ -43,7 +43,7 @@ The **menu** on the left has two parts: **Setup** lists the steps 0 to 6 in orde
 | **↳ Phone scanner** | Opens a camera-based input from “New hardware”: the phone (same network, or connected via USB tethering/hotspot) scans a barcode or text (OCR) off the device label, and the value goes straight into the password field. No photo is stored on the phone; the connection is encrypted over a secret link. |
 | **Existing servers** | For BMCs that are already configured: a read-only connection test (port, encryption, vendor, login, model, firmware, admin rights). One login attempt per device so no account gets locked. Successful servers are handed over to “New hardware”, “UEFI settings” and “Services”. |
 | **UEFI settings** | Reads the attributes that actually exist from a reference device and applies the values you choose across every server in the list. Password, TPM and erase attributes are locked. |
-| **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping, **hardening** (IPMI over LAN, SSDP, SNMP off; account lockout; session timeout) and – experimental – HTTPS certificate import. |
+| **Services** | Sets up management services across vendors: NTP, syslog, LDAP/AD with group-to-role mapping, **hardening** (IPMI over LAN, SSDP, SNMP off; account lockout; session timeout) and – experimental – HTTPS certificate import. A **capability matrix** (“Capabilities per vendor …”) shows what works on which vendor; sections that work on no server in the list are greyed out, and mixed lists name the vendors that will be skipped. |
 | **Firmware** | Firmware updates over the Redfish UpdateService: reads the firmware inventory of a reference device, then pushes a local file (multipart/HTTP push) or pulls one from a URL (SimpleUpdate) onto every server in the list, with live progress and verification. Dry run by default; live runs ask you to type the server count. |
 | **UEFI console** | Shows a server's UEFI/BIOS through the BMC – as an embedded HTML5 console, a text console (SOL/SSH) or in the default browser. With a status bar, an **on-screen keyboard** (locking Ctrl/Alt/Shift, F keys, vendor setup/boot-menu keys, “Type text”), copy/paste, history, colour schemes, screenshots and automatic reconnect. |
 | **↳ Find servers** | Finds BMCs whose address is unknown (“🔍 Search …” button in the UEFI console and “Find servers …” in “New hardware”): checks a range (e.g. `192.168.1.0/24`) for web interfaces, reads vendor, product and serial number there without logging in, and finds BMCs without a web interface via an IPMI ping. Read-only; no credentials are sent. |
@@ -58,7 +58,7 @@ On top of that:
 - **CSV import/export** of the server list, straight from an Excel export too.
 - **Multilingual:** German, English, French, Swiss German (picker at the bottom left, below the menu).
 - **Virtual test cluster** (`tools/vbmc/`): spin up fake BMCs of all four vendors – Redfish with a real address change, plus real SSH and IPMI-SOL for the console. Driven from the “Test lab” page or standalone from the command line.
-- **Capture and compare** (page "Aufnahme"): reads the Redfish tree of a real device strictly read-only (the only exception is the session login) and saves it in DMTF mockup format – with serial numbers, addresses, host names, certificates and keys redacted, a capability report and a self-check that refuses to save if anything is left over. Two captures of the same device (e.g. before and after a firmware update) can be compared: lost write permissions, paths, actions and allowed values are reported as critical. Also available on the command line: `python3 -m bmc_steward.capture --help`.
+- **Capture and compare** (page "Aufnahme"): reads the Redfish tree of a real device strictly read-only (the only exception is the session login) and saves it in DMTF mockup format – with serial numbers, addresses, host names, certificates and keys redacted, a capability report and a self-check that refuses to save if anything is left over. Two captures of the same device (e.g. before and after a firmware update) can be compared: lost write permissions, paths, actions and allowed values are reported as critical. Also available on the command line: `python3 -m bmc_steward.capture --help`. **Pack for submission** checks a redacted capture once more on its own (no serial numbers, addresses, certificates or keys left), packs it as a ZIP and opens the GitHub form “Submit a capture”; nothing is uploaded automatically.
 - **Install hints per page:** if an optional package is missing on this machine (e.g. `paramiko` and `pyghmi` for the text console, `dnsmasq` for the DHCP server, `zbar`/`tesseract` for the phone scanner), the affected page shows a slim footer with the matching install command for the detected system (Arch, Debian/Ubuntu, Fedora, openSUSE, Windows), ready to copy.
 - **Modular layout** (package `bmc_steward/`); developed on Linux, also runs from source on Windows (the ready-made .exe is archived and unmaintained).
 
@@ -256,6 +256,20 @@ for such devices automatically and notes it in the log.
   e.g. an encrypted drive.
 - A saved list contains passwords only if you choose so, and then in plain text. Delete such a file after
   the rollout.
+
+## Verify a release
+
+Every version tag is signed without a personal key (Sigstore “keyless” via GitHub artifact attestations): the
+workflow *Signieren* builds the source archive of the tag reproducibly (`tools/release-archive.sh`) and GitHub
+certifies which repository, workflow and commit it came from. To check a version you downloaded or checked out
+(needs `git` and a logged-in GitHub CLI `gh`):
+
+```bash
+tools/verify-release.sh v3.4.1
+```
+
+The script rebuilds the archive from the tag – byte-identical – and lets `gh attestation verify` check the
+certificate. If the tag was moved or the content changed, the check fails.
 
 ## License, liability and trademarks
 

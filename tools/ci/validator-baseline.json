@@ -1,0 +1,6 @@
+{
+  "dell": {"fail": 2},
+  "hpe": {"fail": 2},
+  "lenovo": {"fail": 2},
+  "smc": {"fail": 2}
+}

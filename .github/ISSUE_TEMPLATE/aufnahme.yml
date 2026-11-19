@@ -1,0 +1,57 @@
+name: Aufnahme einsenden
+description: Redfish-Aufnahme eines eigenen Geräts einsenden (Seite „Aufnahme“ → „Zum Einsenden packen …“)
+title: "Aufnahme: "
+labels: ["aufnahme"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke! Eine Aufnahme hilft, BMC-Steward auf einem weiteren Modell oder einer neuen Firmware abzusichern.
+        Die ZIP-Datei kommt aus BMC-Steward: Seite **Aufnahme** → **Zum Einsenden packen …**. Dabei wird geprüft,
+        dass sie geschwärzt ist (Seriennummern, UUIDs, MAC- und IP-Adressen, Hostnamen, Benutzernamen,
+        Zertifikate und Schlüssel ersetzt).
+
+        **Bitte beachten:** Anhänge in einem Issue sind öffentlich. Die Aufnahme wird nicht ins Repository
+        übernommen; aus ihr werden nur die Kennungen abgeleitet, die die Tests brauchen.
+  - type: input
+    id: vendor
+    attributes:
+      label: Hersteller
+      placeholder: z. B. Dell iDRAC, HPE iLO 6, Lenovo XCC, Supermicro
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Modell
+      placeholder: z. B. PowerEdge R660
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: BMC-Firmware
+      placeholder: z. B. 7.10.30.00
+    validations:
+      required: true
+  - type: textarea
+    id: zip
+    attributes:
+      label: Aufnahme (ZIP)
+      description: Die ZIP-Datei hier hineinziehen.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anmerkungen
+      description: Was ging nicht, was ist aufgefallen? (optional)
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Bestätigung
+      options:
+        - label: Das Gerät gehört mir bzw. meiner Organisation, und ich darf die Aufnahme weitergeben.
+          required: true
+        - label: Ich habe kurz in die Dateien gesehen; es stehen keine Kennwörter, Namen oder internen Adressen darin.
+          required: true
