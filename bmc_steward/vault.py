@@ -13,6 +13,7 @@ nach einem RMA, oder dieselbe IP in zwei verschiedenen Netzen zu verschiedenen Z
 Schlüsselbund-Feld. Praktisch unkritisch, weil ein „falscher" Treffer nur ein falsches Passwort einträgt,
 das dann beim nächsten Verbindungsversuch ganz normal als Anmeldefehler auffällt."""
 import logging
+import threading
 
 SERVICE = "bmc-steward"
 LOG = logging.getLogger("bmc_steward.vault")
@@ -25,11 +26,38 @@ except ImportError:                 # Paket fehlt: Schlüsselbund einfach nicht 
     keyring = None
 
 
+_probe = None
+
+
+def probe_async():
+    """Sucht das Schlüsselbund-Backend im Hintergrund (beim Programmstart). keyring prüft dabei alle
+    Backends, startet unter Linux Hilfsprogramme und fragt den Secret Service über D-Bus – das kann dauern
+    und soll das Fenster nicht aufhalten. available() wartet bei Bedarf darauf."""
+    global _probe
+    if keyring is None or _probe is not None:
+        return
+
+    def run():
+        try:
+            keyring.get_keyring()         # keyring merkt sich das Ergebnis selbst
+        except Exception:
+            pass
+    _probe = threading.Thread(target=run, name="vault-probe", daemon=True)
+    _probe.start()
+
+
+def ready():
+    """True, sobald available() ohne Warten antwortet."""
+    return keyring is None or _probe is None or not _probe.is_alive()
+
+
 def available():
     """True, wenn ein echtes Schlüsselbund-Backend da ist (nicht nur die eingebaute Attrappe, die
     `keyring` benutzt, wenn es keinen brauchbaren Dienst findet)."""
     if keyring is None:
         return False
+    if _probe is not None:
+        _probe.join(30)
     try:
         return not isinstance(keyring.get_keyring(), keyring.backends.fail.Keyring)
     except Exception:

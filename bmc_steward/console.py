@@ -3,6 +3,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QFrame, QMenu, QToolButton, QApp
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QProcess, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
 import codecs
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -31,12 +33,50 @@ from .termkeys import ALT, CTRL, FKEY_ESC, KEYMAP, KEYMAP_ENUM, SHIFT, encode_ke
 #  Drei Wege: eingebettete HTML5-Konsole des BMC (Bild, Maus, Tastatur), Textkonsole über
 #  Serial-over-LAN bzw. SSH und Öffnen im Standardbrowser. Es wird nichts gespeichert.
 # ======================================================================================================
-try:                                    # optional; muss vor dem QApplication importiert werden
-    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
-    from PyQt6.QtWebEngineWidgets import QWebEngineView
-    WEBENGINE = True
-except ImportError:
+# QtWebEngine (eingebettetes Chromium) ist optional und groß: geladen wird es erst, wenn die erste HTML5-Konsole
+# aufgeht (_web), nicht beim Programmstart. Dafür muss vor der QApplication das gemeinsame OpenGL-Umfeld
+# eingeschaltet sein – das ist alles, was der frühe Import sonst bewirkt hätte.
+try:
+    WEBENGINE = importlib.util.find_spec("PyQt6.QtWebEngineWidgets") is not None
+except (ImportError, ValueError):
     WEBENGINE = False
+if WEBENGINE and QApplication.instance() is None:
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+_WEB = None
+
+
+def _web():
+    """Lädt QtWebEngine beim ersten Gebrauch; gibt den Namensraum (Klassen) zurück oder None, wenn das Paket
+    zwar vorhanden, aber nicht ladbar ist (z. B. fehlende Systembibliothek)."""
+    global _WEB, WEBENGINE
+    if _WEB is None and WEBENGINE:
+        try:
+            from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+        except ImportError:
+            WEBENGINE = False
+            return None
+
+        class BmcPage(QWebEnginePage):
+            """Akzeptiert das selbstsignierte Zertifikat nur des gewählten BMC und leitet Popups in eigene Reiter."""
+
+            def __init__(self, profile, host, popup, parent=None):
+                super().__init__(profile, parent)
+                self.host, self.popup = QUrl(f"https://{host}").host(), popup
+                self.certificateError.connect(self.cert)
+
+            def cert(self, error):
+                bmc_cert(self.host, error)
+
+            def createWindow(self, _type):
+                return self.popup()
+
+        class _Web:
+            pass
+        _WEB = _Web()
+        _WEB.Page, _WEB.Profile, _WEB.Settings, _WEB.View, _WEB.BmcPage = (
+            QWebEnginePage, QWebEngineProfile, QWebEngineSettings, QWebEngineView, BmcPage)
+    return _WEB
 
 
 try:
@@ -45,16 +85,30 @@ except ImportError:
     pyte = None
 
 
-try:                                    # SSH-Textkonsole (Dell/HPE/Lenovo), plattformunabhängig
-    import paramiko
-except ImportError:
-    paramiko = None
+class _LazyModule:
+    """Stellvertreter für ein optionales Modul, das erst beim ersten Zugriff geladen wird (paramiko zieht z. B.
+    die ganze Kryptografie-Bibliothek nach und bremst sonst den Programmstart)."""
+
+    def __init__(self, name):
+        self._name, self._mod = name, None
+
+    def __getattr__(self, attr):
+        if self._mod is None:
+            self._mod = importlib.import_module(self._name)
+        return getattr(self._mod, attr)
 
 
-try:                                    # IPMI-Serial-over-LAN (Supermicro), plattformunabhängig
-    from pyghmi.ipmi import console as ipmiconsole
-except ImportError:
-    ipmiconsole = None
+def _lazy(name):
+    """_LazyModule, wenn das Modul installiert ist, sonst None (wie ein fehlgeschlagener Import)."""
+    try:
+        # nur das oberste Paket suchen: find_spec("a.b.c") würde a und a.b schon importieren
+        return _LazyModule(name) if importlib.util.find_spec(name.split(".")[0]) is not None else None
+    except (ImportError, ValueError):
+        return None
+
+
+paramiko = _lazy("paramiko")                        # SSH-Textkonsole (Dell/HPE/Lenovo), plattformunabhängig
+ipmiconsole = _lazy("pyghmi.ipmi.console")          # IPMI-Serial-over-LAN (Supermicro), plattformunabhängig
 
 
 
@@ -720,38 +774,24 @@ class _ReaderThread(QThread):
 
 
 # ---------------------------------------------------------------------------------------- Web-Konsole
-if WEBENGINE:
-    class BmcPage(QWebEnginePage):
-        """Akzeptiert das selbstsignierte Zertifikat nur des gewählten BMC und leitet Popups in eigene Reiter."""
-
-        def __init__(self, profile, host, popup, parent=None):
-            super().__init__(profile, parent)
-            self.host, self.popup = QUrl(f"https://{host}").host(), popup
-            self.certificateError.connect(self.cert)
-
-        def cert(self, error):
-            """Nur das Zertifikat des gewählten BMC annehmen – und nur, wenn es zum gemerkten Fingerabdruck
-            passt (trust.py). Ein fremdes Zertifikat unter derselben Adresse wird abgelehnt."""
-            if error.url().host() != self.host:
-                error.rejectCertificate()
-                return
-            try:
-                chain = error.certificateChain()
-                der = bytes(chain[0].toDer()) if chain else b""
-            except Exception:
-                der = b""
-            port = error.url().port(443)
-            addr = self.host if port == 443 else f"{self.host}:{port}"
-            known = set(trust.store().for_addr(addr).values())
-            if der and known and fingerprint(der) not in known:
-                error.rejectCertificate()
-                return
-            error.acceptCertificate()
-
-        def createWindow(self, _type):
-            return self.popup()
-
-
+def bmc_cert(host, error):
+    """Nur das Zertifikat des gewählten BMC annehmen – und nur, wenn es zum gemerkten Fingerabdruck passt
+    (trust.py). Ein fremdes Zertifikat unter derselben Adresse wird abgelehnt."""
+    if error.url().host() != host:
+        error.rejectCertificate()
+        return
+    try:
+        chain = error.certificateChain()
+        der = bytes(chain[0].toDer()) if chain else b""
+    except Exception:
+        der = b""
+    port = error.url().port(443)
+    addr = host if port == 443 else f"{host}:{port}"
+    known = set(trust.store().for_addr(addr).values())
+    if der and known and fingerprint(der) not in known:
+        error.rejectCertificate()
+        return
+    error.acceptCertificate()
 
 
 class ConsoleMixin:
@@ -1005,10 +1045,8 @@ class ConsoleMixin:
 
         self.con_stack = QStackedWidget()
         self.con_web_tabs = None
+        self.con_profile = None                                 # Chromium-Profil: erst bei der ersten Web-Konsole
         if WEBENGINE:
-            self.con_profile = QWebEngineProfile(self)          # ohne Namen: nichts wird auf Platte gelegt
-            self.con_profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
-            self.con_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
             self.con_web_tabs = QTabWidget()
             self.con_web_tabs.setTabsClosable(True)
             self.con_web_tabs.tabCloseRequested.connect(self.console_close_tab)
@@ -1562,7 +1600,7 @@ class ConsoleMixin:
 
     # ---------- Eingebettete Web-Konsole ----------
     def console_open_web(self, ip, user, pw, vendor, tls):
-        if not WEBENGINE:
+        if not WEBENGINE or _web() is None:
             self.console_fail(T("QtWebEngine fehlt, siehe Hinweis unten. Alternativ „Text“ oder „Standardbrowser“ wählen."))
             return
         if tls_blocks_chromium(tls):
@@ -1583,12 +1621,17 @@ class ConsoleMixin:
         self.console_set_status(T("Verbunden mit {0}. Anmeldung läuft; danach bleibt die Verwaltungsseite des BMC offen.").format(ip))
 
     def console_new_view(self, ip):
-        view = QWebEngineView()
-        page = BmcPage(self.con_profile, ip, self.console_popup, view)
+        web = _web()
+        if self.con_profile is None:
+            self.con_profile = web.Profile(self)                # ohne Namen: nichts wird auf Platte gelegt
+            self.con_profile.setHttpCacheType(web.Profile.HttpCacheType.MemoryHttpCache)
+            self.con_profile.setPersistentCookiesPolicy(web.Profile.PersistentCookiesPolicy.NoPersistentCookies)
+        view = web.View()
+        page = web.BmcPage(self.con_profile, ip, self.console_popup, view)
         view.setPage(page)
         s = page.settings()
-        s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
-        s.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+        s.setAttribute(web.Settings.WebAttribute.JavascriptCanAccessClipboard, True)
+        s.setAttribute(web.Settings.WebAttribute.FullScreenSupportEnabled, True)
         page.fullScreenRequested.connect(lambda r: r.accept())
         return view
 
