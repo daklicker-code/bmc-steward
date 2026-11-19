@@ -999,6 +999,24 @@ class TestTestlabTab(unittest.TestCase):
         self.assertIn("schon in der Liste", w.status.text(), "stille Übernahme ohne Wirkung ist verboten")
         w.vbmc_show_state([])
 
+    def test_adopt_info_box_explains_new_ip_choice(self):
+        """Der Knopf ⓘ neben „Neue IP“ öffnet eine einfache Erklärung; er gibt es nur im Loopback-Modus."""
+        from unittest import mock
+        from PyQt6.QtWidgets import QMessageBox
+        w = self.w
+        shown = {}
+
+        def fake_exec(box):
+            shown["title"], shown["text"] = box.windowTitle(), box.text()
+            return 0
+        with mock.patch.object(QMessageBox, "exec", fake_exec):
+            w.vbmc_adopt_info_btn.click()
+        self.assertIn("Neue IP", shown["title"])
+        for wort in ("Übungsadressen", "echten Netz", "Probelauf", "Hausnummer"):
+            self.assertIn(wort, shown["text"])
+        self.assertNotIn("scharfe Migration", "".join(w.vbmc_adopt_mode.itemText(i)
+                                                      for i in range(w.vbmc_adopt_mode.count())))
+
     def test_adopt_net_mode_survives_broken_network_detection(self):
         """Windows: ipconfig-Ausgabe mit Umlaut-Bytes darf die Übernahme im Netz-Modus nicht still scheitern lassen."""
         from unittest import mock

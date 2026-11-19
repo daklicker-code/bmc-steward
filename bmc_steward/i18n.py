@@ -1112,10 +1112,35 @@ TR = {
 "Saisit les serveurs en marche sélectionnés (sans sélection : tous) avec leur adresse actuelle et leur mot de passe d'usine dans la liste et propose de nouvelles adresses.",
 "Treit di markierte (ohni Markierig: alli) laufende Server mit ihrer aktuelle Adrässe und ihrem Werkspasswort i d Serverlischte ii und schlaat neui Adrässe vor."
 ],
-"Nur im Loopback-Modus. Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit deinem Präfix vorgefüllt (nur Trockenlauf). Loopback: die neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft.": [
-"Loopback mode only. Real network: gateway/subnet are detected and the new IP is prefilled with your prefix (dry run only). Loopback: the new IP stays on 127.x:port so that a live run also completes green.",
-"Mode loopback uniquement. Réseau réel : passerelle/sous-réseau détectés et nouvelle IP préremplie avec votre préfixe (simulation seulement). Loopback : la nouvelle IP reste sur 127.x:port pour qu'une exécution réelle passe aussi au vert.",
-"Nume im Loopback-Modus. Ächts Netz: Gateway/Subnetz wärded erkännt und di neu IP mit dim Präfix vorgfüllt (nume Trochelauf). Loopback: di neu IP blibt uf 127.x:Port, damit au en schaarfe Lauf grüen durelauft."
+"Neue IP: aus meinem echten Netz (nur Probelauf)": [
+"New IP: from my real network (trial run only)",
+"Nouvelle IP : de mon réseau réel (essai seulement)",
+"Neui IP: us mim würkliche Netz (nume Probelauf)"
+],
+"Neue IP: Übungsadressen (alles klappt)": [
+"New IP: practice addresses (everything works)",
+"Nouvelle IP : adresses d'entraînement (tout fonctionne)",
+"Neui IP: Übigsadrässe (alles klappet)"
+],
+"Welche neue IP soll vorgeschlagen werden? Ein Klick auf ⓘ erklärt es einfach.": [
+"Which new IP should be suggested? Click ⓘ for a simple explanation.",
+"Quelle nouvelle IP proposer ? Un clic sur ⓘ l'explique simplement.",
+"Weli neu IP söll vorgschlage wärde? E Klick uf ⓘ erklärt s eifach."
+],
+"Erklärung zur neuen IP": [
+"Explanation of the new IP",
+"Explication de la nouvelle IP",
+"Erklärig zur neue IP"
+],
+"Neue IP – was bedeutet das?": [
+"New IP – what does that mean?",
+"Nouvelle IP – qu'est-ce que cela signifie ?",
+"Neui IP – was heisst das?"
+],
+"<p><b>Worum geht es?</b> Die virtuellen Server sind wie Spielzeug-Server in deinem Computer. Mit „In Serverliste übernehmen“ trägst du sie in die Liste „Neuware“ ein, so als wären es echte Server, die du einrichten willst. Dabei denkt sich das Tool für jeden Server eine <b>neue IP-Adresse</b> aus. Eine IP-Adresse ist wie die Hausnummer des Servers: Darüber findet man ihn.</p><p>Du bestimmst, welche Art von neuer Adresse vorgeschlagen wird:</p><p><b>Übungsadressen</b> (alles klappt)<br>Die neue Adresse bleibt auf deinem Computer (127.9.0.51:8443 …). Das ist, als würde der Server nur in ein anderes Zimmer im selben Haus ziehen: Er verlässt das Haus nie, deshalb findet das Tool ihn sofort wieder. Du kannst <b>richtig scharf</b> starten, und am Ende steht alles auf Grün. Gut zum Üben und Vorführen.</p><p><b>Aus meinem echten Netz</b> (nur Probelauf)<br>Das Tool schaut, wie dein richtiges Netzwerk aussieht (Adresse des Routers und Netzmaske) und schlägt Adressen daraus vor. Du trägst nur noch die letzte Zahl ein. Das ist, als würdest du den Umzug in eine echte Stadt nur auf dem Papier planen. Die Spielzeug-Server können dort nicht wirklich einziehen, darum geht hier nur der <b>Probelauf</b>: Du siehst, was das Tool tun würde, aber es wird nichts verändert.</p><p><b>Tipp:</b> Nimm die Übungsadressen, wenn du das ganze Tool einmal richtig durchspielen willst. Nimm das echte Netz, wenn du prüfen willst, ob deine geplanten Adressen und die Netzmaske sinnvoll aussehen.</p><p><i>Diese Auswahl gibt es nur im Modus „Loopback“. In den anderen Modi (Konfigraum, Zuhause/Router) schlägt das Tool die neue Adresse automatisch passend zum Netz vor.</i></p>": [
+"<p><b>What is this about?</b> The virtual servers are like toy servers inside your computer. With “Add to server list” you put them into the “New hardware” list, as if they were real servers you want to set up. For each server the tool then thinks up a <b>new IP address</b>. An IP address is like the server's house number: it is how others find it.</p><p>You choose what kind of new address is suggested:</p><p><b>Practice addresses</b> (everything works)<br>The new address stays on your own computer (127.9.0.51:8443 …). It is like the server moving to another room in the same house: it never leaves the house, so the tool finds it again right away. You can start <b>for real</b>, and in the end everything is green. Great for practising and demos.</p><p><b>From my real network</b> (trial run only)<br>The tool looks at what your real network looks like (router address and netmask) and suggests addresses from it. You only type the last number. It is like planning a move to a real city on paper only. The toy servers cannot really move in there, so only the <b>trial run</b> works: you see what the tool would do, but nothing is changed.</p><p><b>Tip:</b> take the practice addresses to play through the whole tool once. Take the real network to check whether your planned addresses and netmask look sensible.</p><p><i>This choice only exists in “Loopback” mode. In the other modes (Config room, Home/router) the tool suggests the new address to fit the network automatically.</i></p>",
+"<p><b>De quoi s'agit-il ?</b> Les serveurs virtuels sont comme des serveurs jouets dans ton ordinateur. Avec « Reprendre dans la liste », tu les mets dans la liste « Matériel neuf », comme s'il s'agissait de vrais serveurs à configurer. Pour chaque serveur, l'outil invente alors une <b>nouvelle adresse IP</b>. Une adresse IP, c'est comme le numéro de maison du serveur : c'est par là qu'on le trouve.</p><p>Tu choisis quel genre de nouvelle adresse est proposé :</p><p><b>Adresses d'entraînement</b> (tout fonctionne)<br>La nouvelle adresse reste sur ton ordinateur (127.9.0.51:8443 …). C'est comme si le serveur déménageait dans une autre pièce de la même maison : il ne quitte jamais la maison, donc l'outil le retrouve tout de suite. Tu peux démarrer <b>pour de vrai</b>, et à la fin tout est au vert. Idéal pour s'entraîner et faire des démos.</p><p><b>De mon réseau réel</b> (essai seulement)<br>L'outil regarde à quoi ressemble ton vrai réseau (adresse du routeur et masque) et propose des adresses à partir de là. Tu n'as plus qu'à saisir le dernier chiffre. C'est comme planifier sur le papier un déménagement dans une vraie ville. Les serveurs jouets ne peuvent pas vraiment y emménager, donc seul l'<b>essai</b> fonctionne : tu vois ce que l'outil ferait, mais rien n'est modifié.</p><p><b>Astuce :</b> prends les adresses d'entraînement pour jouer tout l'outil une fois. Prends le réseau réel pour vérifier si tes adresses prévues et le masque ont l'air raisonnables.</p><p><i>Ce choix n'existe qu'en mode « Loopback ». Dans les autres modes (Salle de config, Maison/routeur), l'outil propose automatiquement l'adresse adaptée au réseau.</i></p>",
+"<p><b>Um was gaht es?</b> D virtuelle Server sind wie Spielzüg-Server i dim Computer. Mit „I Serverlischte übernäh“ träisch si i d Lischte „Neuwar“ ii, so wie wenn es würkligi Server wäred, wo du iirichte wotsch. Debi tänkt sich s Tool für jede Server e <b>neui IP-Adrässe</b> us. E IP-Adrässe isch wie d Husnummere vom Server: Dermit findet me en.</p><p>Du bestimmsch, weli Art vo neuer Adrässe vorgschlage wird:</p><p><b>Übigsadrässe</b> (alles klappet)<br>D neu Adrässe blibt uf dim Computer (127.9.0.51:8443 …). S isch, wie wenn de Server nume i es anders Zimmer im gliiche Huus zügle würd: Er verlaat s Huus nie, drum findet s Tool en grad wider. Du chasch <b>richtig schaarf</b> starte, und am Schluss isch alles grüen. Guet zum Üebe und Vorfüehre.</p><p><b>Us mim würkliche Netz</b> (nume Probelauf)<br>S Tool luegt, wie din würklich Netzwärch uusgseht (Adrässe vom Router und Netzmaske) und schlaat Adrässe dervo vor. Du träisch nume na di letscht Zahl ii. S isch, wie wenn du de Umzug i e würklichi Stadt nume uf em Papier planisch. D Spielzüg-Server chönd det nöd würkli ziehe, drum gaht da nume de <b>Probelauf</b>: Du gsesch, was s Tool würd mache, aber es wird nüt veränderet.</p><p><b>Tipp:</b> Nimm d Übigsadrässe, wenn du s ganz Tool emal richtig düreschpile wotsch. Nimm s würklich Netz, wenn du prüefe wotsch, öb dini planete Adrässe und d Netzmaske sinnvoll uusgsehnd.</p><p><i>Die Uswahl gits nume im Modus „Loopback“. I de andere Modi (Konfigruum, Zueheim/Router) schlaat s Tool di neu Adrässe automatisch passend zum Netz vor.</i></p>"
 ],
 "Szenario speichern": [
 "Save scenario",
@@ -1461,21 +1486,6 @@ TR = {
 "{0} servers added (loopback). Set the new user/password above. Factory login(s): {1}.",
 "{0} serveurs ajoutés (loopback). Renseignez le nouvel utilisateur/mot de passe ci-dessus. Identifiant(s) d'usine : {1}.",
 "{0} Server übernoh (Loopback). Obe de neu Benutzer/Passwort setze. Werks-Login(s): {1}."
-],
-"Neue IP: echtes Netz (Router) – zum Üben": [
-"New IP: real network (router) – for practice",
-"Nouvelle IP : réseau réel (routeur) – pour s'entraîner",
-"Neui IP: echts Netz (Router) – zum Üebe"
-],
-"Neue IP: Loopback – scharfe Migration läuft grün": [
-"New IP: loopback – live migration passes green",
-"Nouvelle IP : loopback – la migration réelle passe au vert",
-"Neui IP: Loopback – scharfi Migration lauft grüen"
-],
-"Echtes Netz: Gateway/Subnetz werden erkannt und die neue IP mit deinem Präfix vorgefüllt (ideal für Trockenlauf). Loopback: die neue IP bleibt auf 127.x:Port, damit auch ein scharfer Lauf grün durchläuft.": [
-"Real network: gateway/subnet are detected and the new IP is prefilled with your prefix (ideal for a dry run). Loopback: the new IP stays on 127.x:port so a live run also passes green.",
-"Réseau réel : la passerelle/le sous-réseau sont détectés et la nouvelle IP est préremplie avec votre préfixe (idéal pour une simulation). Loopback : la nouvelle IP reste sur 127.x:port pour qu'un vrai run passe aussi au vert.",
-"Echts Netz: Gateway/Subnetz werdet erkennt und d neui IP wird mit dim Präfix vorgfüllt (ideal für de Troggelauf). Loopback: d neui IP bliibt uf 127.x:Port, dass au en scharfe Lauf grüen durelauft."
 ],
 "{0} Server übernommen. Netz erkannt (Gateway {1}, Maske {2}); bei „Neue IP“ nur noch die letzte Ziffer eintragen und oben Benutzer/Passwort setzen.": [
 "{0} servers added. Network detected (gateway {1}, mask {2}); for “New IP” just enter the last digit and set user/password above.",
