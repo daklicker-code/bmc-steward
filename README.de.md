@@ -257,9 +257,20 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
 - Eine gespeicherte Liste enthält Passwörter nur auf ausdrücklichen Wunsch, dann im Klartext. So eine Datei
   nach dem Rollout löschen.
 
-## Lizenz
+## Lizenz, Haftung und Marken
 
-MIT, siehe [LICENSE](LICENSE). Die Software kommt ohne Gewähr; die Nutzung erfolgt auf eigenes Risiko.
+MIT, siehe [LICENSE](LICENSE). Herkunft des Codes und Lizenzen der Abhängigkeiten: [docs/HERKUNFT.md](docs/HERKUNFT.md).
+BMC-Steward enthält keinen Code und keine Texte der Hersteller.
+
+**Haftungsausschluss.** Die Software wird ohne jede Gewähr bereitgestellt. Der Autor übernimmt keine Haftung für Schäden
+oder Folgen, die durch den Einsatz des Werkzeugs entstehen, und ausdrücklich auch nicht dafür, was andere damit machen
+(einschließlich Konfigurationsfehlern, Datenverlust, Ausfällen, unbefugter oder rechtswidriger Nutzung). Wer das Werkzeug
+einsetzt, handelt auf eigene Verantwortung, prüft vorher mit Trockenlauf und Backup und setzt es nur an Geräten ein, für die
+er berechtigt ist. Soweit zwingendes Recht nichts anderes vorschreibt.
+
+**Marken.** Dell, iDRAC, HPE, iLO, Lenovo, XClarity, Supermicro und weitere genannte Namen sind Marken ihrer jeweiligen
+Inhaber und werden nur beschreibend verwendet. BMC-Steward steht in keiner Verbindung zu diesen Firmen und wird nicht von
+ihnen unterstützt. Der mitgelieferte Simulator verwendet frei erfundene Namen (Böll, Häpe, Venolo, Hypernano).
 
 ## Autor
 

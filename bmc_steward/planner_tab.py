@@ -98,10 +98,11 @@ THEMES = {
                  "QListWidget::item { padding: 3px 6px; } QListWidget::item:selected { background: #1f6b52; }"),
     ),
 }
-STRIPE_COLOR = {"dell": "#2563eb", "hpe": "#01a982", "smc": "#9333ea", "lenovo": "#dc2626", "gen": "#6b7280",
-                "switch": "#0284c7", "fw": "#e11d48", "pdu": "#d97706", "patch": "#64748b", "blank": "#cbd5e1",
-                "netapp": "#0067c5", "atto": "#c8102e", "brocade": "#e35205", "storage": "#0067c5", "shelf": "#51678a",
-                "bridge": "#c8102e"}
+# Eigene, herstellerneutrale Palette (keine Markenfarben): die Streifen unterscheiden nur die Geräteart/Gruppe.
+STRIPE_COLOR = {"dell": "#8a4fc0", "hpe": "#1f8f8f", "smc": "#4a8f2a", "lenovo": "#c9741a", "gen": "#6b7280",
+                "switch": "#0284c7", "fw": "#b0457a", "pdu": "#a07a1a", "patch": "#64748b", "blank": "#cbd5e1",
+                "netapp": "#3b6ea5", "atto": "#8c5a3c", "brocade": "#7a8c2e", "storage": "#3b6ea5", "shelf": "#51678a",
+                "bridge": "#8c5a3c"}
 
 
 def apply_theme(name):

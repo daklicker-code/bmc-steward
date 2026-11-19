@@ -22,6 +22,11 @@ def ssdp_port():
         return 1900
 
 
+def ascii_name(x):
+    """HTTP-/SSDP-Kopfzeilen bleiben ASCII (Umlaute der Fantasienamen werden umschrieben)."""
+    return x.translate(str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}))
+
+
 class Ssdp:
     def __init__(self, bmc, bind_host, port, multicast=False):
         self.bmc, self.stop = bmc, threading.Event()
@@ -78,7 +83,7 @@ class Ssdp:
                 return None
             ans = ST_REDFISH if (st in ("ssdp:all", ST_REDFISH) and redfish) else "upnp:rootdevice"
             return ("HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\n"
-                    f"LOCATION: {loc}\r\nSERVER: {b.gen_label}/{b.fw} UPnP/1.0\r\nST: {ans}\r\n"
+                    f"LOCATION: {loc}\r\nSERVER: {ascii_name(b.gen_label)}/{b.fw} UPnP/1.0\r\nST: {ans}\r\n"
                     f"USN: uuid:{b.sim.inv['uuid']}::{ans}\r\n\r\n")
         return None
 

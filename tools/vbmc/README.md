@@ -1,9 +1,15 @@
 # vbmc – virtuelle BMC-Flotte zum Testen von BMC-Steward
 
-`vbmc.py` erzeugt und startet beliebig viele **virtuelle** Server der Hersteller
-Dell (iDRAC), HPE (iLO), Lenovo (XCC) und Supermicro. Jeder virtuelle Server
-verhält sich nach außen wie ein echter BMC und dient dazu, BMC-Steward zu testen
-und vorzuführen – ohne echte Hardware.
+`vbmc.py` erzeugt und startet beliebig viele **virtuelle** Server der Fantasie-Hersteller
+**Böll**, **Häpe**, **Venolo** und **Hypernano**. Jeder virtuelle Server verhält sich in seiner
+Schnittstelle (Redfish, IPMI, RIBCL) wie ein echter BMC und dient dazu, BMC-Steward zu testen und
+vorzuführen – ohne echte Hardware. Marken, Logos, Oberflächen und Meldungstexte echter Hersteller
+werden **nicht** nachgebildet; Modellnamen tragen ein `_v` (virtuell), z. B. `R6625_v`.
+
+Welches Schnittstellenverhalten welcher Fantasiename zeigt (der interne Profil-Schlüssel steht in Klammern):
+Böll (`dell`) verhält sich in der Schnittstelle wie Geräte von Dell, Häpe (`hpe`) wie Geräte von HPE, Venolo
+(`lenovo`) wie Geräte von Lenovo und Hypernano (`smc`) wie Geräte von Supermicro. Das ist eine rein beschreibende
+Zuordnung, damit BMC-Steward seine Erkennung echter Geräte prüfen kann (siehe `HERKUNFT.md`).
 
 Es ist ein eigenständiges Entwickler-/Test-Werkzeug und nicht Teil der Anwendung.
 
@@ -12,14 +18,14 @@ Es ist ein eigenständiges Entwickler-/Test-Werkzeug und nicht Teil der Anwendun
 
 ## Was nachgebildet wird
 
-* **Redfish über HTTPS** – Herstellererkennung (`/redfish/v1/`, bei iLO 3/4 über
+* **Redfish über HTTPS** – Herstellererkennung (`/redfish/v1/`, bei den alten Häpe-Generationen 3/4 über
   `/xmldata` + RIBCL), Benutzer anlegen/ändern, Hostname, DHCP aus + statische IP,
   UEFI/BIOS-Attribute lesen/schreiben, NTP/Syslog/LDAP/Zertifikat, Power/Reset.
 * **Echter Adresswechsel** – beim Umkonfigurieren zieht der Server tatsächlich auf
   die neue IP um, sodass Kontroll- und Inventarphase von BMC-Steward durchlaufen.
 * **Echtes SSH und IPMI-Serial-over-LAN** für die UEFI-/Text-Konsole (Modus
-  `--console`): SSH (paramiko) für Dell/HPE/Lenovo, IPMI-SOL (pyghmi) für
-  Supermicro – genau die Zuordnung, die BMC-Steward automatisch wählt.
+  `--console`): SSH (paramiko) für Böll/Häpe/Venolo, IPMI-SOL (pyghmi) für
+  Hypernano – genau die Zuordnung, die BMC-Steward automatisch wählt.
 
 ## Voraussetzungen
 
@@ -42,7 +48,7 @@ Die Server laufen auf `127.x`-Adressen mit hohem Port (Vorgabe **8443**).
 python3 vbmc.py --preset                 # je ein Server pro Hersteller (Port 8443)
 python3 vbmc.py dell hpe lenovo smc        # eigene Auswahl, Adressen automatisch
 python3 vbmc.py dell@127.9.0.11 hpe@127.9.0.12:8443
-python3 vbmc.py --vendor dell --count 5    # 5 Dell-iDRACs
+python3 vbmc.py --vendor dell --count 5    # 5 virtuelle Böll-Server
 python3 vbmc.py --config fleet.example.json
 python3 vbmc.py --preset --interactive     # Steuerkonsole: add / list / rm / quit
 sudo python3 vbmc.py --preset --console    # zusätzlich SSH (22), IPMI (623), Redfish (443)
@@ -87,7 +93,7 @@ Ein Szenario ist eine JSON-Datei (der Testlabor-Reiter liest und schreibt dassel
 
 ```json
 {"mode": "rz", "host_addrs": "192.168.0.1/24", "servers": [
-  {"vendor": "dell", "gen": "idrac9", "serial": "CN7RZ01", "password": "Dell4711Rz"},
+  {"vendor": "dell", "gen": "idrac9", "serial": "CN7RZ01", "password": "Boell4711Rz"},
   {"vendor": "dell", "serial": "CN7FIX1", "net": "static", "ip": "192.168.0.120"},
   {"vendor": "dell", "gen": "idrac8_alt", "serial": "CN7OLD1"},
   {"vendor": "dell", "serial": "CN7SLOT", "busy_slots": {"3": "operator"}},
@@ -99,11 +105,11 @@ Ein Szenario ist eine JSON-Datei (der Testlabor-Reiter liest und schreibt dassel
   HPE `ilo6`/`ilo5`/`ilo4`/`ilo3` (iLO 3/4 über RIBCL, iLO 3 ohne Redfish und mit TLS 1.0, sofern
   OpenSSL es noch zulässt), Lenovo `xcc3`/`xcc2`/`xcc1`, Supermicro `x13`/`x12`/`x11`.
 * `net`/`ip`/`mask`/`gw`: Werkszustand (`dhcp` oder `static`); nur im Netzlabor wirksam.
-* `busy_slots`: Dell-User-Slots, die schon ein anderer Benutzer belegt.
+* `busy_slots`: Böll-User-Slots, die schon ein anderer Benutzer belegt.
 * `license`: `"none"` startet den Server ohne Lizenz (Virtual Media und Konsole gesperrt), sonst voll lizenziert.
 * `user`/`password`, `model`, `serial`, `mac`: Werks-Login, Typenschild, Kennung.
 
-Beispiele in `szenarien/`: gemischte Konfigraum-Flotte, zwei Dells mit derselben festen Werks-IP,
+Beispiele in `szenarien/`: gemischte Konfigraum-Flotte, zwei Böll-Server mit derselben festen Werks-IP,
 Sonderfälle (alte Firmware, belegter Slot, iLO 3/4), Heimnetz am Router, Loopback-Schnelltest.
 
 Für den Testlabor-Reiter gibt es zusätzlich `--state` (Zustand als `@@STATE`-JSON-Zeilen) und
@@ -136,41 +142,34 @@ Jeder virtuelle Server verhält sich wie ein laufendes Gerät, nicht nur wie ein
 * **Weboberfläche je Hersteller** (`vbsim/webui/`): Anmeldung über eine Redfish-Session (Cookie
   `sessionKey`/`X-Auth-Token`), danach Übersicht, Systeminformationen, Power-Steuerung, Temperaturen/Lüfter,
   Ereignisprotokoll, Netzwerk, Benutzer, Firmware, BIOS. Layout, Menüs und Begriffe unterscheiden sich je
-  Hersteller (iLO: Menü links; iDRAC und Supermicro: Reiter oben; XCC: dunkles Menü links). Die Seiten
+  Hersteller (Häpe: Menü links; Böll und Hypernano: Reiter oben; Venolo: dunkles Menü links). Die Seiten
   lesen dieselben Redfish-Endpunkte, die auch BMC-Steward benutzt; was das Tool ändert, ist sofort sichtbar.
 * **Remote-Konsole** (`vbsim/console.py`): Text-Bildschirm je Zustand (kein Signal, POST mit
-  Fortschritt, Kernelmeldungen, Login-Prompt). Im POST öffnet die herstellertypische Taste (iLO F9, iDRAC F2,
-  XCC F1, Supermicro Entf) ein bedienbares Setup; Änderungen landen in den BIOS-Attributen.
+  Fortschritt, Kernelmeldungen, Login-Prompt). Im POST öffnet die profiltypische Taste (Häpe F9, Böll F2,
+  Venolo F1, Hypernano Entf) ein bedienbares Setup; Änderungen landen in den BIOS-Attributen.
 * Zeitverhalten über `VBMC_TIME_SCALE` (Standard 1; 0.2 = fünfmal schneller, 0 = sofort).
 * Alle Seiten tragen den Hinweis „Simulierter Server“; es werden keine Hersteller-Logos nachgebaut.
 
-Ab 1.7: **herstellernahe Oberflächen.** Jeder Skin folgt dem Bedienkonzept des Originals:
+**Oberflächen.** Es gibt vier Darstellungsvarianten (Layout, Menüaufbau, Farbe), je eine pro Fantasie-Hersteller.
+Alle Texte, Menü- und Aktionsnamen, Farben und Symbole sind selbst gestaltet.
 
 | Profil | Rahmen | Startseite | Konsole |
 |---|---|---|---|
-| Dell (iDRAC9-Stil) | dunkle Kopfleiste, Menü oben mit Aufklappern, große Seitentitel mit Reitern | Dashboard: Systemzustand je Komponente, Systeminformationen, Konsolenvorschau, letzte Protokolleinträge, Power-Aufklapper, „Identify System“ | Menü Boot/Power/Keyboard/… (Boot setzt den einmaligen Start) |
-| HPE (iLO-5/6-Stil) | helle Navigation links mit Symbolen und Konsolen-Miniatur, Titel „Gruppe - Seite“, Reiter | Information/Status in zwei Spalten, Symbole für Power/Zustand/UID oben rechts | Power Switch/Virtual Drives/Keyboard |
-| Lenovo (XCC2-Stil) | dunkle Kopfleiste, dunkle Navigation links mit Untermenüs | Zustandskacheln + aktive Ereignisse, Systeminformationen, Schnellaktionen, Konsolenvorschau, Leistungsbalken | Screen Capture/Keyboard/Power/… |
-| Supermicro (klassisch) | Banner, blaue Menüleiste, graue Untermenü-Spalte, blaue Titel mit Beschreibung | Summary, Konsolenvorschau, „Power Control via IPMI“ | Virtual Media/Macro/Options/Power Control/Exit |
+| Böll | dunkle Kopfleiste, Menü oben mit Aufklappern, große Seitentitel mit Reitern | Dashboard: Zustand je Komponente, Systeminformationen, Konsolenvorschau, letzte Einträge, Power-Aufklapper | Boot/Power/Tastatur/Vollbild |
+| Häpe | helle Navigation links mit Symbolen und Konsolen-Miniatur, Titel „Gruppe - Seite“, Reiter | Information/Status in zwei Spalten, Symbole für Power/Zustand/UID oben rechts | Power/Media/Tastatur |
+| Venolo | dunkle Kopfleiste, dunkle Navigation links mit Untermenüs | Zustandskacheln + aktive Ereignisse, Systeminformationen, Schnellaktionen, Konsolenvorschau | Screenshot/Tastatur/Power |
+| Hypernano | Banner, Menüleiste, graue Untermenü-Spalte, Titel mit Beschreibung | Übersicht, Konsolenvorschau, Stromsteuerung | Media/Macro/Options/Power/Exit |
 
-Ab 1.8 je Generation eigene Varianten (Auswahl automatisch über die Generation des Servers):
+Je Generation gibt es eigene Varianten (Auswahl automatisch über die Generation des Servers): Böll 8 (Baum-Navigation
+links), Häpe 3/4 (Abschnittsbalken links), Venolo 1 (helle Navigation) und Hypernano 13 (dunkle Navigation).
 
-| Generation | Rahmen |
-|---|---|
-| Dell iDRAC8 | Baum-Navigation links (Server / Controller Settings / Hardware / Storage), Reiter als Karteikarten, graublaue Verläufe |
-| HPE iLO 4 (auch iLO 3) | graue Abschnittsbalken links mit Unterpunkten, dunkle Titelleiste, blaue Reiter |
-| Lenovo XCC1 | wie XCC2, aber helle Navigation und flache Kästen |
-| Supermicro X13/H13 | neue Oberfläche: dunkelblaue Navigation links, weiße Kopfleiste, abgerundete Kacheln |
+Häpe 3 hat im Simulator kein Redfish; die Anmeldeseite erscheint, die Verwaltungsoberfläche bleibt dort leer.
 
-iLO 3 hat im Simulator kein Redfish; die Anmeldeseite erscheint, die Verwaltungsoberfläche bleibt dort leer.
-
-Rechtliche Leitplanken (in `vbsim/webui/engine.py` dokumentiert, beim Weiterbauen beibehalten): kein Logo,
-keine Wortmarke, keine Hersteller-Schrift, -Grafik oder -Icons (alle Symbole sind eigene SVG-Formen); kein
-Code/CSS aus Hersteller-Firmware; Seitentitel sind Gattungsbegriffe („Remote Access Controller“,
-„Lights-Out Management“, „Systems Management Controller“, „Baseboard Management Controller“); Markennamen
-erscheinen nur beschreibend im Simulationshinweis („Dell iDRAC9-Profil“); Farben angelehnt, nicht die exakten
-Markenfarben; jede Seite inklusive Anmeldung und Konsole zeigt „SIMULATION“. Die Redfish-Daten (Modell,
-Manager-Modell, Lizenzname) bleiben wie gehabt, weil BMC-Steward sie zur Erkennung braucht.
+Leitplanken (in `vbsim/webui/engine.py` dokumentiert, beim Weiterbauen beibehalten): kein Logo, keine Wortmarke,
+keine Schrift, Grafik, kein Icon, kein Farbschema, kein Text und kein Code echter Hersteller; Markennamen echter
+Hersteller kommen in der Oberfläche nicht vor; jede Seite inklusive Anmeldung und Konsole zeigt „SIMULATION“. Die
+Protokoll-Kennungen (Redfish-Herstellerfeld, OEM-Schlüssel, `/xmldata`) bleiben wie bei echten Geräten, weil
+BMC-Steward sie zur Erkennung braucht; sie sind Bezeichner der Schnittstelle, kein Herstellercode.
 
 Ab 1.5 zusätzlich:
 
@@ -182,8 +181,8 @@ Ab 1.5 zusätzlich:
   zeigt das Installationsmenü), `Pxe` zeigt einen fehlgeschlagenen Netzwerkstart, `BiosSetup` hält den
   Start im BIOS-Setup an, bis man es in der Konsole mit Esc verlässt. Genau das nutzt „Ins UEFI-Setup booten“
   im Tool. `Once` wird beim Start verbraucht.
-* **Lizenzen** (Redfish `LicenseService`, Seite „Lizenz“): Ohne Lizenz (iLO Standard, iDRAC Basic, XCC Standard,
-  Supermicro ohne Schlüssel) sind Virtual Media und Remote-Konsole gesperrt (HTTP 403 bzw. Hinweisseite), wie bei
+* **Lizenzen** (Redfish `LicenseService`, Seite „Lizenz“): Ohne Lizenz (Häpe Standard, Böll Basic, Venolo Standard,
+  Hypernano ohne Schlüssel) sind Virtual Media und Remote-Konsole gesperrt (HTTP 403 bzw. Hinweisseite), wie bei
   den Originalen. Ein Schlüssel im Format `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX` schaltet die Standard-Vollstufe frei,
   angezeigt wird er maskiert. Start ohne Lizenz: `"license": "none"` im Eintrag der Konfiguration.
 * **RIBCL-Power für iLO 3/4:** `GET_HOST_POWER_STATUS`, `SET_HOST_POWER`, `PRESS_PWR_BTN`, `HOLD_PWR_BTN`,

@@ -1,5 +1,5 @@
 [
-  {"vendor": "dell",     "host": "127.9.0.11", "port": 8443, "serial": "CN7712345A1", "model": "PowerEdge R6625"},
+  {"vendor": "dell",     "host": "127.9.0.11", "port": 8443, "serial": "CN7712345A1", "model": "R6625_v"},
   {"vendor": "hpe",      "host": "127.9.0.12", "port": 8443},
   {"vendor": "lenovo",   "host": "127.9.0.13", "port": 8443},
   {"vendor": "smc",      "host": "127.9.0.14", "port": 8443},

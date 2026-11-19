@@ -9,7 +9,8 @@ from . import netscan
 from .i18n import T
 
 COLS = ("Adresse", "Hersteller", "Produkt", "Seriennummer", "Web", "IPMI", "MAC", "Hinweis")
-VENDOR_COLOR = {"dell": "#2d6cdf", "hpe": "#1faa7a", "hpe_old": "#1faa7a", "smc": "#d9822b", "lenovo": "#c0392b",
+# Eigene Palette, keine Markenfarben
+VENDOR_COLOR = {"dell": "#8a4fc0", "hpe": "#1f8f8f", "hpe_old": "#1f8f8f", "smc": "#4a8f2a", "lenovo": "#c9741a",
                 "ipmi": "#8e7cc3"}
 
 

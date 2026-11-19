@@ -117,8 +117,8 @@ def screen(bmc):
 
 def _post_header(bmc):
     fam = bmc.family
-    title = {"hpe": bmc.model, "dell": f"Dell {bmc.model}", "lenovo": f"Lenovo {bmc.model}",
-             "smc": f"Supermicro {bmc.model}"}[fam]
+    title = {"hpe": f"Häpe {bmc.model}", "dell": f"Böll {bmc.model}", "lenovo": f"Venolo {bmc.model}",
+             "smc": f"Hypernano {bmc.model}"}[fam]
     return [f"  {title}", f"  Serial Number: {bmc.serial}      BIOS {bmc.sim.inv['bios_ver']} "
                           f"{bmc.sim.inv['bios_date']}"]
 

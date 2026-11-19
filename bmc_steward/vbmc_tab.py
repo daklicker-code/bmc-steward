@@ -6,7 +6,7 @@ startet, überwacht und stoppt sie. Drei Netz-Modi:
   router    Zuhause: Server hängen an der Kabel-Netzwerkkarte, Adresse vom Router (z. B. FritzBox)
 
 Jeder Server ist einzeln einstellbar (Hersteller, Firmware-Generation, Werkszustand Netz, Werks-Login,
-Modell/Seriennummer, belegter Dell-Slot); die Zusammenstellung lässt sich als Szenario speichern und
+Modell/Seriennummer, belegter Böll-Slot); die Zusammenstellung lässt sich als Szenario speichern und
 genauso wieder laden. Gleiche Seriennummer = gleiche MAC = der Router vergibt dieselbe Adresse."""
 import ipaddress
 import json
@@ -31,18 +31,18 @@ from .i18n import HERE, T
 from .core import WINDOWS, local_network
 
 # Muss zu tools/vbmc/vbmc.py passen (GENS / FACTORY)
-VENDORS = [("dell", "Dell (iDRAC)"), ("hpe", "HPE (iLO)"), ("lenovo", "Lenovo (XCC)"), ("smc", "Supermicro")]
+VENDORS = [("dell", "Böll"), ("hpe", "Häpe"), ("lenovo", "Venolo"), ("smc", "Hypernano")]
 GENS = {
-    "dell": [("idrac9", "iDRAC9"), ("idrac10", "iDRAC10"), ("idrac8", "iDRAC8"),
-             ("idrac8_alt", "iDRAC8, Firmware zu alt (< 2.50.50.50)")],
-    "hpe": [("ilo6", "iLO 6"), ("ilo5", "iLO 5"), ("ilo4", "iLO 4 (RIBCL)"), ("ilo3", "iLO 3 (RIBCL, TLS 1.0)")],
-    "lenovo": [("xcc2", "XCC2"), ("xcc3", "XCC3"), ("xcc1", "XCC (1. Generation)")],
-    "smc": [("x13", "X13/H13"), ("x12", "X12"), ("x11", "X11")],
+    "dell": [("idrac9", "Böll 9"), ("idrac10", "Böll 10"), ("idrac8", "Böll 8"),
+             ("idrac8_alt", "Böll 8, Firmware zu alt (< 2.50.50.50)")],
+    "hpe": [("ilo6", "Häpe 6"), ("ilo5", "Häpe 5"), ("ilo4", "Häpe 4 (RIBCL)"), ("ilo3", "Häpe 3 (RIBCL, TLS 1.0)")],
+    "lenovo": [("xcc2", "Venolo 2"), ("xcc3", "Venolo 3"), ("xcc1", "Venolo 1")],
+    "smc": [("x13", "Hypernano 13"), ("x12", "Hypernano 12"), ("x11", "Hypernano 11")],
 }
 FACTORY = {"dell": ("root", "calvin"), "hpe": ("Administrator", "Admin123!"),
            "lenovo": ("USERID", "PASSW0RD"), "smc": ("ADMIN", "ADMIN")}
 SERIAL_PREFIX = {"dell": "CN", "hpe": "CZ", "lenovo": "J", "smc": "S"}
-DELL_STATIC = "192.168.0.120"            # Dell ab Werk ohne DHCP
+DELL_STATIC = "192.168.0.120"            # Profil Böll ab Werk ohne DHCP
 
 MODES = [("loopback", "Loopback – ohne Root, nur dieser PC (127.x:Port)"),
          ("rz", "Konfigraum – isolierter Staging-Switch (bmclab0)"),
@@ -142,7 +142,7 @@ class VbmcTabMixin:
         self.vbmc_cfgfile = None
         self.vbmc_run_mode = None
 
-        intro = QLabel(T("Virtuelle Dell/HPE/Lenovo/Supermicro-Server, die sich wie echte BMCs verhalten - zum "
+        intro = QLabel(T("Virtuelle Böll/Häpe/Venolo/Hypernano-Server, die sich wie echte BMCs verhalten - zum "
                          "Testen und Vorführen ohne Hardware. Im Modus Konfigraum oder Router bekommt jeder "
                          "Server eine eigene Netzwerkkarte mit MAC, holt sich per DHCP eine Adresse (oder hat "
                          "eine feste Werks-IP) und zieht beim Umstellen wirklich um."))
@@ -257,14 +257,14 @@ class VbmcTabMixin:
                                                    T("Werks-Benutzer"), T("Werks-Passwort"), T("Modell"),
                                                    T("Seriennummer"), T("Belegter Slot"), T("Lizenz")])
         tips = [T("Hersteller des virtuellen Servers"),
-                T("Firmware-Generation. „iDRAC8, Firmware zu alt“ und iLO 3/4 prüfen die Sonderwege von BMC-Steward."),
-                T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Dell 192.168.0.120). Nur Konfigraum/Router."),
+                T("Firmware-Generation. „Böll 8, Firmware zu alt“ und Häpe 3/4 prüfen die Sonderwege von BMC-Steward."),
+                T("Ab Werk per DHCP oder mit fester Werks-IP (z. B. Böll 192.168.0.120). Nur Konfigraum/Router."),
                 T("Feste Werks-IP (nur bei „Feste IP“)"),
                 T("Werksbenutzer, mit dem BMC-Steward sich anmeldet"),
                 T("Werkspasswort (wie auf dem Aufkleber). Steht beim Übernehmen je Zeile in „Neuware“."),
                 T("Leer = Standardmodell der Generation"),
                 T("Bestimmt auch die MAC-Adresse: gleiche Seriennummer = gleiche MAC = gleiche DHCP-Adresse."),
-                T("Nur Dell: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). "
+                T("Nur Böll: dieser User-Slot ist schon von einem anderen Benutzer belegt (z. B. 3). "
                   "BMC-Steward darf ihn nicht überschreiben."),
                 T("„Ohne Lizenz“: Virtual Media und Remote-Konsole des virtuellen Servers sind gesperrt, bis ein "
                   "Lizenzschlüssel auf seiner Lizenzseite installiert wird.")]

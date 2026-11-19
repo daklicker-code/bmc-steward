@@ -114,7 +114,7 @@ class TestVirtualBmc(unittest.TestCase):
     def test_generations(self):
         b = vbmc.BMC("hpe", "127.0.0.1", 8443, gen="ilo4")
         self.assertEqual(b.vendor, "hpe_old", "iLO 4 läuft über RIBCL")
-        self.assertEqual(b.gen_label, "iLO 4")
+        self.assertEqual(b.gen_label, "Häpe 4")
         b = vbmc.BMC("hpe_old", "127.0.0.1", 8443)
         self.assertEqual(b.gen, "ilo4")
         b = vbmc.BMC("dell", "127.0.0.1", 8443, gen="idrac8_alt")
@@ -567,7 +567,7 @@ class TestVirtualMediaLicenseBoot(_WebBase):
         st, _, body = self._req(p2, "/irc.html", ck)
         self.assertEqual(st, 200)
         self.assertNotIn("/vbsim/console/screen", body, "Konsole ohne Lizenz: nur der Hinweis")
-        self.assertIn("iLO Standard", body)
+        self.assertIn("Häpe Standard", body)
         self.assertEqual(self._req(p2, "/vbsim/console/screen", ck)[0], 403)
 
     def test_license_install_and_remove(self):
