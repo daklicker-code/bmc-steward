@@ -32,6 +32,12 @@ jobs:
       - name: Python-Abhängigkeiten (exakt gepinnt, nur mit passenden Hashes)
         run: pip install --require-hashes -r requirements.lock
 
+      - name: sushy-tools als unabhängige Redfish-Gegenprobe (eigene Umgebung, gepinnt mit Hashes)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/sushy"
+          "$RUNNER_TEMP/sushy/bin/pip" install --require-hashes -r tools/ci/sushy.lock
+          echo "SUSHY_EMULATOR=$RUNNER_TEMP/sushy/bin/sushy-emulator" >> "$GITHUB_ENV"
+
       - name: Prüfsuite (Unit-Tests + Audit + Fuzzing)
         run: python3 tests/run.py --fuzz 20000
 

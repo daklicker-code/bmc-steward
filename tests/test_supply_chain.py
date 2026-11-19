@@ -126,6 +126,14 @@ class TestWorkflows(unittest.TestCase):
             with self.subTest(package=name):
                 self.assertGreater(hashes, 0)
 
+    def test_sushy_counter_check_runs_in_ci_from_hashed_lock(self):
+        wf = (REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        self.assertIn("--require-hashes -r tools/ci/sushy.lock", wf)
+        self.assertIn("SUSHY_EMULATOR=", wf)
+        pkgs = _lock_packages(REPO / "tools" / "ci" / "sushy.lock")
+        self.assertIn("sushy-tools", pkgs)
+        self.assertTrue(all(h > 0 for _, h in pkgs.values()))
+
     def test_release_archive_is_reproducible(self):
         import subprocess
         import tempfile

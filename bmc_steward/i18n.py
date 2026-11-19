@@ -5666,4 +5666,6 @@ TR.update({
 "Zum Einsenden packen …": ["Pack for submission …", "Préparer pour l'envoi …", "Zum Iisände packe …"],
 "Zum Einsenden packen": ["Pack for submission", "Préparer pour l'envoi", "Zum Iisände packe"],
 "{0} Stelle(n) sehen nach Zertifikat, Schlüssel oder E-Mail-Adresse aus.": ["{0} place(s) look like a certificate, key or e-mail address.", "{0} endroit(s) ressemblent à un certificat, une clé ou une adresse e-mail.", "{0} Stell(e) gsehnd us wie Zertifikat, Schlüssel oder E-Mail-Adrässe."],
+"Hersteller nicht erkannt: bitte den Benutzer angeben, dann wird das Gerät als allgemeines Redfish-Gerät aufgenommen.": ["Vendor not recognised: please enter the user, then the device is captured as a generic Redfish device.", "Constructeur non reconnu : indiquez l'utilisateur, l'appareil sera alors capturé comme appareil Redfish générique.", "Hersteller nöd erkannt: bitte de Benutzer aagä, denn wird s Gerät als allgemeins Redfish-Gerät ufgnoh."],
+"Redfish-Gerät (Hersteller unbekannt)": ["Redfish device (vendor unknown)", "Appareil Redfish (constructeur inconnu)", "Redfish-Gerät (Hersteller unbekannt)"],
 })

@@ -142,11 +142,17 @@ class CaptureEngine(RedfishClient):
                 return None, T("Gerät nicht erreichbar.")
             if v == "hpe_old":
                 return None, T("iLO 3/4 kennt kein Redfish: Aufnahme nicht möglich.")
-            if v not in self.NAME:
-                return None, T("Hersteller nicht erkannt (weder iDRAC, iLO, Supermicro noch XCC).")
+            name = self.NAME.get(v)
+            if name is None:
+                # Unbekannter Hersteller mit Redfish: trotzdem aufnehmen – gerade solche Aufnahmen helfen, ein
+                # neues Gerät zu unterstützen. Einen Werks-Benutzernamen gibt es dann nicht.
+                if not user:
+                    return None, T("Hersteller nicht erkannt: bitte den Benutzer angeben, dann wird das Gerät "
+                                   "als allgemeines Redfish-Gerät aufgenommen.")
+                v, name = "generic", T("Redfish-Gerät (Hersteller unbekannt)")
             user = user or self.DEFAULT_USER[v]
             cap = {"meta": {"tool": "BMC-Steward " + __version__, "created": datetime.datetime.now(
-                datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "vendor": v, "vendor_name": self.NAME[v],
+                datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "vendor": v, "vendor_name": name,
                 "host": ip, "redacted": False, "aborted": "", "requests": 0},
                 "tree": {}, "allow": {}, "errors": {}, "skipped": {}}
             self._crawl(cap, ip, user, pw)
@@ -222,6 +228,11 @@ class CaptureEngine(RedfishClient):
         """Modell- und Firmware-Angaben für den Kopf der Aufnahme (nicht persönlich)."""
         tree, meta = cap["tree"], cap["meta"]
         meta["redfish_version"] = str(tree.get(ROOT, {}).get("RedfishVersion", ""))
+        if meta.get("vendor") == "generic":           # Hersteller, wie das Gerät sich selbst nennt
+            root = tree.get(ROOT, {})
+            own = str(root.get("Vendor") or root.get("Product") or "").strip()
+            if own:
+                meta["vendor_name"] = own
         for path, doc in sorted(tree.items()):
             if re.fullmatch(ROOT + r"/Managers/[^/]+", path) and "firmware" not in meta:
                 meta["firmware"] = str(doc.get("FirmwareVersion", ""))

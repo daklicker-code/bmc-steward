@@ -26,6 +26,10 @@ Exit-Code `0` = alles grün, sonst `1` (für CI/Pre-Push geeignet).
 | `test_selfguard.py` | Eigenschutz: Schutzliste, eigene Kennung, Sperre vor UEFI/Firmware/Neustart | Das Tool darf nie den Host abschalten, auf dem es läuft |
 | `test_i18n.py` | Jeder Oberflächentext in allen vier Sprachen, Platzhalter gleich | Keine halb deutschen Meldungen, keine Formatfehler zur Laufzeit |
 | `test_vbmc.py` (Security) | Zertifikats-Fingerabdruck je Gerät, Sessions, ein Anmeldeversuch, Sicherung, Revisionsprotokoll, Härtung | Kein Passwort an ein fremdes Zertifikat, keine Kontosperre, Nachweis jeder Änderung |
+| `test_secrets_in_log.py` | Echte Trocken- und scharfe Läufe gegen virtuelle BMCs aller Hersteller | Kein Passwort im Protokoll, auch nicht auf Stufe Debug |
+| `test_capture_submit.py` | Nachprüfung vor dem Einsenden einer Aufnahme | Keine Seriennummern, Adressen, Zertifikate oder Schlüssel in weitergegebenen Dateien |
+| `test_vbmc_odata.py` | Virtuelle BMCs: jede Ressource typisiert, keine toten Verweise, `$metadata` | Grundlage für den DMTF-Validator in der CI (`tools/ci/validate_vbmc.py`) |
+| `test_sushy.py` | Gegenprobe gegen sushy-tools (OpenStack, unabhängige Redfish-Implementierung) | Unbekannte Geräte: kein falscher Herstellerablauf, Aufnahme und Schwärzung funktionieren |
 | `fuzz.py` | Zufalls-/Kaputtdaten an DHCP- und Scanner-Parser | Kein Absturz durch bösartige Eingaben |
 | `audit.py` | Statische Mustersuche im Quelltext | Shell-Injektion, eval/exec, pickle, unsicheres TLS außerhalb der Ausnahmen |
 
@@ -33,6 +37,11 @@ Exit-Code `0` = alles grün, sonst `1` (für CI/Pre-Push geeignet).
 
 `test_scanner.py` braucht **openssl**; Barcode-/OCR-Fuzzing nutzt **zbarimg**/**tesseract**, falls
 vorhanden. Fehlt eines, wird der betroffene Test übersprungen (nicht als Fehler gewertet).
+
+`test_sushy.py` braucht **sushy-emulator** (Paket `sushy-tools`): Pfad in `SUSHY_EMULATOR` oder im `PATH`.
+Die CI installiert ihn in eine eigene Umgebung aus `tools/ci/sushy.lock`. Lokal z. B.:
+`python3 -m venv /tmp/sushy && /tmp/sushy/bin/pip install --require-hashes -r tools/ci/sushy.lock` und dann
+`SUSHY_EMULATOR=/tmp/sushy/bin/sushy-emulator python3 -m unittest tests.test_sushy`.
 
 Unter CachyOS bei Bedarf: `sudo pacman -S openssl zbar tesseract tesseract-data-eng`
 
