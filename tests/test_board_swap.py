@@ -77,6 +77,18 @@ class TestBackupHelpers(unittest.TestCase):
         self.assertIn("SysInfoSerialNum J300ABCD", lines[1])
         self.assertTrue(all("<Passwort>@10.0.0.9" in x for x in lines))
 
+    def test_lenovo_machine_type_is_compared_too(self):
+        """Stimmt nur die Seriennummer, aber nicht der Maschinentyp, darf der Dialog nicht „stimmt schon“ melden."""
+        from bmc_steward.board_swap import pid_matches
+        res = {"sku": "7X02CTO1WW", "model": "ThinkSystem SR530 -[7X08CTO1WW]-"}
+        self.assertTrue(pid_matches("lenovo", res, "7X02CTO1WW"))                 # SKU
+        self.assertTrue(pid_matches("lenovo", {"sku": "", "model": "ThinkSystem SR530 -[7X08CTO1WW]-"}, "7X08CTO1WW"))
+        self.assertFalse(pid_matches("lenovo", {"sku": "", "model": ""}, "7X02CTO1WW"))   # leeres VPD
+        self.assertFalse(pid_matches("lenovo", {"sku": "7X06CTO1WW", "model": ""}, "7X02CTO1WW"))
+        self.assertTrue(pid_matches("lenovo", {"sku": "", "model": ""}, ""))       # Feld leer: nichts zu prüfen
+        self.assertFalse(pid_matches("hpe", {"sku": "868703-B21"}, "868704-B21"))
+        self.assertTrue(pid_matches("dell", {"sku": "ABC1234"}, "IRGENDWAS"))       # Dell/Supermicro: kein Vergleich
+
 
 class TestBoardSwapLive(_WebBase):
     """Gegen einen virtuellen iLO: lesen, im Trockenlauf nichts ändern, scharf die UEFI-Attribute setzen."""

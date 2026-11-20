@@ -106,6 +106,20 @@ def lenovo_commands(ip, user, mtm, serial):
     return lines
 
 
+def pid_matches(vendor, res, label_pid):
+    """Produkt-ID (HPE) bzw. Maschinentyp/Modell (Lenovo, MTM) vom Aufkleber gegen das, was das Board meldet.
+    Lenovo XCC meldet den MTM als SKU und im Modell als „… -[7X02CTO1WW]-“. Leeres Feld oder ein Hersteller
+    ohne setzbaren Typ (Dell, Supermicro) zählt als passend."""
+    if not label_pid:
+        return True
+    sku, model = str(res.get("sku") or "").upper(), str(res.get("model") or "").upper()
+    if vendor == "hpe":
+        return sku == label_pid
+    if vendor == "lenovo":
+        return label_pid in (sku, model) or f"[{label_pid}]" in model
+    return True
+
+
 class BoardSwapEngine(RedfishClient):
     """Liest die Identität des neuen Boards (nur GET, ein Anmeldeversuch) und setzt bei HPE iLO 5/6 Seriennummer
     und Produkt-ID, die iLO-Lizenz sowie Dienste und UEFI-Attribute aus der Sicherung des alten Boards."""
@@ -706,8 +720,10 @@ class BoardSwapPage(QWidget):
         else:
             self.say(T("  Seriennummer passt nicht: Board meldet „{0}“, Aufkleber „{1}“.").format(ident or "–", label_sn),
                      "warn")
-        if v == "hpe":
-            same = same and (not label_pid or res.get("sku", "").upper() == label_pid)
+        if v in ("hpe", "lenovo") and scen != "server" and not pid_matches(v, res, label_pid):
+            same = False
+            self.say(T("  Produkt-ID/Typ passt nicht: Board meldet „{0}“, Aufkleber „{1}“.").format(
+                res.get("sku") or res.get("model") or "–", label_pid), "warn")
         self.find_backup()
         self.say("")
         self.say(T("Was zu tun ist:"), "head")

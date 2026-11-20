@@ -2421,6 +2421,11 @@ TR = {
 "  Lenovo : le type de machine et le numéro de série ne peuvent être définis qu'une fois, tant que les deux sont vides. Avec le Provisioning Manager (F1 au démarrage, « Update VPD ») ou avec OneCLI :",
 "  Lenovo: Maschinetyp und Säriänummer lönd sich nur eimol setze, solang beidi leer sind. Mit em Provisioning Manager (F1 bim Start, „Update VPD“) oder mit OneCLI:"
 ],
+"  Produkt-ID/Typ passt nicht: Board meldet „{0}“, Aufkleber „{1}“.": [
+"  Product ID/type does not match: board reports “{0}”, label “{1}”.",
+"  L'ID produit/le type ne correspond pas : la carte indique « {0} », l'étiquette « {1} ».",
+"  Produkt-ID/Typ passt nöd: Board meldet „{0}“, Chläber „{1}“."
+],
 "  Seriennummer passt nicht: Board meldet „{0}“, Aufkleber „{1}“.": [
 "  Serial number does not match: board reports “{0}”, label “{1}”.",
 "  Le numéro de série ne correspond pas : la carte indique « {0} », l'étiquette « {1} ».",
