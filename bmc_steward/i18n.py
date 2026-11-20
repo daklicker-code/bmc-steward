@@ -2421,6 +2421,56 @@ TR = {
 "  Lenovo : le type de machine et le numéro de série ne peuvent être définis qu'une fois, tant que les deux sont vides. Avec le Provisioning Manager (F1 au démarrage, « Update VPD ») ou avec OneCLI :",
 "  Lenovo: Maschinetyp und Säriänummer lönd sich nur eimol setze, solang beidi leer sind. Mit em Provisioning Manager (F1 bim Start, „Update VPD“) oder mit OneCLI:"
 ],
+"<Maschinentyp vom Aufkleber>": [
+"<machine type from label>",
+"<type de machine de l'étiquette>",
+"<Maschinetyp vom Chläber>"
+],
+"<Seriennummer vom Aufkleber>": [
+"<serial number from label>",
+"<numéro de série de l'étiquette>",
+"<Säriänummer vom Chläber>"
+],
+"Noch nicht gelesen – erst „Prüfen“.": [
+"Not read yet – “Check” first.",
+"Pas encore lu – d'abord « Vérifier ».",
+"No nöd gläse – zersch „Prüefe“."
+],
+"Was das neue Board meldet (nur gelesen). Mit dem Aufkleber vergleichen; nur bei einer Abweichung die Werte vom Aufkleber in die Felder darunter eintragen.": [
+"What the new board reports (read only). Compare it with the label; only if it differs, enter the label values in the fields below.",
+"Ce que la nouvelle carte indique (lecture seule). Comparer avec l'étiquette ; seulement en cas d'écart, saisir les valeurs de l'étiquette dans les champs ci-dessous.",
+"Was s neue Board meldet (nur gläse). Mit em Chläber vergliiche; nur wänns abwiicht, d Wärt vom Chläber i d Fälder drunder iitrage."
+],
+"Board meldet": [
+"Board reports",
+"La carte indique",
+"Board meldet"
+],
+"nur bei Abweichung: Seriennummer bzw. Service-Tag (Dell)": [
+"only if different: serial number or service tag (Dell)",
+"seulement si différent : numéro de série ou service tag (Dell)",
+"nur wänns abwiicht: Säriänummer bzw. Service-Tag (Dell)"
+],
+"nur bei Abweichung: HPE z. B. 868703-B21 · Lenovo z. B. 7X02CTO1WW": [
+"only if different: HPE e.g. 868703-B21 · Lenovo e.g. 7X02CTO1WW",
+"seulement si différent : HPE p. ex. 868703-B21 · Lenovo p. ex. 7X02CTO1WW",
+"nur wänns abwiicht: HPE z. B. 868703-B21 · Lenovo z. B. 7X02CTO1WW"
+],
+"Aktuelle IP eintragen.": [
+"Enter the current IP.",
+"Saisir l'IP actuelle.",
+"Aktuelli IP iitrage."
+],
+"Seriennummer {0} · Typ {1}": [
+"Serial number {0} · type {1}",
+"Numéro de série {0} · type {1}",
+"Säriänummer {0} · Typ {1}"
+],
+"  Board meldet Seriennummer „{0}“. Mit dem Aufkleber vergleichen; weicht sie ab, die Seriennummer vom Aufkleber eintragen und erneut prüfen.": [
+"  Board reports serial number “{0}”. Compare it with the label; if it differs, enter the serial number from the label and check again.",
+"  La carte indique le numéro de série « {0} ». Comparer avec l'étiquette ; s'il diffère, saisir le numéro de série de l'étiquette et vérifier à nouveau.",
+"  Board meldet Säriänummer „{0}“. Mit em Chläber vergliiche; wänn si abwiicht, d Säriänummer vom Chläber iitrage und nomol prüefe."
+],
 "  Produkt-ID/Typ passt nicht: Board meldet „{0}“, Aufkleber „{1}“.": [
 "  Product ID/type does not match: board reports “{0}”, label “{1}”.",
 "  L'ID produit/le type ne correspond pas : la carte indique « {0} », l'étiquette « {1} ».",
@@ -2455,11 +2505,6 @@ TR = {
 "  would add to the server list: hostname {0}, address {1}",
 "  reprendrait dans la liste des serveurs : nom d'hôte {0}, adresse {1}",
 "  würd i d Serverliste übernäh: Hostname {0}, Adrässe {1}"
-],
-"Aktuelle IP und Seriennummer vom Aufkleber eintragen.": [
-"Enter the current IP and the serial number from the label.",
-"Saisissez l'IP actuelle et le numéro de série de l'étiquette.",
-"Aktuelli IP und Säriänummer vom Chläber iitrage."
 ],
 "Aufkleber am Gehäuse": [
 "Chassis label",
@@ -2530,11 +2575,6 @@ TR = {
 "Check (read only)",
 "Vérifier (lecture seule)",
 "Prüefe (nur läse)"
-],
-"Seriennummer bzw. Service-Tag (Dell)": [
-"Serial number or service tag (Dell)",
-"Numéro de série ou numéro de service (Dell)",
-"Säriänummer bzw. Service-Tag (Dell)"
 ],
 "Trockenlauf (nichts ändern, nur zeigen)": [
 "Dry run (change nothing, only show)",
@@ -5998,7 +6038,6 @@ TR.update({
 'UEFI-Konsole öffnen': ['Open UEFI console', 'Ouvrir la console UEFI', 'UEFI-Konsole öffne'],
 'Öffnet das neue Board in der UEFI-Konsole, z. B. für Dell „Easy Restore“ oder das HPE RBSU. Benutzer und Passwort werden nur in die Felder übernommen.': ['Opens the new board in the UEFI console, e.g. for Dell “Easy Restore” or the HPE RBSU. User and password are only copied into the fields.', 'Ouvre la nouvelle carte dans la console UEFI, p. ex. pour « Easy Restore » de Dell ou le RBSU de HPE. Utilisateur et mot de passe sont seulement copiés dans les champs.', 'Öffnet s neue Board i de UEFI-Konsole, z. B. für Dell „Easy Restore“ oder s HPE RBSU. Benutzer und Passwort wärded nur i d Fälder übernoh.'],
 '3 · Kennung (Aufkleber am Gehäuse)': ['3 · Identity (chassis label)', '3 · Identité (étiquette du châssis)', '3 · Kännig (Chläber am Gehäuse)'],
-'HPE: z. B. 868703-B21 · Lenovo: z. B. 7X02CTO1WW': ['HPE: e.g. 868703-B21 · Lenovo: e.g. 7X02CTO1WW', 'HPE : p. ex. 868703-B21 · Lenovo : p. ex. 7X02CTO1WW', 'HPE: z. B. 868703-B21 · Lenovo: z. B. 7X02CTO1WW'],
 'HPE: Produkt-ID (Product ID) vom Aufkleber.\nLenovo: Maschinentyp und Modell (MTM).\nDell und Supermicro: leer lassen.': ['HPE: product ID from the label.\nLenovo: machine type and model (MTM).\nDell and Supermicro: leave empty.', "HPE : ID produit (Product ID) de l'étiquette.\nLenovo : type et modèle de machine (MTM).\nDell et Supermicro : laisser vide.", 'HPE: Produkt-ID (Product ID) vom Chläber.\nLenovo: Maschinetyp und Modell (MTM).\nDell und Supermicro: leer loh.'],
 'nur bei Ersatzgerät: Seriennummer des alten Servers': ['spare unit only: serial number of the old server', "appareil de rechange seulement : numéro de série de l'ancien serveur", 'nur bim Ersatzgrät: Säriänummer vom alte Server'],
 'Unter dieser Seriennummer sucht das Tool die Sicherung des alten Servers. Die Seriennummer des Ersatzgeräts wird nicht geändert.': ["The tool looks for the old server's backup under this serial number. The serial number of the spare unit is not changed.", "L'outil cherche la sauvegarde de l'ancien serveur sous ce numéro de série. Le numéro de série de l'appareil de rechange n'est pas modifié.", 'Under dere Säriänummer suecht s Tool d Sicherig vom alte Server. D Säriänummer vom Ersatzgrät wird nöd gänderet.'],

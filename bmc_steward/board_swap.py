@@ -96,14 +96,11 @@ def backup_part(doc, suffix):
 
 
 def lenovo_commands(ip, user, mtm, serial):
-    """OneCLI-Befehle für das VPD-Update nach Lenovo-Anleitung; das Passwort steht nie darin."""
+    """OneCLI-Befehle für das VPD-Update nach Lenovo-Anleitung; das Passwort steht nie darin.
+    Beide Werte lassen sich nur einmal setzen; fehlt einer, steht ein Platzhalter darin."""
     bmc = f"--bmc {user}:<Passwort>@{ip}"
-    lines = []
-    if mtm:
-        lines.append(f"onecli config set SYSTEM_PROD_DATA.SysInfoProdName {mtm} {bmc}")
-    if serial:
-        lines.append(f"onecli config set SYSTEM_PROD_DATA.SysInfoSerialNum {serial} {bmc}")
-    return lines
+    return [f"onecli config set SYSTEM_PROD_DATA.SysInfoProdName {mtm or T('<Maschinentyp vom Aufkleber>')} {bmc}",
+            f"onecli config set SYSTEM_PROD_DATA.SysInfoSerialNum {serial or T('<Seriennummer vom Aufkleber>')} {bmc}"]
 
 
 def pid_matches(vendor, res, label_pid):
@@ -477,10 +474,16 @@ class BoardSwapPage(QWidget):
 
         # 3 · Kennung
         box, f = _card(T("3 · Kennung (Aufkleber am Gehäuse)"))
+        self.board_lbl = QLabel(T("Noch nicht gelesen – erst „Prüfen“."))
+        self.board_lbl.setWordWrap(True)
+        self.board_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.board_lbl.setToolTip(T("Was das neue Board meldet (nur gelesen). Mit dem Aufkleber vergleichen; nur bei "
+                                    "einer Abweichung die Werte vom Aufkleber in die Felder darunter eintragen."))
+        f.addRow(T("Board meldet"), self.board_lbl)
         self.serial = QLineEdit(row[2])
-        self.serial.setPlaceholderText(T("Seriennummer bzw. Service-Tag (Dell)"))
+        self.serial.setPlaceholderText(T("nur bei Abweichung: Seriennummer bzw. Service-Tag (Dell)"))
         self.pid = QLineEdit()
-        self.pid.setPlaceholderText(T("HPE: z. B. 868703-B21 · Lenovo: z. B. 7X02CTO1WW"))
+        self.pid.setPlaceholderText(T("nur bei Abweichung: HPE z. B. 868703-B21 · Lenovo z. B. 7X02CTO1WW"))
         self.pid.setToolTip(T("HPE: Produkt-ID (Product ID) vom Aufkleber.\n"
                               "Lenovo: Maschinentyp und Modell (MTM).\n"
                               "Dell und Supermicro: leer lassen."))
@@ -636,8 +639,8 @@ class BoardSwapPage(QWidget):
     # ---------- Prüfen ----------
     def check(self):
         ip = self.addr.text().strip()
-        if not ip or not self.serial.text().strip():
-            self.say(T("Aktuelle IP und Seriennummer vom Aufkleber eintragen."), "err")
+        if not ip:
+            self.say(T("Aktuelle IP eintragen."), "err")
             return
         self.out.clear()
         self.info = None
@@ -653,7 +656,13 @@ class BoardSwapPage(QWidget):
         """Seriennummer, unter der die Sicherung gesucht wird: beim Ersatzgerät die des alten Servers."""
         if self.scenario() == "server":
             return self.old_serial.text().strip().upper()
-        return self.serial.text().strip().upper()
+        return self.label_or_board_serial()
+
+    def label_or_board_serial(self):
+        """Seriennummer vom Aufkleber, sonst die, die das Board meldet (Dell: Service-Tag)."""
+        res = self.info or {}
+        board = res.get("sku") if res.get("vendor") == "dell" else res.get("serial")
+        return self.serial.text().strip().upper() or str(board or "").upper()
 
     def find_backup(self):
         """Sicherung zur passenden Seriennummer suchen und Ziel-Felder vorbelegen."""
@@ -712,14 +721,23 @@ class BoardSwapPage(QWidget):
             return
         scen = self.scenario()
         ident = res.get("sku") if v == "dell" else res.get("serial")
+        typ = res.get("sku") if v == "hpe" else res.get("model") or res.get("sku")
+        self.board_lbl.setText(T("Seriennummer {0} · Typ {1}").format(ident or "–", typ or "–"))
         same = bool(ident) and ident.upper() == label_sn
-        if same:
+        if not label_sn and scen != "server":
+            same = bool(ident)              # nichts eingetragen: das Board gilt als richtig, Aufkleber vergleichen
+            self.say(T("  Board meldet Seriennummer „{0}“. Mit dem Aufkleber vergleichen; weicht sie ab, die "
+                       "Seriennummer vom Aufkleber eintragen und erneut prüfen.").format(ident or "–"),
+                     "" if ident else "warn")
+        elif same:
             self.say(T("  Seriennummer stimmt mit dem Aufkleber überein ({0}).").format(ident), "ok")
         elif scen == "server":
             self.say(T("  Ersatzgerät meldet Seriennummer „{0}“; sie bleibt unverändert.").format(ident or "–"))
         else:
             self.say(T("  Seriennummer passt nicht: Board meldet „{0}“, Aufkleber „{1}“.").format(ident or "–", label_sn),
                      "warn")
+        if v == "lenovo" and scen in ("board", "cpu") and not typ:
+            same = False                    # leeres VPD: Maschinentyp fehlt auch bei passender Seriennummer
         if v in ("hpe", "lenovo") and scen != "server" and not pid_matches(v, res, label_pid):
             same = False
             self.say(T("  Produkt-ID/Typ passt nicht: Board meldet „{0}“, Aufkleber „{1}“.").format(
@@ -802,7 +820,7 @@ class BoardSwapPage(QWidget):
                 self.say(T("  würde in die Serverliste übernehmen: Hostname {0}, Adresse {1}").format(
                     vals[0] or "–", vals[1] or "–"))
             else:
-                self.take = vals + (self.serial.text().strip().upper(),)
+                self.take = vals + (self.label_or_board_serial(),)
                 self.take_ready.emit((self.addr.text().strip(),) + self.take)
                 self.say(T("  In die Serverliste übernommen: Hostname {0}, Adresse {1}").format(
                     vals[0] or "–", vals[1] or "–"), "ok")

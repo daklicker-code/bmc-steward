@@ -89,6 +89,13 @@ class TestBackupHelpers(unittest.TestCase):
         self.assertFalse(pid_matches("hpe", {"sku": "868703-B21"}, "868704-B21"))
         self.assertTrue(pid_matches("dell", {"sku": "ABC1234"}, "IRGENDWAS"))       # Dell/Supermicro: kein Vergleich
 
+    def test_lenovo_commands_use_placeholders_for_missing_label_values(self):
+        from bmc_steward.board_swap import lenovo_commands
+        lines = lenovo_commands("10.0.0.9", "USERID", "", "")
+        self.assertEqual(len(lines), 2)                       # VPD nur einmal setzbar: immer beide Werte zeigen
+        self.assertIn("SysInfoProdName <", lines[0])
+        self.assertIn("SysInfoSerialNum <", lines[1])
+
 
 class TestBoardSwapLive(_WebBase):
     """Gegen einen virtuellen iLO: lesen, im Trockenlauf nichts ändern, scharf die UEFI-Attribute setzen."""
@@ -159,6 +166,30 @@ class TestBoardSwapLive(_WebBase):
         self.assertEqual(dlg.take, ("srv-21", "10.0.0.21", "255.255.255.0", "10.0.0.1", label))
         self.assertEqual(b.bios.get("SerialNumber"), label)
         dlg.close()
+
+
+class TestCheckWithoutLabel(_WebBase):
+    """„Prüfen“ geht ohne Eingabe vom Aufkleber und zeigt, was das Board meldet."""
+
+    def test_check_shows_board_identity_without_label_input(self):
+        qapp()
+        self._isolate_data()
+        from PyQt6.QtWidgets import QApplication
+        from bmc_steward.board_swap import BoardSwapPage
+        b, port = self._start("lenovo")
+        page = BoardSwapPage(None, (f"127.0.0.1:{port}", FACTORY_LOGIN["lenovo"][1], ""), "")
+        self.addCleanup(page.close)
+        page.check()
+        self.assertIsNotNone(page.thread, page.out.toPlainText())
+        deadline = time.monotonic() + 30
+        while page.thread.isRunning() and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.02)
+        QApplication.processEvents()
+        self.assertTrue(page.info and page.info.get("ok"), page.out.toPlainText())
+        self.assertIn(b.serial, page.board_lbl.text())
+        self.assertIn(b.model, page.board_lbl.text())
+        self.assertEqual(page.serial.text(), "")             # Aufkleber-Feld bleibt, was der Nutzer eintippt
 
 
 class TestScenarioPage(_WebBase):
