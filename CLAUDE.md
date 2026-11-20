@@ -19,6 +19,9 @@ Sprache im Projekt: Deutsch (Commits, Release-Texte, Kommentare, Antworten an de
   `.github/release-notes/vX.Y.Z.md`. Erste Zeile `# BMC-Steward X.Y.Z – Titel`, dann `*English below.*`,
   der deutsche Text, `---` und derselbe Inhalt auf Englisch (Format siehe vorhandene Dateien).
 - Reine Test- oder CI-Änderungen bekommen keine eigene Version.
+- **Hilfe und README ohne Nachfrage mitpflegen:** Ändert sich, was der Nutzer sieht oder tun muss, im selben
+  Commit die eingebaute Hilfe (`bmc_steward/i18n.py`, Hilfe-Texte in allen vier Sprachen) und die
+  GitHub-Beschreibung (`README.md` und `README.de.md`) anpassen, soweit die Stelle dort beschrieben ist.
 - Jeder Oberflächentext `T("…")` braucht Übersetzungen in `bmc_steward/i18n.py` (Englisch, Französisch,
   Schweizerdeutsch); `tests/test_i18n.py` prüft das.
 

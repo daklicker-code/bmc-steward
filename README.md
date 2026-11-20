@@ -60,7 +60,7 @@ the green button.
 
 | Page | What it does |
 |---|---|
-| **Board replacement** | Restores one server after a parts replacement, in five steps. Scenarios: system board with BMC · BMC only (replaced or reset to factory defaults) · processor board only · whole server replaced by a spare. **HPE iLO 5/6:** serial number and product ID from the chassis label and the iLO licence are set again. Network services and UEFI settings come from the backup of the old board, hostname and address go to “New hardware”. A spare keeps its own serial number. Advice per vendor (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
+| **Board replacement** | Restores one server after a parts replacement, in five steps. Scenarios: system board with BMC · BMC only (replaced or reset to factory defaults) · processor board only · whole server replaced by a spare. “Check” shows what the board reports (serial number, type); enter label values only if they differ. **HPE iLO 5/6:** serial number and product ID from the chassis label and the iLO licence are set again. Network services and UEFI settings come from the backup of the old board, hostname and address go to “New hardware”. A spare keeps its own serial number. Advice per vendor (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **UEFI console** | A server's UEFI/BIOS through the BMC: embedded HTML5 console, text console (SOL/SSH) or default browser. On-screen keyboard with vendor setup keys, “type text”, screenshots, full screen and automatic reconnect. “Boot into UEFI setup” restarts the server straight into the setup, after the self-protection check. |
 
 ### Tools

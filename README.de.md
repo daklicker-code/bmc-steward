@@ -63,7 +63,7 @@ der grüne Knopf.
 
 | Seite | Funktion |
 |---|---|
-| **Mainboard-Tausch** | Bringt einen Server nach einem Teiletausch in fünf Schritten wieder auf den alten Stand. Szenarien: Systemplatine mit BMC · nur BMC (getauscht oder auf Werkseinstellungen) · nur Prozessorplatine · ganzer Server durch Ersatzgerät. **HPE iLO 5/6:** Seriennummer und Produkt-ID vom Gehäuse-Aufkleber und die iLO-Lizenz werden neu gesetzt. Netzwerkdienste und UEFI-Einstellungen kommen aus der Sicherung des alten Boards, Hostname und Adresse gehen an „Neuware“. Ein Ersatzgerät behält seine Seriennummer. Hinweise je Hersteller (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
+| **Mainboard-Tausch** | Bringt einen Server nach einem Teiletausch in fünf Schritten wieder auf den alten Stand. Szenarien: Systemplatine mit BMC · nur BMC (getauscht oder auf Werkseinstellungen) · nur Prozessorplatine · ganzer Server durch Ersatzgerät. „Prüfen“ zeigt, was das Board meldet (Seriennummer, Typ); Werte vom Aufkleber nur bei Abweichung eintragen. **HPE iLO 5/6:** Seriennummer und Produkt-ID vom Gehäuse-Aufkleber und die iLO-Lizenz werden neu gesetzt. Netzwerkdienste und UEFI-Einstellungen kommen aus der Sicherung des alten Boards, Hostname und Adresse gehen an „Neuware“. Ein Ersatzgerät behält seine Seriennummer. Hinweise je Hersteller (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **UEFI-Konsole** | UEFI/BIOS eines Servers über den BMC: eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder Standardbrowser. Bildschirmtastatur mit Setup-Tasten je Hersteller, „Text tippen“, Bildschirmfoto, Vollbild und automatisches Neuverbinden. „Ins UEFI-Setup starten“ startet den Server nach der Eigenschutz-Prüfung direkt ins Setup. |
 
 ### Werkzeuge
