@@ -6,6 +6,7 @@ im Protokoll nur maskiert. Braucht openssl (für das Wegwerf-Zertifikat) – son
 """
 import http.client
 import json
+import shutil
 import ssl
 import unittest
 from tests._support import qapp, need
@@ -14,16 +15,34 @@ from bmc_steward.scanner import ScanServer, ScanBridge, plausible, scan_tools
 _NOVERIFY = ssl._create_unverified_context()
 
 
-def tiny_png():
+def ean13_png(digits="400638133393", px=4):
+    """EAN-13-Strichcode als PNG (Prüfziffer wird ergänzt), selbst gezeichnet – ohne qrencode o. Ä.
+    zbarimg erkennt ihn im ersten Versuch, der Server braucht also nur einen kurzen Unterprozess."""
     from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
     from PyQt6.QtGui import QImage
-    img = QImage(8, 8, QImage.Format.Format_RGB32)
+    L = ("0001101", "0011001", "0010011", "0111101", "0100011",
+         "0110001", "0101111", "0111011", "0110111", "0001011")
+    G = ["".join("1" if c == "0" else "0" for c in code[::-1]) for code in L]
+    R = ["".join("1" if c == "0" else "0" for c in code) for code in L]
+    parity = ("LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL")
+    d = [int(c) for c in digits]
+    check = (10 - sum(v * (3 if i % 2 else 1) for i, v in enumerate(d)) % 10) % 10
+    d.append(check)
+    bits = "101" + "".join((L if p == "L" else G)[v] for p, v in zip(parity[d[0]], d[1:7])) + "01010"
+    bits += "".join(R[v] for v in d[7:]) + "101"
+    quiet, h = 12 * px, 60 * px
+    img = QImage(len(bits) * px + 2 * quiet, h, QImage.Format.Format_RGB32)
     img.fill(0xFFFFFF)
+    for i, b in enumerate(bits):
+        if b == "1":
+            for x in range(quiet + i * px, quiet + (i + 1) * px):
+                for y in range(10, h - 10):
+                    img.setPixel(x, y, 0x000000)
     ba = QByteArray()
     buf = QBuffer(ba)
     buf.open(QIODevice.OpenModeFlag.WriteOnly)
     img.save(buf, "PNG")
-    return bytes(ba)
+    return bytes(ba), "".join(map(str, d))
 
 
 class TestPlausible(unittest.TestCase):
@@ -47,8 +66,8 @@ class TestScanServerAuth(unittest.TestCase):
     def tearDownClass(cls):
         cls.srv.stop()
 
-    def _req(self, method, path, body=None, headers=None):
-        c = http.client.HTTPSConnection("127.0.0.1", self.port, context=_NOVERIFY, timeout=10)
+    def _req(self, method, path, body=None, headers=None, timeout=10):
+        c = http.client.HTTPSConnection("127.0.0.1", self.port, context=_NOVERIFY, timeout=timeout)
         try:
             c.request(method, path, body=body, headers=headers or {})
             r = c.getresponse()
@@ -80,13 +99,20 @@ class TestScanServerAuth(unittest.TestCase):
         self.assertEqual(status, 413)
 
     def test_decode_returns_json(self):
-        png = tiny_png()
+        # Ein echter Strichcode statt eines leeren Bildes: Ein leeres Bild ließ den Server nach zwei
+        # zbarimg-Versuchen auf die Texterkennung zurückfallen (rund ein Dutzend tesseract-Aufrufe). Unter
+        # der Last der parallelen Gesamtsuite lief das über das Lese-Zeitlimit. Jetzt reicht ein Aufruf;
+        # das Zeitlimit ist trotzdem großzügig, weil auch ein einzelner Unterprozess unter Last warten kann.
+        png, code = ean13_png()
         status, body = self._req("POST", f"/{self.token}/decode?mode=barcode", body=png,
-                                headers={"Content-Type": "image/png"})
+                                headers={"Content-Type": "image/png"}, timeout=60)
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertIn("texts", data)
         self.assertIn("error", data)
+        if shutil.which("zbarimg"):         # ohne zbarimg kommt ein Hinweis in "error" (auch 200 mit JSON)
+            self.assertEqual(data["error"], "")
+            self.assertIn(code, data["texts"])
 
     def test_decode_empty_body_rejected(self):
         status, _ = self._req("POST", f"/{self.token}/decode", body=b"",
