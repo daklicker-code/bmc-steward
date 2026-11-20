@@ -162,10 +162,13 @@ class BiosTabMixin:
         user, pw = self.row_login(ip)
         if only_done and not user:
             return
-        pw = pw or self.cur_pass.text()
+        if not user:
+            pw = pw or self.cur_pass.text()             # Werkskonto: sonst das Werks-Passwort von oben
         if user:
             self.bios_user.setText(user)
             self.bios_user_auto = user
+            if not pw:
+                self.bios_pass.clear()                  # Passwort nach scharfem Lauf geleert: neu eintippen, kein altes
         elif self.bios_user_auto and self.bios_user.text().strip() == self.bios_user_auto:
             self.bios_user.clear()                         # frühere automatische Vorgabe nicht auf andere Geräte mitnehmen
             self.bios_user_auto = ""

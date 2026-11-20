@@ -1082,6 +1082,35 @@ class TestTestlabTab(unittest.TestCase):
         w.con_ip.setEditText("192.0.2.99")
         self.assertEqual((w.con_user.text(), w.con_pass.text()), ("admin2", "x"))
 
+    def test_console_keeps_new_admin_after_passwords_were_cleared(self):
+        """Nach einem scharfen Lauf leert „Passwörter nach scharfem Lauf löschen“ das Admin-Passwort. Für fertige
+        Zeilen bleibt trotzdem der neue Administrator im Feld (das Werkskonto ist dort gesperrt), das Passwort ist
+        leer statt eines veralteten Werks-Passworts."""
+        w = self._done_row()
+        w.cur_pass.setText("PASSW0RD")
+        w.mark_done("10.0.0.5")
+        w.console_refresh_ips()
+        w.con_ip.setEditText("10.0.0.50")
+        w.console_pick_ip()
+        self.assertEqual((w.con_user.text(), w.con_pass.text()), ("klicker", "Geheim123!"))
+        w.dry.setChecked(False)
+        w.clear_pass_after.setChecked(True)
+        try:
+            w.done(0)
+        finally:
+            w.dry.setChecked(True)
+        self.assertEqual(w.new_pass.text(), "")
+        w.con_pass.setText("PASSW0RD")                          # z. B. noch vom Werkszugang im Feld
+        w.console_refresh_ips()
+        w.console_pick_ip()
+        self.assertEqual((w.con_ip.currentText(), w.con_user.text(), w.con_pass.text()), ("10.0.0.50", "klicker", ""))
+        self.assertEqual(w.row_login("10.0.0.50"), ("klicker", ""))
+        w.bios_refresh_ips()
+        w.bios_ref.setEditText("10.0.0.50")
+        w.bios_pass.setText("PASSW0RD")
+        w.bios_pick_ip()
+        self.assertEqual((w.bios_user.text(), w.bios_pass.text()), ("klicker", ""))
+
     def test_console_replaces_stale_factory_password_for_new_user(self):
         w = self._done_row()
         w.mark_done("10.0.0.5")

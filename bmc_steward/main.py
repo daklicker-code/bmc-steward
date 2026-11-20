@@ -1621,14 +1621,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
     # ---------- UEFI/BIOS-Einstellungen ----------
     def row_login(self, ip):
         """(Benutzer, Passwort) für eine Adresse aus der Serverliste. Eine fertig umgestellte (grüne) Zeile kennt
-        nur noch den neuen Benutzer mit dem neuen Passwort (oben eingetragen); sonst gilt das Passwort der Zeile
-        mit dem Werksbenutzer (Benutzer leer = automatisch je Hersteller)."""
+        nur noch den neuen Benutzer mit dem neuen Passwort (oben eingetragen) – auch wenn das Passwort nach einem
+        scharfen Lauf schon geleert wurde: dann (neuer Benutzer, ""), nie das Werkskonto, das dort gesperrt ist.
+        Sonst gilt das Passwort der Zeile mit dem Werksbenutzer (Benutzer leer = automatisch je Hersteller)."""
         for r in range(self.table.rowCount()):
             vals = [self.cell(r, c) for c in range(len(i18n.COLS))]
             done = self.is_done(r)
             if (vals[2] if done else vals[0]) == ip:
                 nu, np_ = self.new_user.text().strip(), self.new_pass.text()
-                if done and nu and np_:
+                if done and nu:
                     return nu, np_
                 return "", vals[1]
         return "", ""
