@@ -250,3 +250,83 @@ class TestAuditAfterLiveRun(_Fleet):
         for _ in range(10):
             qapp().processEvents()
         self.assertEqual(w.audit.serial.text(), b.serial, w.audit.out.toPlainText())
+
+
+class TestStaff(_WebBase):
+    """Mitarbeiter einmal anlegen (Name, optional E-Mail, Telefon, Adresse, Zusatz), dann nur noch auswählen."""
+
+    def test_store_roundtrip_private_and_name_required(self):
+        qapp()
+        self._isolate_data()
+        import os
+        import stat
+        from bmc_steward.sysaudit import load_staff, save_staff, staff_file
+        save_staff([{"name": "Max Muster", "email": "max@example.org", "phone": "+41 44 000 00 00",
+                     "address": "Weg 1\n8000 Zürich", "extra": "Lager 3"}, {"name": "  ", "email": "x@y"}])
+        self.assertEqual([s["name"] for s in load_staff()], ["Max Muster"])
+        self.assertEqual(load_staff()[0]["address"], "Weg 1\n8000 Zürich")
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(os.stat(staff_file()).st_mode), 0o600)
+
+    def test_staff_lines_skip_empty_fields(self):
+        from bmc_steward.sysaudit import staff_lines
+        self.assertEqual(staff_lines({"name": "Max", "phone": "123", "address": "Weg 1\n8000 Zürich"}),
+                         ("Max", ["123", "Weg 1, 8000 Zürich"]))
+        self.assertEqual(staff_lines("Frei getippt"), ("Frei getippt", []))
+
+    def test_dialog_adds_and_page_offers_staff(self):
+        qapp()
+        self._isolate_data()
+        from bmc_steward.sysaudit import AuditPage, StaffDialog, load_staff
+        page = AuditPage(None)
+        self.addCleanup(page.close)
+        dlg = StaffDialog(page)
+        dlg.new_entry()
+        dlg.name.setText("Erika Beispiel")
+        dlg.email.setText("erika@example.org")
+        dlg.extra.setText("Schicht B")
+        dlg.save_entry()
+        dlg.close()
+        self.assertEqual(load_staff()[0]["email"], "erika@example.org")
+        page.reload_staff()
+        i = page.staff.findText("Erika Beispiel")
+        self.assertGreaterEqual(i, 0)
+        page.staff.setCurrentIndex(i)
+        self.assertEqual(page.current_staff()["extra"], "Schicht B")
+        page.staff.setEditText("Jemand anderes")
+        self.assertEqual(page.current_staff(), "Jemand anderes")
+
+
+class TestBatch(_WebBase):
+    def test_several_servers_in_one_pdf(self):
+        qapp()
+        from PyQt6.QtWidgets import QApplication
+        from bmc_steward.sysaudit import AuditPage, BatchAuditDialog, render_sheets
+        b1, p1 = self._start("dell")
+        b2, p2 = self._start("hpe", idx=2)
+        page = AuditPage(None)
+        self.addCleanup(page.close)
+        page.sources = lambda: [(f"a ({p1})", f"127.0.0.1:{p1}", "", FACTORY_LOGIN["dell"][1]),
+                                (f"b ({p2})", f"127.0.0.1:{p2}", "", FACTORY_LOGIN["hpe"][1]),
+                                ("ohne Passwort", "127.0.0.1:1", "ops", "")]
+        page.checks[0].setChecked(True)
+        dlg = BatchAuditDialog(page)
+        self.addCleanup(dlg.close)
+        self.assertEqual(dlg.list.count(), 3)
+        out = pathlib.Path(tempfile.mkdtemp(prefix="bmc-steward-audit-")) / "alle.pdf"
+        dlg.target = str(out)
+        dlg.start()
+        deadline = time.monotonic() + 60
+        while dlg.thread.isRunning() and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.02)
+        for _ in range(10):
+            QApplication.processEvents()
+        log = dlg.out.toPlainText()
+        self.assertTrue(out.exists(), log)
+        self.assertGreaterEqual(pdf_pages(out), 2)
+        self.assertIn("ohne Passwort", log)                  # übersprungen, nicht mit leerem Passwort versucht
+        self.assertIn("2", log)
+        many = render_sheets(out, [({"serial": "A"}, []), ({"serial": "B"}, []), ({"serial": "C"}, [])],
+                             [False] * 6, "", {"name": "Max", "email": "m@x"}, "01.01.2026")
+        self.assertEqual(many, 3)

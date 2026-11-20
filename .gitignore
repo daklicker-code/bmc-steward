@@ -13,4 +13,5 @@ __pycache__/
 bmc-vault.json
 bmc-rotation.json
 bmc-console.json
+bmc-mitarbeiter.json
 tests/.timings.json
