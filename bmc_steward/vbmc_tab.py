@@ -28,7 +28,7 @@ from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 
 from .applog import LOG, LevelCombo, LogView, open_in_editor
 from .i18n import HERE, T
-from .core import WINDOWS, local_network
+from .core import WINDOWS
 
 # Muss zu tools/vbmc/vbmc.py passen (GENS / FACTORY)
 VENDORS = [("dell", "Böll"), ("hpe", "Häpe"), ("lenovo", "Venolo"), ("smc", "Hypernano")]
@@ -53,27 +53,6 @@ MODE_INFO = {
     'rz': 'Ein virtueller, vom restlichen Netz getrennter Staging-Switch „bmclab0“ mit eigener Netzwerkkarte je Server, wie im Konfigraum. Die Server holen sich ihre Adresse vom DHCP-Server des Tools oder haben eine feste Werks-IP.\nBeispiel: Ein Dell mit fester Werks-IP 192.168.0.120 ist sofort unter https://192.168.0.120 erreichbar, ein HPE bekommt nach dem Start des DHCP-Servers z. B. 192.168.0.101. Braucht beim Start einmal Root.',
     'router': 'Die Server hängen mit eigener MAC am echten LAN (Kabel-Netzwerkkarte) und bekommen ihre Adresse vom Router, z. B. einer FritzBox, wo sie als eigene Geräte erscheinen.\nBeispiel: Ein HPE meldet sich als „ILOCZ12345“ beim Router und bekommt 192.168.178.45; das Umstellen auf eine feste Adresse wie 192.168.178.201 läuft wirklich durch. Braucht beim Start einmal Root, WLAN geht nicht.',
 }
-
-# Infobox zur Auswahl „Neue IP“ (einfach erklärt)
-ADOPT_HELP = (
-    "<p><b>Worum geht es?</b> Die virtuellen Server sind wie Spielzeug-Server in deinem Computer. Mit „In "
-    "Serverliste übernehmen“ trägst du sie in die Liste „Neuware“ ein, so als wären es echte Server, die du "
-    "einrichten willst. Dabei denkt sich das Tool für jeden Server eine <b>neue IP-Adresse</b> aus. Eine "
-    "IP-Adresse ist wie die Hausnummer des Servers: Darüber findet man ihn.</p>"
-    "<p>Du bestimmst, welche Art von neuer Adresse vorgeschlagen wird:</p>"
-    "<p><b>Übungsadressen</b> (alles klappt)<br>Die neue Adresse bleibt auf deinem Computer (127.9.0.51:8443 …). "
-    "Das ist, als würde der Server nur in ein anderes Zimmer im selben Haus ziehen: Er verlässt das Haus nie, "
-    "deshalb findet das Tool ihn sofort wieder. Du kannst <b>richtig scharf</b> starten, und am Ende steht alles "
-    "auf Grün. Gut zum Üben und Vorführen.</p>"
-    "<p><b>Aus meinem echten Netz</b> (nur Probelauf)<br>Das Tool schaut, wie dein richtiges Netzwerk aussieht "
-    "(Adresse des Routers und Netzmaske) und schlägt Adressen daraus vor. Du trägst nur noch die letzte Zahl ein. "
-    "Das ist, als würdest du den Umzug in eine echte Stadt nur auf dem Papier planen. Die Spielzeug-Server können "
-    "dort nicht wirklich einziehen, darum geht hier nur der <b>Probelauf</b>: Du siehst, was das Tool tun würde, "
-    "aber es wird nichts verändert.</p>"
-    "<p><b>Tipp:</b> Nimm die Übungsadressen, wenn du das ganze Tool einmal richtig durchspielen willst. Nimm "
-    "das echte Netz, wenn du prüfen willst, ob deine geplanten Adressen und die Netzmaske sinnvoll aussehen.</p>"
-    "<p><i>Diese Auswahl gibt es nur im Modus „Loopback“. In den anderen Modi (Konfigraum, Zuhause/Router) "
-    "schlägt das Tool die neue Adresse automatisch passend zum Netz vor.</i></p>")
 
 # Start grün (nur bei gefüllter Liste), Stopp rot (nur sichtbar, solange der Cluster läuft)
 START_STYLE = ("QPushButton{background:#3fa45b;color:#fff;font-weight:bold;border:1px solid #2e8a47;"
@@ -370,18 +349,7 @@ class VbmcTabMixin:
                                          "aktuellen Adresse und ihrem Werks-Passwort in die Serverliste ein und "
                                          "schlägt neue Adressen vor."))
         self.vbmc_adopt_btn.clicked.connect(self.vbmc_adopt)
-        self.vbmc_adopt_mode = QComboBox()
-        self.vbmc_adopt_mode.addItem(T("Neue IP: aus meinem echten Netz (nur Probelauf)"), "net")
-        self.vbmc_adopt_mode.addItem(T("Neue IP: Übungsadressen (alles klappt)"), "loopback")
-        self.vbmc_adopt_mode.setToolTip(T("Welche neue IP soll vorgeschlagen werden? Ein Klick auf ⓘ erklärt es einfach."))
-        self.vbmc_adopt_info_btn = QToolButton()
-        self.vbmc_adopt_info_btn.setText("ⓘ")
-        self.vbmc_adopt_info_btn.setAutoRaise(True)
-        self.vbmc_adopt_info_btn.setToolTip(T("Erklärung zur neuen IP"))
-        self.vbmc_adopt_info_btn.clicked.connect(self.vbmc_adopt_help)
         arow.addWidget(self.vbmc_adopt_btn)
-        arow.addWidget(self.vbmc_adopt_mode)
-        arow.addWidget(self.vbmc_adopt_info_btn)
         arow.addStretch()
         rl.addLayout(arow)
 
@@ -799,7 +767,6 @@ class VbmcTabMixin:
         self.vbmc_proc.start(program, pre + args)
         self._vbmc_lock(True)
         self.vbmc_adopt_ready(False)
-        self.vbmc_adopt_mode.setVisible(mode == "loopback")
         self.vbmc_adopt_info_btn.setVisible(mode == "loopback")
         self.vbmc_set_status(T("Cluster startet …") if not (need_root and not root)
                              else T("Cluster startet … (Rechteabfrage bestätigen)"))
@@ -942,16 +909,6 @@ class VbmcTabMixin:
             "QPushButton{background:#3fa45b;color:#fff;font-weight:bold;border:1px solid #2e8a47;"
             "border-radius:3px;padding:5px 12px}QPushButton:hover{background:#36934f}" if ready else "")
 
-    def vbmc_adopt_help(self):
-        """Infobox: was die Auswahl „Neue IP“ beim Übernehmen bewirkt, in einfachen Worten."""
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle(T("Neue IP – was bedeutet das?"))
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(T(ADOPT_HELP))
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.exec()
-
     def vbmc_adopt(self):
         """Laufende virtuelle Server in die Serverliste („Neuware“) eintragen."""
         sel = sorted({i.row() for i in self.vbmc_run.selectedIndexes()})
@@ -963,15 +920,11 @@ class VbmcTabMixin:
         mode = self.vbmc_run_mode
         note = ""
         if mode == "loopback":
+            # Übungsadressen auf diesem Rechner (127.x:Port): neue IP, Maske und Gateway bleiben im
+            # Loopback-Netz, nie im Heimnetz – nur so findet die Kontrolle die Server wieder
             base = self.vbmc_base.text().strip() or "127.9.0"
             port = self.vbmc_port.value()
-            net = local_network() if self.vbmc_adopt_mode.currentData() == "net" else None
-            if net:
-                mask, gw, prefix, suffix, full = net["mask"], net["gateway"], net["prefix"], "", False
-                note = T("Netz erkannt (Gateway {0}, Maske {1}); bei „Neue IP“ nur noch die letzte Ziffer "
-                         "eintragen. Ein scharfer Lauf geht in diesem Übungsmodus nicht.").format(gw or "?", mask)
-            else:
-                mask, gw, prefix, suffix, full = "255.255.255.0", "", base, f":{port}", True
+            mask, gw, prefix, suffix, full = "255.255.255.0", f"{base}.1", base, f":{port}", True
         elif mode == "rz":
             first = ipaddress.IPv4Interface(self.vbmc_rz_addrs.text().split(",")[0].strip())
             mask, gw = str(first.netmask), ""

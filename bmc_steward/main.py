@@ -1759,7 +1759,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                 QMessageBox.warning(self, T("Eingabe prüfen"), T(
                     "Ein scharfer Lauf von einer Testlabor-Adresse (127.x) auf eine echte Adresse geht nicht: Der "
                     "virtuelle Server erreicht das echte Netz nicht, die Kontrolle würde nur „FEHLT“ melden.\n\n{0}"
-                    "\n\nFür einen scharfen Lauf im Testlabor beim Übernehmen „Neue IP: Übungsadressen“ wählen, "
+                    "\n\nFür einen scharfen Lauf im Testlabor die beim Übernehmen vorgeschlagenen Übungsadressen (127.x) behalten, "
                     "oder das Testlabor im Modus „Konfigraum“ bzw. „Zuhause/Router“ starten. Der Trockenlauf geht "
                     "mit jeder Adresse.").format("\n".join(bad[:10])))
                 return

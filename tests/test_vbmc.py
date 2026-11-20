@@ -999,42 +999,19 @@ class TestTestlabTab(unittest.TestCase):
         self.assertIn("schon in der Liste", w.status.text(), "stille Übernahme ohne Wirkung ist verboten")
         w.vbmc_show_state([])
 
-    def test_adopt_info_box_explains_new_ip_choice(self):
-        """Der Knopf ⓘ neben „Neue IP“ öffnet eine einfache Erklärung; er gibt es nur im Loopback-Modus."""
-        from unittest import mock
-        from PyQt6.QtWidgets import QMessageBox
-        w = self.w
-        shown = {}
-
-        def fake_exec(box):
-            shown["title"], shown["text"] = box.windowTitle(), box.text()
-            return 0
-        with mock.patch.object(QMessageBox, "exec", fake_exec):
-            w.vbmc_adopt_info_btn.click()
-        self.assertIn("Neue IP", shown["title"])
-        for wort in ("Übungsadressen", "echten Netz", "Probelauf", "Hausnummer"):
-            self.assertIn(wort, shown["text"])
-        self.assertNotIn("scharfe Migration", "".join(w.vbmc_adopt_mode.itemText(i)
-                                                      for i in range(w.vbmc_adopt_mode.count())))
-
-    def test_adopt_net_mode_survives_broken_network_detection(self):
-        """Windows: ipconfig-Ausgabe mit Umlaut-Bytes darf die Übernahme im Netz-Modus nicht still scheitern lassen."""
-        from unittest import mock
-        import bmc_steward.core as core
+    def test_loopback_adopt_suggests_practice_addresses_with_mask_and_gateway(self):
+        """Loopback: neue IP, Subnetzmaske und Gateway kommen aus den Übungsadressen, nie aus dem Heimnetz;
+        eine Auswahl „echtes Netz (nur Probelauf)“ gibt es nicht mehr."""
         w = self.w
         w.vbmc_run_mode = "loopback"
-        w.vbmc_adopt_mode.setCurrentIndex(w.vbmc_adopt_mode.findData("net"))
         w.vbmc_show_state([{"id": 1, "vendor": "dell", "addr": "127.9.0.11:8443", "ip": "127.9.0.11",
                             "factory_pass": "calvin"}])
         w.table.setRowCount(0)
-        fake = mock.Mock(stdout="Subnetzmaske . : 255.255.0.0\n".encode("cp850") + b"\x81\x84\x94")
-        with mock.patch.object(core, "WINDOWS", True), mock.patch.object(core, "local_ipv4", return_value="10.1.2.3"), \
-                mock.patch.object(core.subprocess, "run", return_value=fake):
-            net = core.local_network()
-        self.assertEqual(net["ip"], "10.1.2.3")
-        with mock.patch.object(core, "local_ipv4", side_effect=UnicodeDecodeError("cp1252", b"\x81", 0, 1, "x")):
-            w.vbmc_adopt()          # Netzerkennung kaputt: Übernahme läuft trotzdem (wie Loopback)
-        self.assertEqual(w.table.rowCount(), 1)
+        w.vbmc_adopt()
+        base, port = w.vbmc_base.text().strip() or "127.9.0", w.vbmc_port.value()
+        self.assertEqual([w.cell(0, c) for c in (2, 3, 4)], [f"{base}.51:{port}", "255.255.255.0", f"{base}.1"])
+        self.assertFalse(hasattr(w, "vbmc_adopt_mode"))
+        self.assertNotIn("Netz erkannt", w.status.text())
         w.vbmc_show_state([])
 
     def _done_row(self):
