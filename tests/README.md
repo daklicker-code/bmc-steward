@@ -17,7 +17,8 @@ python3 tests/run.py -j 1         # Unit-Tests nacheinander in einem Prozess (la
 Exit-Code `0` = alles grün, sonst `1` (für CI/Pre-Push geeignet).
 
 Die Unit-Tests laufen standardmäßig **parallel**: jedes Testmodul in einem eigenen Prozess (bis zu 8 gleichzeitig,
-`-j N` ändert das). Das dauert rund zwei Minuten statt fast einer halben Stunde und verhindert, dass ein Modul
+`-j N` ändert das). Die langsamsten Module starten zuerst (Dauern des letzten Laufs in `tests/.timings.json`, nicht
+im Repo). Das dauert rund 75 Sekunden statt fast einer halben Stunde und verhindert, dass ein Modul
 Zustand oder offene Fenster an das nächste vererbt. Zusätzlich schließt `tests/__init__.py` nach jedem Test die
 Fenster, die der Test geöffnet hat (ohne Rückfragen); so bleibt auch ein Lauf mit `-j 1` oder
 `python3 -m unittest discover` schnell genug.
@@ -33,6 +34,7 @@ Fenster, die der Test geöffnet hat (ohne Rückfragen); so bleibt auch ein Lauf 
 | `test_selfguard.py` | Eigenschutz: Schutzliste, eigene Kennung, Sperre vor UEFI/Firmware/Neustart | Das Tool darf nie den Host abschalten, auf dem es läuft |
 | `test_i18n.py` | Jeder Oberflächentext in allen vier Sprachen, Platzhalter gleich | Keine halb deutschen Meldungen, keine Formatfehler zur Laufzeit |
 | `test_vbmc.py` (Security) | Zertifikats-Fingerabdruck je Gerät, Sessions, ein Anmeldeversuch, Sicherung, Revisionsprotokoll, Härtung | Kein Passwort an ein fremdes Zertifikat, keine Kontosperre, Nachweis jeder Änderung |
+| `test_generalprobe.py` | Generalprobe: jede Funktion einmal gegen virtuelle BMCs aller sieben Generationen (iDRAC 8/9, iLO 4/5/6, XCC, Supermicro) – Verbindungstest, Neuware scharf, UEFI, Dienste, Konten, Rotation, Firmware – und über die Oberfläche | Grüne Server nur mit dem neuen Administrator ansprechen (nie mit dem gesperrten Werkskonto); Fenster bleibt offen, solange Firmware oder Rotation läuft |
 | `test_secrets_in_log.py` | Echte Trocken- und scharfe Läufe gegen virtuelle BMCs aller Hersteller | Kein Passwort im Protokoll, auch nicht auf Stufe Debug |
 | `test_capture_submit.py` | Nachprüfung vor dem Einsenden einer Aufnahme | Keine Seriennummern, Adressen, Zertifikate oder Schlüssel in weitergegebenen Dateien |
 | `test_vbmc_odata.py` | Virtuelle BMCs: jede Ressource typisiert, keine toten Verweise, `$metadata` | Grundlage für den DMTF-Validator in der CI (`tools/ci/validate_vbmc.py`) |

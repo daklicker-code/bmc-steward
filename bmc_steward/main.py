@@ -1061,6 +1061,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         item = self.table.item(r, 0)
         return bool(item) and item.text().strip() != "" and item.data(Qt.ItemDataRole.UserRole) == item.text().strip()
 
+    def admin_pw(self, r):
+        """Passwort des neuen Administrators, das eine Passwort-Rotation in diese fertige Zeile geschrieben hat
+        (Spalte „Passwort“), sonst "". Gilt nur, solange der Text unverändert ist – wie is_done()."""
+        item = self.table.item(r, 1)
+        return item.text() if item and item.text() and item.data(Qt.ItemDataRole.UserRole) == item.text() else ""
+
     def mark_done(self, ip):
         """Der Engine-Thread meldet einen fertig umgestellten Server: Zeile grün markieren."""
         for r in range(self.table.rowCount()):
@@ -1543,6 +1549,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             or (bool(getattr(self, "bios_worker", None)) and self.bios_worker.isRunning()) \
             or (bool(getattr(self, "svc_worker", None)) and self.svc_worker.isRunning())
 
+    def busy(self):
+        """True, solange irgendein Lauf im Hintergrund etwas am BMC ändern kann oder gerade prüft: Neuware, UEFI,
+        Dienste, Firmware, Passwort-Rotation, Kontoänderung, Bestandsserver-Test und Mainboard-Tausch. Solange
+        darf weder das Fenster schließen noch die Sprache wechseln – ein abgebrochenes Firmware-Update oder eine
+        halbe Rotation (neue Passwörter stehen nur im Speicher) kann einen BMC unbrauchbar machen oder aussperren."""
+        threads = [getattr(self, n, None) for n in ("fw_worker", "users_worker", "users_action_thread", "ex_worker")]
+        threads.append(getattr(getattr(self, "swap", None), "thread", None))
+        return self.running() or any(t is not None and t.isRunning() for t in threads)
+
     def open_scanner(self):
         if getattr(self, "scanner", None) is None:
             self.scanner = ScannerDialog(self)
@@ -1574,7 +1589,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             event.accept()
             return
         LOG.debug(T("Fenster wird geschlossen"))
-        if self.running():
+        if self.busy():
             QMessageBox.information(self, T("Lauf aktiv"), T("Es läuft noch eine Konfiguration. "
                                     "Bitte warten oder erst abbrechen."))
             event.ignore()
@@ -1604,8 +1619,9 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.vbmc_shutdown()
         self.swap.stop_thread()
         self.swap.clear_secrets()
-        for th in list(self.vendor_threads.values()):      # kurze Gnadenfrist, sonst Warnung/Absturz beim Beenden
-            th.wait(300)
+        readers = [getattr(self, n, None) for n in ("bios_reader", "fw_reader", "users_reader")]
+        for th in list(self.vendor_threads.values()) + [t for t in readers if t is not None]:
+            th.wait(300)                        # kurze Gnadenfrist, sonst Warnung/Absturz beim Beenden
         event.accept()
 
     def stop_scanner(self):
@@ -1630,7 +1646,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             if (vals[2] if done else vals[0]) == ip:
                 nu, np_ = self.new_user.text().strip(), self.new_pass.text()
                 if done and nu:
-                    return nu, np_
+                    return nu, self.admin_pw(r) or np_
                 return "", vals[1]
         return "", ""
 
@@ -1643,6 +1659,23 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                 ip = vals[2] if self.is_done(r) else vals[0]
                 if ip:
                     out.append((ip, vals[1]))
+        return out
+
+    def batch_rows(self, page_pw=""):
+        """Zeilen für die Läufe der Seiten UEFI-Einstellungen, Dienste, Firmware und Passwort-Rotation:
+        (Adresse, Passwort, Benutzer). Fertig umgestellte (grüne) Zeilen melden sich wie in der UEFI-Konsole mit
+        dem neuen Administrator an (Passwort von oben, sonst das der Seite), nie mit dem Werkskonto, das dort
+        gesperrt ist – sonst ginge je Server ein falsches Passwort an den neuen Administrator. Offene Zeilen
+        nehmen ihr eigenes Passwort, sonst das der Seite; Benutzer leer = der Benutzer der Seite bzw. Werksbenutzer."""
+        out = []
+        nu, np_ = self.new_user.text().strip(), self.new_pass.text()
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(i18n.COLS))]
+            if self.is_done(r) and vals[2]:
+                out.append((vals[2], self.admin_pw(r) or np_ or page_pw, nu) if nu
+                           else (vals[2], vals[1] or page_pw, ""))
+            elif vals[0]:
+                out.append((vals[0], vals[1] or page_pw, ""))
         return out
 
     # ---------- Ablauf ----------
@@ -2025,7 +2058,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         code = self.lang.currentData()
         if code == i18n.LANG:
             return
-        if self.running() or self.dhcp_running() or (self.bios_reader and self.bios_reader.isRunning()) \
+        if self.busy() or self.dhcp_running() or (self.bios_reader and self.bios_reader.isRunning()) \
                 or self.console_active():
             self.lang.setCurrentIndex(self.lang.findData(i18n.LANG))
             QMessageBox.information(self, T("Sprache"), T("Die Sprache lässt sich nur wechseln, solange kein Lauf "

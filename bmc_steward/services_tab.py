@@ -471,7 +471,7 @@ class ServicesTabMixin:
         if not services:
             QMessageBox.warning(self, T("Dienste"), T("Kein Abschnitt angehakt. Oben mindestens einen aktivieren."))
             return
-        rows = [(ip, pw or self.svc_pass.text()) for ip, pw in self.reachable_rows()]
+        rows = self.batch_rows(self.svc_pass.text())
         if not rows:
             QMessageBox.warning(self, T("Dienste"), T("Die Serverliste („Neuware“) ist leer."))
             return

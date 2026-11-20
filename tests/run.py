@@ -12,6 +12,7 @@ Läuft headless (QT_QPA_PLATFORM=offscreen) und braucht keinen echten BMC. Exit-
 sonst 1 – damit auch für einen CI-Lauf geeignet. Auszuführen auf dem Entwicklungs-PC im Repo-Ordner.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -19,11 +20,12 @@ import sys
 import tempfile
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
+TIMINGS = os.path.join(HERE, ".timings.json")
 sys.path.insert(0, REPO)
 
 
@@ -38,6 +40,15 @@ def run_tests_parallel(jobs):
     """Jedes Testmodul in einem eigenen Prozess, `jobs` gleichzeitig. Schneller und ohne Wechselwirkungen
     zwischen den Modulen (geteilter Zustand, liegengebliebene Fenster). Gibt (ok, Zusammenfassung) zurück."""
     mods = sorted(f[:-3] for f in os.listdir(HERE) if f.startswith("test_") and f.endswith(".py"))
+    # Längste Module zuerst starten, sonst bestimmt ein spät begonnenes langsames Modul die Gesamtdauer.
+    # Grundlage sind die Dauern des letzten Laufs (tests/.timings.json, nicht im Repo), sonst die Dateigröße.
+    try:
+        with open(TIMINGS, encoding="utf-8") as fh:
+            last = {k: float(v) for k, v in json.load(fh).items()}
+    except (OSError, ValueError, AttributeError, TypeError):
+        last = {}
+    size = {m: os.path.getsize(os.path.join(HERE, m + ".py")) / 1000 for m in mods}
+    order = sorted(mods, key=lambda m: -last.get(m, size[m]))
 
     def one(mod):
         env = dict(os.environ, BMC_STEWARD_DATA=tempfile.mkdtemp(prefix="bmc-steward-test-"))
@@ -48,13 +59,21 @@ def run_tests_parallel(jobs):
         m = re.search(r"^Ran (\d+) test", out, re.M)
         return mod, p.returncode == 0, int(m.group(1)) if m else 0, time.monotonic() - t0, out
 
-    t0, failed, total = time.monotonic(), [], 0
+    t0, failed, total, results = time.monotonic(), [], 0, {}
     with ThreadPoolExecutor(max_workers=jobs) as ex:
-        for mod, ok, n, secs, out in ex.map(one, mods):
+        futures = [ex.submit(one, m) for m in order]
+        for fut in as_completed(futures):
+            mod, ok, n, secs, out = fut.result()
+            results[mod] = (ok, n, secs)
             total += n
             print(f"  {'ok ' if ok else 'FEHLER'} {mod:32} {n:4} Tests {secs:6.1f} s", flush=True)
             if not ok:
                 failed.append((mod, out))
+    try:
+        with open(TIMINGS, "w", encoding="utf-8") as fh:
+            json.dump({m: round(r[2], 1) for m, r in sorted(results.items())}, fh, indent=0)
+    except OSError:
+        pass
     for mod, out in failed:
         print("\n" + "-" * 70 + f"\n{mod}\n" + "-" * 70)
         print(out[-6000:])

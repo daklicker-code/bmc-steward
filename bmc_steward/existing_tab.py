@@ -322,7 +322,7 @@ class ExistingTabMixin:
             if ip not in have:
                 self.add_row([ip, self.ex_table.item(r, 3).text(), "", self.def_mask.text().strip(),
                               self.def_gw.text().strip(), ""])
-        for w in (self.cur_user, self.bios_user, self.svc_user):
+        for w in (self.cur_user, self.bios_user, self.svc_user, self.fw_user, self.users_user):
             w.setText(user)
         self.update_count()
         self.touch()

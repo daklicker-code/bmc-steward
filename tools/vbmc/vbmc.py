@@ -140,6 +140,7 @@ OLD_ILO = ("ilo3", "ilo4")              # laufen über RIBCL (Hersteller-Kürzel
 SSH_SOL_CMD = {"dell": "console com2", "hpe": "vsp", "hpe_old": "vsp", "lenovo": "console 1"}
 
 SSH_PORT, IPMI_PORT, REDFISH_STD = 22, 623, 443
+TASK_STEP = 0.8                         # Sekunden je Fortschrittsstufe eines Firmware-Tasks (Tests verkürzen das)
 
 
 # ------------------------------------------------------------------ Zertifikat
@@ -232,6 +233,7 @@ class BMC:
         self.dhcp = True
         self.ipv4 = {"Address": host, "SubnetMask": "255.255.255.0", "Gateway": ""}
         self.pending_ip = None
+        self.moving = 0                 # Zahl der gerade laufenden Adresswechsel (Fleet.migrate)
         self.attributes = dict(DELL_ATTRS) if vendor == "dell" else {}
         self.bios = dict(BIOS_ATTRS)
         self.extra = {}
@@ -945,6 +947,19 @@ class Handler(BaseHTTPRequestHandler):
         if p in ("/redfish/v1/LicenseService/Licenses/1", f"/redfish/v1/Managers/{MGR[self.bmc.family]}/LicenseService/1"):
             ok, msg = self.bmc.sim.lic_remove(self.actor())
             return self.send(200, {"ok": True}) if ok else self.send(400, rf_error(msg))
+        m = re.match(r"^/redfish/v1/AccountService/Accounts/(.+)$", p)
+        if m:
+            b = self.bmc
+            if b.vendor == "dell":                       # iDRAC-Slots werden geleert (PATCH), nicht gelöscht
+                return self.send(405, rf_error("Konten-Slots lassen sich nicht löschen, nur leeren."))
+            with b.lock:
+                name = self.resolve_account(m.group(1))
+                if not name:
+                    return self.send(404, rf_error("Konto nicht gefunden."))
+                if name == self.actor():
+                    return self.send(400, rf_error("Das eigene Konto lässt sich nicht löschen."))
+                b.accounts.pop(name)
+            return self.send(200, {"ok": True})
         return self.send(404, rf_error("Nicht gefunden: " + p))
 
     def cert_action(self, p, data):
@@ -1266,8 +1281,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def accounts_doc(self):
         b = self.bmc
-        members = [{"@odata.id": f"/redfish/v1/AccountService/Accounts/{s}"}
-                   for s in sorted(a.get("slot", 2) for a in b.accounts.values())]
+        # iDRAC zeigt wie das echte Gerät alle 16 Slots, auch leere; Slot 1 ist reserviert (anonym)
+        slots = range(1, 17) if b.vendor == "dell" else sorted(a.get("slot", 2) for a in b.accounts.values())
+        members = [{"@odata.id": f"/redfish/v1/AccountService/Accounts/{s}"} for s in slots]
         return {"@odata.id": "/redfish/v1/AccountService/Accounts",
                 "Members@odata.count": len(members), "Members": members}
 
@@ -1316,7 +1332,7 @@ class Handler(BaseHTTPRequestHandler):
     def _run_task(self, tid):
         b = self.bmc
         for pct in (10, 30, 55, 80, 100):
-            time.sleep(0.8)
+            time.sleep(TASK_STEP)
             t = b.tasks.get(tid)
             if not t:
                 return
@@ -1394,7 +1410,12 @@ class Handler(BaseHTTPRequestHandler):
     def account_patch(self, token, data):
         b = self.bmc
         name = self.resolve_account(token)
+        if b.vendor == "dell" and token == "1":
+            return self.send(400, rf_error("Slot 1 ist reserviert und lässt sich nicht ändern."))
         with b.lock:
+            if name and b.vendor == "dell" and data.get("UserName") == "":
+                b.accounts.pop(name)                    # iDRAC: Konto „löschen“ = Slot leeren
+                return self.send(200, {"ok": True})
             if not name:
                 user = data.get("UserName")
                 if not user:
@@ -1507,6 +1528,12 @@ class Handler(BaseHTTPRequestHandler):
             np_ = re.search(r'PASSWORD\s+value\s*=\s*"([^"]*)"', seg)
             if nu and nu.group(1) in b.accounts and np_:
                 b.accounts[nu.group(1)]["password"] = np_.group(1)
+            parts.append(self._ribcl_resp(0x0000, "No error"))
+        if "DELETE_USER" in raw:
+            nu = re.search(r'USER_LOGIN\s*=\s*"([^"]*)"', raw[raw.find("DELETE_USER"):])
+            with b.lock:
+                if nu and nu.group(1) in b.accounts and nu.group(1) != mu.group(1):    # nie das eigene Konto
+                    b.accounts.pop(nu.group(1))
             parts.append(self._ribcl_resp(0x0000, "No error"))
         sim, who = b.sim, mu.group(1)
         if "GET_HOST_POWER_STATUS" in raw:
@@ -1876,7 +1903,16 @@ class Fleet:
                     return
             print(f"  [migrate] {old} -> {bmc.addr} ({NAME[bmc.vendor]})")
             self.emit()
-        threading.Thread(target=do, daemon=True).start()
+
+        def run():
+            try:
+                do()
+            finally:
+                with self.lock:
+                    bmc.moving -= 1
+        with self.lock:
+            bmc.moving += 1             # laufende Umzüge (Tests warten darauf, bis die Adresse wieder steht)
+        threading.Thread(target=run, daemon=True).start()
 
     def table(self):
         with self.lock:

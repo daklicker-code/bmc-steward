@@ -332,7 +332,7 @@ class FirmwareTabMixin:
         cfg = self.firmware_config()
         if cfg is None:
             return
-        rows = [(ip, pw or self.fw_pass.text()) for ip, pw in self.reachable_rows()]
+        rows = self.batch_rows(self.fw_pass.text())
         if not rows:
             QMessageBox.warning(self, T("Firmware"), T("Die Serverliste („Neuware“) ist leer."))
             return

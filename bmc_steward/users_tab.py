@@ -399,7 +399,7 @@ class UsersTabMixin:
         self.rot_now.setStyleSheet("" if dry else "background:#c9302c; color:white; font-weight:bold;")
 
     def rot_run_now(self):
-        rows = [(ip, pw or self.users_pass.text()) for ip, pw in self.reachable_rows()]
+        rows = self.batch_rows(self.users_pass.text())
         if not rows:
             QMessageBox.warning(self, T("Benutzerkonten"), T("Die Serverliste („Neuware“) ist leer."))
             return
@@ -436,6 +436,8 @@ class UsersTabMixin:
             for r in range(self.table.rowCount()):
                 if self.cell(r, 0) == ip or self.cell(r, 2) == ip:
                     self.table.item(r, 1).setText(pw2)
+                    # fertige Zeile: rotiert wurde der neue Administrator, nicht das (gesperrte) Werkskonto
+                    self.table.item(r, 1).setData(Qt.ItemDataRole.UserRole, pw2 if self.is_done(r) else None)
                     serial = self.cell(r, 6)
             if use_vault and vault.store(serial, ip, pw2):
                 in_vault[ip] = pw2
@@ -518,7 +520,7 @@ class UsersTabMixin:
                 due = True
         if not due:
             return
-        rows = [(ip, pw or self.users_pass.text()) for ip, pw in self.reachable_rows()]
+        rows = self.batch_rows(self.users_pass.text())
         if not rows:
             return
         self.users_say(T("— Geplante Rotation wird ausgelöst (Intervall {0} Tage) —")

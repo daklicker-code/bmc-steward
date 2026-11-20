@@ -376,7 +376,7 @@ class BiosTabMixin:
         if not wanted:
             QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Keine „Neuer Wert“-Felder ausgefüllt."))
             return
-        rows = [(ip, pw or self.bios_pass.text()) for ip, pw in self.reachable_rows()]
+        rows = self.batch_rows(self.bios_pass.text())
         if not rows:
             QMessageBox.warning(self, T("UEFI-Einstellungen"), T("Die Serverliste („Neuware“) ist leer."))
             return

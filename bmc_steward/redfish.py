@@ -394,6 +394,19 @@ class RedfishClient:
                     self.close_sessions()
             cls.run = run
 
+    row_user = ""            # Benutzer der aktuellen Zeile (fertig umgestellte Server: der neue Administrator)
+
+    def rows3(self):
+        """Zeilen als (Adresse, Passwort); ein drittes Feld setzt den Benutzer nur für diese Zeile (row_user)."""
+        for row in self.rows:
+            self.row_user = row[2] if len(row) > 2 and row[2] else ""
+            yield row[0], row[1]
+        self.row_user = ""
+
+    def login_user(self, vendor):
+        """Benutzer für die aktuelle Zeile: eigener der Zeile, sonst der oben eingetragene, sonst der Werksbenutzer."""
+        return self.row_user or self.cur_user_set or self.DEFAULT_USER[vendor]
+
     def sys_path(self, vendor):
         return f"/redfish/v1/Systems/{self.SYS_ID[vendor]}"
 
@@ -1176,11 +1189,6 @@ class Engine(RedfishClient):
         return False
 
     # ---------- Hauptschleife ----------
-    def pause(self, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end and not self.stopped():
-            time.sleep(0.2)
-
     def run(self):
         """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
         done, failed, inventory = [], [], []
@@ -1397,7 +1405,7 @@ class BiosEngine(RedfishClient):
         return True, text
 
     def apply_row(self, ip, pw, vendor):
-        user = self.cur_user_set or self.DEFAULT_USER[vendor]
+        user = self.login_user(vendor)
         self.cur_user = user
         if not self.self_guard(ip, user, pw, vendor):
             return False
@@ -1464,7 +1472,7 @@ class BiosEngine(RedfishClient):
     def run(self):
         """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
         done, failed = [], []
-        for cur_ip, row_pw in self.rows:
+        for cur_ip, row_pw in self.rows3():
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
                 failed.append(T("Abbruch"))
@@ -1733,7 +1741,7 @@ class ServicesEngine(RedfishClient):
                  ("nicmode", self.svc_nicmode), ("hard", self.svc_hard)]
         active = [(k, fn) for k, fn in order if k in self.services]
         done, failed = [], []
-        for ip, row_pw in self.rows:
+        for ip, row_pw in self.rows3():
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
                 failed.append(T("Abbruch"))
@@ -1760,7 +1768,7 @@ class ServicesEngine(RedfishClient):
                 self.unknown_hint()
                 failed.append(ip)
                 continue
-            self.cur_user = self.cur_user_set or self.DEFAULT_USER[v]
+            self.cur_user = self.login_user(v)
             self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], self.cur_user))
             self.backup(ip, self.cur_user, row_pw, v, "dienste")
             bad = False
@@ -1873,6 +1881,8 @@ class UsersEngine(RedfishClient):
             empty = None
             for m in self.body.get("Members") or []:
                 path = m.get("@odata.id") if isinstance(m, dict) else None
+                if path and path.rstrip("/").rsplit("/", 1)[-1] == "1":
+                    continue                    # iDRAC-Slot 1 ist reserviert (anonym), nie belegbar
                 if path and self.ok(self.api(ip, user, pw, "GET", path)) and isinstance(self.body, dict) \
                         and not self.body.get("UserName"):
                     empty = path
@@ -1972,7 +1982,7 @@ class UsersEngine(RedfishClient):
         neues Zufallspasswort (Engine.random_password). Gibt (ok, {Adresse: neues_Passwort}) zurück; die
         neuen Passwörter sind NUR hier im Rückgabewert und im Protokoll – nirgends sonst gespeichert."""
         done, failed, new_pw = [], [], {}
-        for ip, row_pw in self.rows:
+        for ip, row_pw in self.rows3():
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
                 failed.append(T("Abbruch"))
@@ -1995,7 +2005,7 @@ class UsersEngine(RedfishClient):
                 self.unknown_hint()
                 failed.append(ip)
                 continue
-            user = self.cur_user_set or self.DEFAULT_USER[v]
+            user = self.login_user(v)
             self.log(T('  Hersteller: {0}, Anmeldung als {1}').format(self.NAME[v], user))
             self.backup(ip, user, row_pw, v, "rotation")
             account = user if v == "hpe_old" else self._own_account_path(ip, user, row_pw, v)
@@ -2167,7 +2177,7 @@ class FirmwareEngine(RedfishClient):
         return None
 
     def apply_row(self, ip, pw, vendor):
-        user = self.cur_user_set or self.DEFAULT_USER[vendor]
+        user = self.login_user(vendor)
         self.cur_user = user
         apply_time = "Immediate" if self.cfg.get("apply", "immediate") == "immediate" else "OnReset"
         targets = self.cfg.get("targets") or []
@@ -2244,7 +2254,7 @@ class FirmwareEngine(RedfishClient):
             self.log(T('Fertig: {0} Server ohne Fehler, {1} mit Fehlern').format(0, len(self.rows)), "err")
             return False
         stop_on_error = self.cfg.get("stop_on_error", True) and not self.dry
-        for ip, row_pw in self.rows:
+        for ip, row_pw in self.rows3():
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
                 failed.append(T("Abbruch"))
