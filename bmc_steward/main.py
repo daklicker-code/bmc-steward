@@ -1,6 +1,6 @@
 """BMC-Steward: Hauptfenster (alle Reiter) und Programmstart."""
 from pathlib import Path
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QToolButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
@@ -21,6 +21,7 @@ from .i18n import HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
 from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
 from .branding import app_icon
 from .monitor import AnimatedLogo
+from .help_tab import HelpPage
 from .redfish import Engine, EngineThread, VendorProbeThread
 from .dhcp import stop_leftover_dhcp
 from .console import ConsoleMixin
@@ -543,14 +544,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
         self.lab_tab = self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
         self.plan_tab = self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
-        help_view = QTextBrowser()
-        help_view.setOpenExternalLinks(True)
-        help_view.setHtml(HELP[i18n.LANG] + ABOUT)
-        help_page = QWidget()                      # Hilfe-Text, darunter das animierte Logo
+        help_page = QWidget()                      # Suche, Inhaltsverzeichnis und Text, darunter das animierte Logo
         hl = QVBoxLayout(help_page)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(0)
-        hl.addWidget(help_view, 1)
+        self.help = HelpPage(HELP[i18n.LANG] + ABOUT)
+        hl.addWidget(self.help, 1)
         self.help_logo = AnimatedLogo(64)
         hl.addWidget(self.help_logo, 0, Qt.AlignmentFlag.AlignHCenter)
         self.tabs.addTab(help_page, T("Hilfe"), mark="?")
