@@ -543,7 +543,8 @@ class ServerSim:
             w = round(draw / n if on else 0.0, 1)
             psu.append({"id": i, "watts": w, "capacity": self.inv["psu_watts"],
                         "state": "Enabled", "health": "OK", "input_v": 231 + (i % 2),
-                        "model": self.inv["psu_model"], "serial": f"{self.bmc.serial[-6:]}P{i}"})
+                        "model": self.inv["psu_model"], "serial": f"{self.bmc.serial[-6:]}P{i}",
+                        "part": "P38995-B21"})
         return {"temps": temps, "fans": fans, "psu": psu, "watts": round(draw, 1),
                 "avg_watts": round(draw * 0.96, 1), "peak_watts": round(draw * 1.18, 1)}
 
@@ -579,7 +580,8 @@ def make_inventory(bmc, rng):
     for i in range(1, 8 * cpus + 1):
         dimms.append({"slot": f"PROC {1 if i <= 8 else 2} DIMM {(i - 1) % 8 + 1}",
                       "size_gb": 32, "type": "DDR5", "mhz": 4800, "vendor": DIMM_BY_FAMILY[fam],
-                      "part": f"M321R4GA3BB6-CQK{i:02d}", "state": "Enabled", "health": "OK"})
+                      "part": f"M321R4GA3BB6-CQK{i:02d}", "serial": f"{bmc.serial[-5:]}D{i:02d}",
+                      "state": "Enabled", "health": "OK"})
     drives = [{"id": f"Bay {i}", "model": DRIVE_BY_FAMILY[fam], "cap_gb": 3840 if fam in ("hpe", "dell") else 960,
                "media": "SSD", "protocol": "NVMe" if fam in ("hpe", "dell") else "SATA",
                "serial": f"S{rng.randint(10**9, 10**10 - 1)}", "health": "OK", "state": "Enabled"}

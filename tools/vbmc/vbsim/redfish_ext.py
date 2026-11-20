@@ -95,7 +95,7 @@ def get(bmc, p, SYS, MGR):
                                   "PowerCapacityWatts": bmc.sim.inv["psu_watts"] * 2}],
                 "PowerSupplies": [{"@odata.id": f"{p}#/PowerSupplies/{x['id'] - 1}",
                                    "MemberId": str(x["id"] - 1), "Name": f"Power Supply {x['id']}",
-                                   "Model": x["model"], "SerialNumber": x["serial"],
+                                   "Model": x["model"], "SerialNumber": x["serial"], "PartNumber": x["part"],
                                    "PowerCapacityWatts": x["capacity"], "LastPowerOutputWatts": x["watts"],
                                    "LineInputVoltage": x["input_v"],
                                    "Status": {"State": x["state"], "Health": x["health"]}}
@@ -111,6 +111,7 @@ def get(bmc, p, SYS, MGR):
                     "Model": sim.inv["cpu_model"], "TotalCores": sim.inv["cores"],
                     "TotalThreads": sim.inv["threads"], "MaxSpeedMHz": sim.inv["mhz"] + 400,
                     "OperatingSpeedMHz": sim.inv["mhz"], "ProcessorType": "CPU",
+                    "SerialNumber": f"{bmc.serial[-5:]}C{i}",
                     "Status": {"State": "Enabled", "Health": "OK"}}
     if p == sysp + "/Memory":
         dm = sim.inv["dimms"]
@@ -124,6 +125,7 @@ def get(bmc, p, SYS, MGR):
             return {"@odata.id": p, "Id": i, "Name": d["slot"], "DeviceLocator": d["slot"],
                     "CapacityMiB": d["size_gb"] * 1024, "MemoryDeviceType": d["type"],
                     "OperatingSpeedMhz": d["mhz"], "Manufacturer": d["vendor"], "PartNumber": d["part"],
+                    "SerialNumber": d["serial"],
                     "Status": {"State": d["state"], "Health": d["health"]}}
     if p == sysp + "/EthernetInterfaces":
         n = len(sim.inv["nics"])

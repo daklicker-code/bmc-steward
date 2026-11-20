@@ -537,6 +537,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs.addTab(fw_page, T("Firmware"), mark=6)
         self.swap_page = self.build_board_swap()
         self.tabs.addTab(self.swap_page, T("Mainboard-Tausch"), mark="⇄", section=T("Service"))
+        self.tabs.addTab(self.build_audit(), T("Systemaudit"), mark="✓")
         self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢")
         self.tabs.addTab(self.build_capture(), T("Aufnahme"), mark="◉", section=T("Werkzeuge"))
         vbmc_page = self.build_vbmc()
@@ -681,7 +682,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                   T("Bestandsserver"): T("Bestandsserver prüfen"), T("UEFI-Einstellungen"): T("UEFI-Einstellungen setzen"),
                   T("Dienste"): T("Dienste einrichten"), T("Benutzerkonten"): T("Benutzerkonten verwalten"),
                   T("Firmware"): T("Firmware aktualisieren"), T("Aufnahme"): T("Aufnahme und Vergleich"),
-                  T("Testlabor"): T("Testlabor"), T("Mainboard-Tausch"): T("Server nach Teiletausch wiederherstellen")}
+                  T("Testlabor"): T("Testlabor"), T("Mainboard-Tausch"): T("Server nach Teiletausch wiederherstellen"),
+                  T("Systemaudit"): T("Systemaudit als PDF")}
         from .sidenav import MARK_ROLE
         section = ""
         for i in range(self.tabs.count()):
@@ -738,6 +740,35 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.swap.next_wanted.connect(lambda: self.tabs.setCurrentIndex(self.tabs.indexOf(self.new_page)))
         lay.addWidget(self.swap, 1)
         return page
+
+    def build_audit(self):
+        """Seite „Systemaudit“: Inventar eines Servers lesen und als Audit-Blatt (PDF) speichern."""
+        from .sysaudit import AuditPage
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.addWidget(intro_label(T(
+            "<b>Systemaudit</b> erstellt das Audit-Blatt eines Servers als PDF: Hersteller, Modell und "
+            "Seriennummer, dazu Arbeitsspeicher, Prozessoren, Netzteile und Datenträger mit Part- und "
+            "Seriennummern, eine Checkliste, Bemerkung und ein Feld für die Unterschrift.<br><b>Ablauf:</b> "
+            "Adresse und Passwort eintragen, auslesen (nur lesend), Werte prüfen, Checkliste ausfüllen, "
+            "als PDF speichern.")))
+        self.audit = AuditPage(page)
+        self.audit.row_wanted.connect(self.audit_row)
+        lay.addWidget(self.audit, 1)
+        return page
+
+    def audit_row(self):
+        """Markierte (sonst erste) Zeile der Serverliste in „Systemaudit“ übernehmen; grüne Zeilen unter der
+        neuen Adresse."""
+        r = self.table.currentRow()
+        if r < 0 and self.table.rowCount():
+            r = 0
+        if r >= 0:
+            if self.is_done(r) and self.cell(r, 2):     # schon umgestellt: neue Adresse, neuer Administrator
+                self.audit.set_row(self.cell(r, 2), "")
+            else:
+                self.audit.set_row(self.cell(r, 0), self.cell(r, 1) or self.cur_pass.text())
 
     def board_swap_row(self):
         """Markierte (sonst erste) Zeile der Serverliste in die Seite „Mainboard-Tausch“ übernehmen."""
@@ -1618,6 +1649,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.console_shutdown()
         self.vbmc_shutdown()
         self.swap.stop_thread()
+        self.audit.stop_thread()
         self.swap.clear_secrets()
         readers = [getattr(self, n, None) for n in ("bios_reader", "fw_reader", "users_reader")]
         for th in list(self.vendor_threads.values()) + [t for t in readers if t is not None]:
