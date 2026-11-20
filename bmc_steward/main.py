@@ -18,7 +18,7 @@ import tempfile
 import time
 from . import i18n
 from .i18n import HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
-from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, mask, netmask, row_errors
+from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, loopback_to_real, mask, netmask, row_errors
 from .branding import app_icon
 from .monitor import AnimatedLogo
 from .help_tab import HelpPage
@@ -1754,6 +1754,15 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         n = len(todo)
         dry = self.dry.isChecked()
         if not dry:
+            bad = [f"{cur} → {new}" for cur, _, new, *_ in todo if loopback_to_real(cur, new)]
+            if bad:
+                QMessageBox.warning(self, T("Eingabe prüfen"), T(
+                    "Ein scharfer Lauf von einer Testlabor-Adresse (127.x) auf eine echte Adresse geht nicht: Der "
+                    "virtuelle Server erreicht das echte Netz nicht, die Kontrolle würde nur „FEHLT“ melden.\n\n{0}"
+                    "\n\nFür einen scharfen Lauf im Testlabor beim Übernehmen „Neue IP: Übungsadressen“ wählen, "
+                    "oder das Testlabor im Modus „Konfigraum“ bzw. „Zuhause/Router“ starten. Der Trockenlauf geht "
+                    "mit jeder Adresse.").format("\n".join(bad[:10])))
+                return
             nets = [i.network for i in self.local_ifaces()]
             lines, far = [], 0
             for cur, _, new, _, _, host in todo:

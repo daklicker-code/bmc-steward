@@ -9,7 +9,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "3.6.1"
+__version__ = "3.6.2"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -137,6 +137,13 @@ def local_network():
         return {"ip": ip, "prefix": prefix, "mask": _netmask_for(ip), "gateway": _default_gateway(prefix)}
     except Exception:       # Netzerkennung darf nie eine Bedienung blockieren; dann wie „kein Netz erkannt“
         return None
+
+
+def loopback_to_real(cur, new):
+    """True, wenn ein Gerät von einer Loopback-Adresse (127.x, nur Testlabor) auf eine echte Adresse umziehen
+    soll. Das kann nicht klappen: Ein virtueller Server auf 127.x erreicht kein echtes Netz."""
+    c, n = ipv4_port(cur or ""), ipv4_port(new or "")
+    return bool(c and n and c.is_loopback and not n.is_loopback)
 
 
 def ipv4_port(text):

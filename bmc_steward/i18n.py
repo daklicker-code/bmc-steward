@@ -2731,6 +2731,11 @@ TR = {
 "Lit ce serveur pour la fiche d'audit et ouvre « Audit système ». Lecture seule ;\nune console en cours reste connectée.",
 "List dä Server für s Audit-Blatt uus und macht „Systemaudit“ uf. Nur läse;\ne laufendi Konsole bliibt verbunde."
 ],
+"Ein scharfer Lauf von einer Testlabor-Adresse (127.x) auf eine echte Adresse geht nicht: Der virtuelle Server erreicht das echte Netz nicht, die Kontrolle würde nur „FEHLT“ melden.\n\n{0}\n\nFür einen scharfen Lauf im Testlabor beim Übernehmen „Neue IP: Übungsadressen“ wählen, oder das Testlabor im Modus „Konfigraum“ bzw. „Zuhause/Router“ starten. Der Trockenlauf geht mit jeder Adresse.": [
+"A live run from a test lab address (127.x) to a real address is not possible: the virtual server cannot reach the real network, and the check would only report “MISSING”.\n\n{0}\n\nFor a live run in the test lab, choose “New IP: practice addresses” when adopting, or start the test lab in “Konfigraum” or “Zuhause/Router” mode. The dry run works with any address.",
+"Une exécution réelle d'une adresse du labo de test (127.x) vers une adresse réelle n'est pas possible : le serveur virtuel n'atteint pas le réseau réel, le contrôle ne signalerait que « MANQUANT ».\n\n{0}\n\nPour une exécution réelle dans le labo de test, choisir « Nouvelle IP : adresses d'entraînement » lors de la reprise, ou démarrer le labo de test en mode « Konfigraum » ou « Zuhause/Router ». La simulation fonctionne avec n'importe quelle adresse.",
+"En scharfe Lauf vo nere Testlabor-Adrässe (127.x) uf e echti Adrässe gaht nöd: De virtuell Server erreicht s echte Netz nöd, d Kontrolle würd nur „FEHLT“ melde.\n\n{0}\n\nFür en scharfe Lauf im Testlabor bim Übernäh „Neui IP: Übigsadrässe“ wähle, oder s Testlabor im Modus „Konfigraum“ bzw. „Zuhause/Router“ starte. De Trockelauf gaht mit jeder Adrässe."
+],
 "  Produkt-ID/Typ passt nicht: Board meldet „{0}“, Aufkleber „{1}“.": [
 "  Product ID/type does not match: board reports “{0}”, label “{1}”.",
 "  L'ID produit/le type ne correspond pas : la carte indique « {0} », l'étiquette « {1} ».",
