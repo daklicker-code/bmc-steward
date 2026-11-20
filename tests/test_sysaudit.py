@@ -5,6 +5,7 @@ import time
 import unittest
 
 from tests._support import qapp
+from tests.test_generalprobe import FACTORY, NEW_PW, NEW_USER, _Fleet, settle
 from tests.test_vbmc import FACTORY_LOGIN, _WebBase
 
 
@@ -155,3 +156,97 @@ class TestAuditFromOtherPages(unittest.TestCase):
         self.w.con_ip.setEditText("")
         self.w.con_audit.click()
         self.assertEqual(self.started, [])
+
+
+class TestPasswordAndServerChoice(unittest.TestCase):
+    """Nie mit leerem Passwort anmelden; Server aus Neuware und Bestandsserver in einer Auswahlliste."""
+
+    @classmethod
+    def setUpClass(cls):
+        qapp()
+        from bmc_steward import i18n
+        i18n.set_language("de")
+        from bmc_steward.main import Window
+        cls.w = Window()
+
+    def test_empty_password_is_never_sent(self):
+        page = self.w.audit
+        page.thread = None
+        page.pw.clear()
+        page.start("10.0.0.5", "ops", "")
+        self.assertIsNone(page.thread)
+        self.assertIn("Passwort", page.out.toPlainText())
+
+    def test_typed_admin_password_stays_for_the_next_green_server(self):
+        page = self.w.audit
+        started = []
+        page.read = lambda: started.append(page.pw.text())
+        try:
+            page.user.setText("ops")
+            page.pw.setText("Neu-Geheim")
+            page.start("10.0.0.6", "ops", "")          # Passwort nach scharfem Lauf gelöscht
+            page.start("10.0.0.7", "root", "")         # anderer Benutzer: altes Passwort nicht weitergeben
+        finally:
+            del page.read
+        self.assertEqual(started, ["Neu-Geheim", ""])
+
+    def test_server_list_offers_new_hardware_and_existing_servers(self):
+        from PyQt6.QtWidgets import QTableWidgetItem
+        w = self.w
+        w.table.setRowCount(0)
+        w.add_row(["10.0.0.5", "werk123", "10.0.1.5", "255.255.255.0", "", "srv-a", ""])
+        w.cur_user.setText("root")
+        w.ex_table.setRowCount(0)
+        w.ex_add_row()
+        for c, val in enumerate(("10.0.0.7", "8443", "admin", "geheim")):
+            w.ex_table.setItem(0, c, QTableWidgetItem(val))
+        w.tabs.setCurrentIndex(w.tabs.indexOf(w.audit_page))      # Liste füllt sich beim Öffnen der Seite
+        box = w.audit.addr_box
+        texts = [box.itemText(i) for i in range(box.count())]
+        self.assertTrue(any("10.0.0.5" in t and "srv-a" in t for t in texts), texts)
+        self.assertTrue(any("10.0.0.7:8443" in t for t in texts), texts)
+        i = next(i for i, t in enumerate(texts) if "10.0.0.7:8443" in t)
+        box.setCurrentIndex(i)
+        box.activated.emit(i)
+        self.assertEqual((w.audit.addr.text(), w.audit.user.text(), w.audit.pw.text()),
+                         ("10.0.0.7:8443", "admin", "geheim"))
+
+
+class TestAuditAfterLiveRun(_Fleet):
+    """Nachgestellt: scharfer Lauf mit „Passwörter nach scharfem Lauf löschen“, danach Audit aus Neuware."""
+
+    def test_asks_for_password_instead_of_failed_login(self):
+        from unittest.mock import patch
+        from bmc_steward.main import Window
+        w = Window()
+        self.addCleanup(w.deleteLater)
+        b, addr = self.boot("dell", "idrac9")
+        w.table.setRowCount(0)
+        w.add_row([addr, FACTORY["dell"][1], addr, "255.255.255.0", "127.0.0.254", "gp0", ""])
+        w.new_user.setText(NEW_USER)
+        w.new_pass.setText(NEW_PW)
+        w.new_pass2.setText(NEW_PW)
+        w.dry.setChecked(False)
+        with patch.object(type(w), "confirm", lambda *a, **k: True):
+            w.run()
+            end = time.monotonic() + 60
+            while w.worker.isRunning() and time.monotonic() < end:
+                qapp().processEvents()
+                time.sleep(0.01)
+        for _ in range(20):
+            qapp().processEvents()
+        settle(b)
+        self.assertTrue(w.is_done(0))
+        self.assertEqual(w.new_pass.text(), "")            # gelöscht, wie voreingestellt
+        w.table.setCurrentCell(0, 0)
+        w.new_audit_btn.click()
+        self.assertIsNone(w.audit.thread)                   # kein Anmeldeversuch mit leerem Passwort
+        w.audit.pw.setText(NEW_PW)
+        w.audit.read()
+        end = time.monotonic() + 30
+        while w.audit.thread.isRunning() and time.monotonic() < end:
+            qapp().processEvents()
+            time.sleep(0.01)
+        for _ in range(10):
+            qapp().processEvents()
+        self.assertEqual(w.audit.serial.text(), b.serial, w.audit.out.toPlainText())

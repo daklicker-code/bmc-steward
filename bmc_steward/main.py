@@ -673,6 +673,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.bios_mode_changed()
         self.svc_mode_changed()
         self.tabs.currentChanged.connect(self.page_logged)
+        self.tabs.currentChanged.connect(self.audit_page_shown)
         self.tabs.currentChanged.connect(
             lambda i: self.planner_page_shown() if i == self.tabs.indexOf(self.planner_page) else None)
         self.tabs.currentChanged.connect(
@@ -757,13 +758,45 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "<b>Systemaudit</b> erstellt das Audit-Blatt eines Servers als PDF: Hersteller, Modell und "
             "Seriennummer, dazu Arbeitsspeicher, Prozessoren, Netzteile und Datenträger mit Part- und "
             "Seriennummern, eine Checkliste, Bemerkung und ein Feld für die Unterschrift.<br><b>Ablauf:</b> "
-            "Adresse und Passwort eintragen, auslesen (nur lesend), Werte prüfen, Checkliste ausfüllen, "
-            "als PDF speichern.")))
+            "Server aus der Liste wählen oder Adresse und Passwort eintragen, auslesen (nur lesend), Werte prüfen, "
+            "Checkliste ausfüllen, als PDF speichern.")))
         self.audit_page = page
         self.audit = AuditPage(page)
-        self.audit.row_wanted.connect(self.audit_row)
+        self.audit.sources = self.audit_sources
         lay.addWidget(self.audit, 1)
         return page
+
+    def audit_page_shown(self, i):
+        if self.tabs.widget(i) is getattr(self, "audit_page", None):
+            self.audit.refresh()
+
+    def row_audit_login(self, r):
+        """(Adresse, Benutzer, Passwort) einer Zeile der Serverliste: grüne Zeilen unter der neuen Adresse mit
+        dem neuen Administrator, sonst Aktuelle IP mit Werkszugang. Ein gelöschtes Passwort bleibt leer."""
+        if self.is_done(r) and self.cell(r, 2):
+            return self.cell(r, 2), self.new_user.text().strip(), self.admin_pw(r) or self.new_pass.text()
+        return self.cell(r, 0), self.cur_user.text().strip(), self.cell(r, 1) or self.cur_pass.text()
+
+    def audit_sources(self):
+        """Server zur Auswahl in „Systemaudit“: (Anzeige, Adresse, Benutzer, Passwort) aus „Neuware“ und
+        „Bestandsserver“, jede Adresse nur einmal."""
+        out, seen = [], set()
+        for r in range(self.table.rowCount()):
+            ip, user, pw = self.row_audit_login(r)
+            if ip and ip not in seen:
+                seen.add(ip)
+                host = self.cell(r, 5)
+                out.append((f"{ip} · {host} ({T('Neuware')})" if host else f"{ip} ({T('Neuware')})", ip, user, pw))
+        for r in range(self.ex_table.rowCount()):
+            if not self.ex_cell(r, 0):
+                continue
+            port = self.ex_cell(r, 1) or "443"
+            ip = self.ex_cell(r, 0) if port == "443" else f"{self.ex_cell(r, 0)}:{port}"
+            if ip not in seen:
+                seen.add(ip)
+                pw = self.ex_table.item(r, 3).text() if self.ex_table.item(r, 3) else ""
+                out.append((f"{ip} ({T('Bestandsserver')})", ip, self.ex_cell(r, 2), pw))
+        return out
 
     def open_audit(self, ip, user, pw):
         """Seite „Systemaudit“ zeigen und den Server gleich auslesen (aus Neuware, Bestandsserver, UEFI-Konsole)."""
@@ -774,28 +807,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.audit.start(ip, user, pw)
 
     def audit_from_list(self):
-        """Markierte (sonst erste) Zeile der Serverliste; grüne Zeilen unter der neuen Adresse mit dem neuen
-        Administrator, sonst Aktuelle IP mit Werkszugang."""
+        """Markierte (sonst erste) Zeile der Serverliste an „Systemaudit“."""
         r = self.table.currentRow()
         if r < 0 and self.table.rowCount():
             r = 0
-        if r < 0:
-            return self.open_audit("", "", "")
-        if self.is_done(r) and self.cell(r, 2):
-            return self.open_audit(self.cell(r, 2), self.new_user.text().strip(), self.new_pass.text())
-        self.open_audit(self.cell(r, 0), self.cur_user.text().strip(), self.cell(r, 1) or self.cur_pass.text())
-
-    def audit_row(self):
-        """Markierte (sonst erste) Zeile der Serverliste in „Systemaudit“ übernehmen; grüne Zeilen unter der
-        neuen Adresse."""
-        r = self.table.currentRow()
-        if r < 0 and self.table.rowCount():
-            r = 0
-        if r >= 0:
-            if self.is_done(r) and self.cell(r, 2):     # schon umgestellt: neue Adresse, neuer Administrator
-                self.audit.set_row(self.cell(r, 2), "")
-            else:
-                self.audit.set_row(self.cell(r, 0), self.cell(r, 1) or self.cur_pass.text())
+        self.open_audit(*(self.row_audit_login(r) if r >= 0 else ("", "", "")))
 
     def board_swap_row(self):
         """Markierte (sonst erste) Zeile der Serverliste in die Seite „Mainboard-Tausch“ übernehmen."""

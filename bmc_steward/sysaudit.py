@@ -8,7 +8,7 @@ Blatt (A4 quer): Kopf mit Hersteller/Modell/Seriennummer, Checkliste, Bemerkung,
 die Bauteiltabelle; reicht eine Seite nicht, geht die Tabelle auf weiteren Seiten weiter.
 """
 from PyQt6.QtCore import QDate, QMarginsF, QRectF, Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
+from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QHeaderView, QLineEdit, QPlainTextEdit, QPushButton, QTableWidget,
                              QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget)
 
@@ -299,12 +299,13 @@ def _card(title):
 
 
 class AuditPage(QWidget):
-    """Eingabe, Vorschau der Bauteile und Speichern als PDF."""
-    row_wanted = pyqtSignal()           # Hauptfenster: markierte Zeile der Serverliste übernehmen
+    """Eingabe, Vorschau der Bauteile und Speichern als PDF. `sources` liefert die Server zur Auswahl:
+    Liste von (Anzeige, Adresse, Benutzer, Passwort) aus „Neuware“ und „Bestandsserver“."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.thread = None
+        self.sources = lambda: []
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         left = QVBoxLayout()
@@ -313,14 +314,30 @@ class AuditPage(QWidget):
         outer.addLayout(rightw, 1)
 
         box, f = _card(T("1 · Server"))
-        self.addr = QLineEdit()
+        self.addr_box = QComboBox()
+        self.addr_box.setEditable(True)
+        self.addr_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.addr_box.setToolTip(T("Server aus „Neuware“ und „Bestandsserver“ wählen (trägt Benutzer und Passwort "
+                                   "ein) oder eine Adresse eintippen."))
+        self.addr_box.activated.connect(self.pick)
+        self.addr = self.addr_box.lineEdit()
         self.addr.setPlaceholderText(T("BMC-Adresse, z. B. 10.20.0.21"))
+        refresh = QPushButton("↻")
+        refresh.setFixedWidth(36)
+        refresh.setToolTip(T("Server aus „Neuware“ und „Bestandsserver“ neu einlesen"))
+        refresh.clicked.connect(self.refresh)
+        arow = QHBoxLayout()
+        arow.setContentsMargins(0, 0, 0, 0)
+        arow.addWidget(self.addr_box, 1)
+        arow.addWidget(refresh)
         self.user = QLineEdit()
         self.user.setPlaceholderText(T("leer = Werksbenutzer des Herstellers"))
         self.pw = QLineEdit()
         self.pw.setEchoMode(QLineEdit.EchoMode.Password)
-        self.pw.setToolTip(T("Wird nirgends gespeichert und steht nicht im PDF."))
-        f.addRow(T("Adresse"), self.addr)
+        self.pw.setToolTip(T("Wird nirgends gespeichert und steht nicht im PDF. Nach einem scharfen Lauf sind die "
+                             "Passwörter gelöscht: dann hier das Passwort des neuen Administrators eintragen; es "
+                             "bleibt für die nächsten Server mit demselben Benutzer stehen."))
+        f.addRow(T("Adresse"), arow)
         f.addRow(T("Benutzer"), self.user)
         f.addRow(T("Passwort"), self.pw)
         h = QHBoxLayout()
@@ -328,11 +345,7 @@ class AuditPage(QWidget):
         self.read_btn.setToolTip(T("Liest Hersteller, Modell, Seriennummer und die Bauteile (Arbeitsspeicher, "
                                    "Prozessoren, Netzteile, Datenträger) mit Part- und Seriennummern. Ändert nichts."))
         self.read_btn.clicked.connect(self.read)
-        self.row_btn = QPushButton(T("Aus Serverliste"))
-        self.row_btn.setToolTip(T("Adresse und Passwort der markierten Zeile aus „Neuware“ übernehmen."))
-        self.row_btn.clicked.connect(self.row_wanted)
         h.addWidget(self.read_btn)
-        h.addWidget(self.row_btn)
         h.addStretch(1)
         f.addRow("", h)
         left.addWidget(box)
@@ -422,22 +435,47 @@ class AuditPage(QWidget):
         t = html.escape(text).replace("  ", "&nbsp;&nbsp;")
         self.out.append(f'<span style="color:{color}">{t}</span>' if color else f"<span>{t}</span>")
 
-    def start(self, ip, user, pw):
-        """Von einer anderen Seite aus: Server übernehmen und gleich auslesen."""
+    def take(self, ip, user, pw):
+        """Server eintragen. Ohne Passwort (nach einem scharfen Lauf gelöscht) bleibt ein schon eingetipptes
+        stehen, wenn der Benutzer derselbe ist – sonst wird es geleert, nie an einen anderen Benutzer gegeben."""
+        same = (user or "") == self.user.text().strip()
         self.addr.setText(ip)
         self.user.setText(user or "")
-        self.pw.setText(pw or "")
+        if pw or not same:
+            self.pw.setText(pw or "")
+
+    def start(self, ip, user, pw):
+        """Von einer anderen Seite aus: Server übernehmen und gleich auslesen."""
+        self.take(ip, user, pw)
         self.read()
 
-    def set_row(self, ip, pw):
-        self.addr.setText(ip)
-        if pw:
-            self.pw.setText(pw)
+    def refresh(self):
+        """Auswahlliste aus „Neuware“ und „Bestandsserver“ neu aufbauen; die Eingabe bleibt stehen."""
+        keep = self.addr.text()
+        self.addr_box.blockSignals(True)
+        self.addr_box.clear()
+        for label, ip, user, pw in self.sources():
+            self.addr_box.addItem(label, (ip, user, pw))
+        self.addr_box.setCurrentIndex(-1)
+        self.addr.setText(keep)
+        self.addr_box.blockSignals(False)
+
+    def pick(self, i):
+        data = self.addr_box.itemData(i)
+        if data:
+            self.take(*data)
 
     def read(self):
         ip = self.addr.text().strip()
         if not ip:
             self.say(T("Aktuelle IP eintragen."), "err")
+            return
+        if not self.pw.text():
+            self.out.clear()
+            self.say(T("Passwort fehlt – nach einem scharfen Lauf sind die Passwörter gelöscht. Passwort für {0} "
+                       "eintragen, dann „Auslesen“. Ohne Passwort wird keine Anmeldung versucht.").format(
+                         self.user.text().strip() or T("den Werksbenutzer")), "err")
+            self.pw.setFocus()
             return
         self.out.clear()
         self.say("== " + ip, "head")
