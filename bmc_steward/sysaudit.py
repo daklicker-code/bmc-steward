@@ -265,14 +265,22 @@ def render_sheets(path, sheets, checks, remark, staff, date):
     eine Zelle passen, laufen in Folgezeilen weiter, lange Listen auf Folgeseiten. Checkliste, Bemerkung,
     Mitarbeiter und Datum gelten für alle Blätter. Gibt die Seitenzahl zurück."""
     from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPainter, QPdfWriter, QPen
-    w = QPdfWriter(str(path))
+    from PyQt6.QtGui import QPagedPaintDevice
+    serial0 = sheets[0][0].get("serial", "") if len(sheets) == 1 else ""
+    if isinstance(path, QPagedPaintDevice):     # Drucker (QPrinter) statt Datei
+        w = path
+        if hasattr(w, "setFullPage"):
+            w.setFullPage(True)                 # Koordinaten ab Blattkante wie im PDF
+        if hasattr(w, "setDocName"):
+            w.setDocName(T("Systemaudit") + (" " + serial0 if serial0 else ""))
+    else:
+        w = QPdfWriter(str(path))
+        w.setResolution(300)
+        w.setTitle(T("Systemaudit") + (" " + serial0 if serial0 else ""))
+        w.setCreator("BMC-Steward")
     w.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
     w.setPageOrientation(QPageLayout.Orientation.Landscape)
     w.setPageMargins(QMarginsF(0, 0, 0, 0))
-    w.setResolution(300)
-    serial0 = sheets[0][0].get("serial", "") if len(sheets) == 1 else ""
-    w.setTitle(T("Systemaudit") + (" " + serial0 if serial0 else ""))
-    w.setCreator("BMC-Steward")
     k = w.resolution() / 25.4                      # Bildpunkte je Millimeter
     p = QPainter(w)
     if not p.isActive():
@@ -333,14 +341,30 @@ def render_sheets(path, sheets, checks, remark, staff, date):
             lines += [["", "", "", c] for c in chunks[1:]]
         return lines
 
+    def draw_qr(content, x, y, size):
+        """QR-Code (Seriennummer zum Scannen beim Einbuchen); die weiße Fläche drumherum dient als Ruhezone."""
+        from PyQt6.QtGui import QColor
+        from .qr import encode
+        try:
+            mod = encode(content)
+        except ValueError:
+            return
+        cell = size / len(mod)
+        for yy, row in enumerate(mod):
+            for xx, dark in enumerate(row):
+                if dark:
+                    p.fillRect(R(x + xx * cell, y + yy * cell, cell, cell), QColor("black"))
+
     def left_block(head):
         hx, hy = 15.0, 27.0
         labels = (T("Hersteller:"), T("Modell/Typ:"), T("Seriennummer:"))
         values = (head.get("manufacturer", ""), head.get("model", ""), head.get("serial", ""))
-        grid(hx, hy, [28, 52], 3, rh)
+        grid(hx, hy, [28, 34], 3, rh)
+        if head.get("serial"):
+            draw_qr(head["serial"], hx + 66, hy - 0.5, 15.0)
         for i, (lab, val) in enumerate(zip(labels, values)):
             text(hx, hy + i * rh, 28, rh, lab, left, bold)
-            text(hx + 28, hy + i * rh, 52, rh, val, center)
+            text(hx + 28, hy + i * rh, 34, rh, val, center)
         text(hx, 47, 80, 5, T("Checkliste"), left, bold, 0)
         grid(hx, 52, [72, 8], 6, 5.0)
         for i, lab in enumerate(check_labels()):
@@ -400,7 +424,96 @@ def _card(title):
     return box, f
 
 
-class AuditPage(QWidget):
+def archive_pdf(path, serials, say):
+    """Kopie in die automatische Ablage, wenn eingeschaltet (Einstellungen → Systemaudit)."""
+    from . import export, settings
+    if not settings.get("audit_archive"):
+        return None
+    try:
+        dest = export.archive(path, serials)
+    except OSError as e:
+        say(T("  Ablage nicht möglich: {0}").format(e), "warn")
+        return None
+    say(T("  Abgelegt: {0}").format(dest))
+    return dest
+
+
+class _Exports:
+    """Gemeinsame Exporte für die Seite und den Dialog „Mehrere Server“: Drucken, Excel, CSV, JSON."""
+    KINDS = {"xlsx": ("Excel-Datei (*.xlsx)", "Inventar"), "csv": ("CSV-Datei (*.csv)", "Inventar"),
+             "json": ("JSON-Datei (*.json)", "Systemaudit")}
+
+    def sheets(self):
+        raise NotImplementedError
+
+    def common_values(self):
+        raise NotImplementedError
+
+    def export_button(self):
+        from PyQt6.QtWidgets import QMenu
+        btn = QPushButton(T("Exportieren …"))
+        btn.setToolTip(T("Drucken, Inventar als Excel- oder CSV-Datei, Audit als JSON (z. B. für ein Asset- oder "
+                         "Ticket-System)."))
+        menu = QMenu(btn)
+        menu.addAction(T("Drucken …"), self.print_sheets)
+        menu.addSeparator()
+        menu.addAction(T("Inventar als Excel-Datei …"), lambda: self.ask_export("xlsx"))
+        menu.addAction(T("Inventar als CSV-Datei …"), lambda: self.ask_export("csv"))
+        menu.addAction(T("Audit als JSON-Datei …"), lambda: self.ask_export("json"))
+        btn.setMenu(menu)
+        return btn
+
+    def export_name(self, kind):
+        sheets = self.sheets()
+        what = sheets[0][0].get("serial") if len(sheets) == 1 and sheets[0][0].get("serial") else \
+            T("{0}-Server").format(len(sheets))
+        name = "{0}-{1}-{2}.{3}".format(self.KINDS[kind][1], what, self.common_values()[3].replace(".", "-"), kind)
+        return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in name)
+
+    def ask_export(self, kind):
+        if not self.sheets():
+            self.say(T("Noch nichts zum Exportieren – erst auslesen."), "err")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, T("Exportieren …"), str(pdf_dir() / self.export_name(kind)),
+                                              T(self.KINDS[kind][0]))
+        if path:
+            if not path.lower().endswith("." + kind):
+                path += "." + kind
+            self.export_to(kind, path)
+
+    def export_to(self, kind, path):
+        from . import export
+        sheets = self.sheets()
+        try:
+            if kind == "json":
+                export.write_json(path, sheets, *self.common_values())
+            else:
+                export.write_inventory(path, sheets)
+        except OSError as e:
+            self.say(T("  FEHLER: {0}").format(e), "err")
+            return False
+        self.say(T("Exportiert: {0}").format(path), "ok")
+        return True
+
+    def print_sheets(self):
+        from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
+        if not self.sheets():
+            self.say(T("Noch nichts zum Drucken – erst auslesen."), "err")
+            return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dlg = QPrintDialog(printer, self)
+        dlg.setWindowTitle(T("Systemaudit drucken"))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            n = render_sheets(printer, self.sheets(), *self.common_values())
+        except OSError as e:
+            self.say(T("  FEHLER: {0}").format(e), "err")
+            return
+        self.say(T("An den Drucker geschickt: {0} Seite(n).").format(n), "ok")
+
+
+class AuditPage(_Exports, QWidget):
     """Eingabe, Vorschau der Bauteile und Speichern als PDF. `sources` liefert die Server zur Auswahl:
     Liste von (Anzeige, Adresse, Benutzer, Passwort) aus „Neuware“ und „Bestandsserver“."""
 
@@ -505,6 +618,8 @@ class AuditPage(QWidget):
         self.table.setToolTip(T("Alles von Hand änderbar. Mehrere Seriennummern mit „/“ trennen."))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setStretchLastSection(True)
+        for c, wd in enumerate((150, 190, 70)):
+            self.table.setColumnWidth(c, wd)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         v.addWidget(self.table, 1)
         h = QHBoxLayout()
@@ -522,6 +637,7 @@ class AuditPage(QWidget):
         self.mail_btn.setToolTip(T("Schickt das Audit-Blatt als PDF an den Mitarbeiter oder an andere Empfänger "
                                    "(SMTP aus den Einstellungen oder das eigene Mailprogramm)."))
         self.mail_btn.clicked.connect(lambda: MailDialog(self, self.pdf_for_mail).exec())
+        h.addWidget(self.export_button())
         h.addWidget(self.pdf_btn)
         h.addWidget(self.mail_btn)
         v.addLayout(h)
@@ -686,7 +802,19 @@ class AuditPage(QWidget):
         path = Path(tempfile.mkdtemp(prefix="bmc-steward-mail-")) / name
         render_pdf(path, {"manufacturer": self.maker.text().strip(), "model": self.model.text().strip(),
                           "serial": self.serial.text().strip()}, self.rows(), *self.common())
+        archive_pdf(path, [self.serial.text().strip()], self.say)
         return path, self.mail_values()
+
+    def head(self):
+        return {"manufacturer": self.maker.text().strip(), "model": self.model.text().strip(),
+                "serial": self.serial.text().strip()}
+
+    def sheets(self):
+        h, rows = self.head(), self.rows()
+        return [(h, rows)] if rows or any(h.values()) else []
+
+    def common_values(self):
+        return self.common()
 
     def save_pdf(self, path):
         head = {"manufacturer": self.maker.text().strip(), "model": self.model.text().strip(),
@@ -697,6 +825,7 @@ class AuditPage(QWidget):
             self.say(T("  FEHLER: {0}").format(e), "err")
             return False
         self.say(T("PDF gespeichert ({0} Seite(n)): {1}").format(n, path), "ok")
+        archive_pdf(path, [head["serial"]], self.say)
         return True
 
     def stop_thread(self):
@@ -798,7 +927,7 @@ class StaffDialog(QDialog):
         self.new_entry()
 
 
-class BatchAuditDialog(QDialog):
+class BatchAuditDialog(_Exports, QDialog):
     """Mehrere Server auswählen, nacheinander auslesen und als ein PDF speichern (je Server ein Blatt)."""
 
     def __init__(self, page):
@@ -838,6 +967,10 @@ class BatchAuditDialog(QDialog):
         self.mail_btn.setToolTip(T("Schickt das zuletzt gespeicherte PDF per E-Mail."))
         self.mail_btn.clicked.connect(lambda: MailDialog(self, lambda: self.last_pdf).exec())
         h.addWidget(self.mail_btn)
+        self.sheet_list = []
+        self.export_btn = self.export_button()
+        self.export_btn.setEnabled(False)
+        h.addWidget(self.export_btn)
         lay.addLayout(h)
         self.out = QTextBrowser()
         lay.addWidget(self.out, 1)
@@ -883,6 +1016,9 @@ class BatchAuditDialog(QDialog):
         if not good:
             self.say(T("Kein Server ließ sich auslesen; kein PDF erstellt."), "err")
             return
+        self.sheet_list = [({"manufacturer": r["manufacturer"], "model": r["model"], "serial": r["serial"]},
+                            group_items(r["items"])) for _, r in good]
+        self.export_btn.setEnabled(True)            # auch ohne gespeichertes PDF: drucken, Excel, CSV, JSON
         path = self.target
         if not path:
             from pathlib import Path
@@ -893,14 +1029,14 @@ class BatchAuditDialog(QDialog):
                 return
             if not path.lower().endswith(".pdf"):
                 path += ".pdf"
-        sheets = [({"manufacturer": r["manufacturer"], "model": r["model"], "serial": r["serial"]},
-                   group_items(r["items"])) for _, r in good]
+        sheets = self.sheet_list
         try:
             n = render_sheets(path, sheets, *self.page.common())
         except OSError as e:
             self.say(T("  FEHLER: {0}").format(e), "err")
             return
         self.say(T("PDF gespeichert: {0} Server, {1} Seite(n): {2}").format(len(good), n, path), "ok")
+        archive_pdf(path, [h["serial"] for h, _ in sheets], self.say)
         values = self.page.mail_values(len(good))
         if len(good) > 1:
             values["seriennummer"] = T("{0} Server").format(len(good))
@@ -912,6 +1048,12 @@ class BatchAuditDialog(QDialog):
         self.mail_btn.setEnabled(True)
         if bad:
             self.say(T("{0} Server nicht ausgelesen (siehe oben), nicht im PDF.").format(bad), "warn")
+
+    def sheets(self):
+        return self.sheet_list
+
+    def common_values(self):
+        return self.page.common()
 
     def done(self, code):
         if self.thread is not None and self.thread.isRunning():

@@ -29,6 +29,7 @@ SPEC = {
     "log_max_entries": (20000, 1000, 200000),
     "audit_auto_read": (True,),
     "audit_dir": ("",),                   # leer = persönlicher Ordner
+    "audit_archive": (True,),             # jedes Audit-PDF zusätzlich nach <Datenordner>/audits/ kopieren
     "mail_subject": ("",),                # leer = Vorgabe der eingestellten Sprache (mail_texts)
     "mail_body": ("",),
     "smtp_host": ("",),
@@ -219,6 +220,10 @@ class SettingsDialog(QDialog):
         auto.setChecked(s["audit_auto_read"])
         f.addRow("", auto)
         self.widgets["audit_auto_read"] = auto
+        arch = QCheckBox(T("Jedes Audit-PDF automatisch im Datenordner ablegen (audits/<Seriennummer>/)"))
+        arch.setChecked(s["audit_archive"])
+        f.addRow("", arch)
+        self.widgets["audit_archive"] = arch
         d = QLineEdit(s["audit_dir"])
         d.setPlaceholderText(str(Path.home()))
         pick = QPushButton("…")

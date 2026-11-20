@@ -5,6 +5,7 @@ bmc-selfguard.json
 bmc-pins.json
 protokolle/
 sicherungen/
+audits/
 servers.csv
 *.csv
 *.log

@@ -403,6 +403,12 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         btns.addWidget(find)
         btns.addWidget(load)
         btns.addWidget(save)
+        handover = QPushButton(T("Übergabe …"))
+        handover.setToolTip(T("Übergabeprotokoll der Serverliste als PDF, Excel- oder CSV-Datei: Adressen, Hostname, "
+                              "Seriennummer, Hersteller und Status – ohne Passwörter. Das PDF hat Felder für Übergabe "
+                              "und Übernahme mit Unterschrift."))
+        handover.clicked.connect(self.ask_handover)
+        btns.addWidget(handover)
         btns.addStretch()
         btns.addWidget(self.count)
 
@@ -778,6 +784,44 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.audit.sources = self.audit_sources
         lay.addWidget(self.audit, 1)
         return page
+
+    def handover_rows(self):
+        """Zeilen für das Übergabeprotokoll (ohne Passwort-Spalte); Status fertig/offen."""
+        out = []
+        for r in range(self.table.rowCount()):
+            vals = [self.cell(r, c) for c in range(len(i18n.COLS) + 1)]
+            if not (vals[0] or vals[2] or vals[5]):
+                continue
+            status = T("fertig") if self.is_done(r) else T("offen")
+            out.append([vals[0], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], status])
+        return out
+
+    def handover_to(self, path):
+        from . import export
+        rows = self.handover_rows()
+        if not rows:
+            self.status.setText(T("Die Serverliste ist leer."))
+            return False
+        try:
+            export.write_handover(path, rows, self.audit.current_staff(), time.strftime("%d.%m.%Y"))
+        except OSError as e:
+            QMessageBox.warning(self, T("Übergabe …"), T("Datei nicht schreibbar:\n{0}").format(e))
+            return False
+        self.status.setText(T("Übergabeprotokoll gespeichert: {0}").format(path))
+        return True
+
+    def ask_handover(self):
+        from .sysaudit import pdf_dir
+        name = "Uebergabe-" + time.strftime("%Y-%m-%d") + ".pdf"
+        path, flt = QFileDialog.getSaveFileName(
+            self, T("Übergabe …"), str(pdf_dir() / name),
+            ";;".join((T("PDF-Datei (*.pdf)"), T("Excel-Datei (*.xlsx)"), T("CSV-Datei (*.csv)"))))
+        if not path:
+            return
+        ext = ".xlsx" if "xlsx" in flt else ".csv" if "csv" in flt else ".pdf"
+        if not path.lower().endswith((".pdf", ".xlsx", ".csv")):
+            path += ext
+        self.handover_to(path)
 
     def audit_page_shown(self, i):
         if self.tabs.widget(i) is getattr(self, "audit_page", None):
