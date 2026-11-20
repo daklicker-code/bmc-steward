@@ -78,7 +78,8 @@ def main():
     # Anzeige: statt 127.0.0.1:<Port> realistische Adressen aus dem Staging- und Zielnetz
     fake = {}
     for n, (v, addr, b) in bmcs.items():
-        fake[addr] = f"192.168.200.{100 + n}"
+        fake[addr] = f"192.0.2.{100 + n}"
+        fake["Port " + addr.split(":")[1]] = "Port 443"
         fake[f"127.0.1.{n}"] = f"10.20.0.{10 + n}"
 
     def disguise():
@@ -95,11 +96,13 @@ def main():
                 te.setHtml(sub(h))
                 te.verticalScrollBar().setValue(bar)
         for t in w.findChildren(QTableWidget):
+            t.blockSignals(True)                    # sonst prüft die Serverliste die „neue“ Adresse erneut
             for r in range(t.rowCount()):
                 for c in range(t.columnCount()):
                     it = t.item(r, c)
                     if it and "127.0." in it.text():
                         it.setText(sub(it.text()))
+            t.blockSignals(False)
         for x in w.findChildren(QLabel) + w.findChildren(QLineEdit):
             if "127.0." in x.text():
                 x.setText(sub(x.text()))
@@ -109,7 +112,17 @@ def main():
         w.status.setText(sub(w.status.text()))
         pump(0.2)
 
+    from bmc_steward.monitor import MonitorWidget
+    for mon in w.findChildren(MonitorWidget):        # Logo im Monitor immer vollständig, mit grünem Schein
+        mon._logo_progress = lambda: 1.0
+        mon._logo_glow = lambda: 0.55
+    for f in getattr(w, "deps_footers", []):         # Hinweise „optionales Paket fehlt“ gehören nicht ins Bild
+        if f is not None:
+            f.setVisible(False)
+
     def shot(fname):
+        for mon in w.findChildren(MonitorWidget):
+            mon.update()
         disguise()
         w.grab().save(str(out / fname))
         print("  ", out / fname)
@@ -124,21 +137,31 @@ def main():
         w.add_row([addr, PW[v], f"127.0.1.{n}", "255.255.255.0", "127.0.1.254", f"srv-{v}-{n:02d}", ""])
     fake["127.0.1.254"] = "10.20.0.1"
     pump(until=lambda: all(w.cell(r, w.vendor_col) for r in range(w.table.rowCount())), limit=30)
+    shown = {"dell": "Dell iDRAC9", "hpe": "HPE iLO 6", "lenovo": "Lenovo XCC2", "smc": "Supermicro X13"}
+    serials = ["7XK2Q83", "CZJ2410ABC", "J30AB12", "S41275X2", "9FT4R73", "CZJ2410ABD"]
     page("Neuware")
     w.run()
     pump(until=lambda: not w.running(), limit=90)
+    w.table.blockSignals(True)
+    for r, (v, addr, b) in enumerate(bmcs.values()):
+        w.table.item(r, 6).setText(serials[r])
+        from PyQt6.QtWidgets import QTableWidgetItem
+        w.table.setItem(r, w.vendor_col, QTableWidgetItem(shown[v]))
+    w.table.blockSignals(False)
     shot("screenshot.png")
 
     # --- DHCP-Server: Geräteliste ---
     page("DHCP-Server")
-    w.show_leases([("192.168.200.101", "d0:94:66:1a:2b:01", "idrac-7XK2Q83"),
-                   ("192.168.200.102", "94:40:c9:3c:4d:02", "ILOCZJ2410ABC"),
-                   ("192.168.200.103", "08:94:ef:5e:6f:03", "XCC-7X06-J30AB12"),
-                   ("192.168.200.104", "3c:ec:ef:7a:8b:04", "")])
+    w.show_leases([("192.0.2.101", "d0:94:66:1a:2b:01", "idrac-7XK2Q83"),
+                   ("192.0.2.102", "94:40:c9:3c:4d:02", "ILOCZJ2410ABC"),
+                   ("192.0.2.103", "08:94:ef:5e:6f:03", "XCC-7X06-J30AB12"),
+                   ("192.0.2.104", "3c:ec:ef:7a:8b:04", "")])
     w.dhcp_log.setPlainText("dnsmasq: started, version 2.90\n"
-                            "dnsmasq-dhcp: DHCP, IP range 192.168.200.100 -- 192.168.200.150, lease time 1h\n"
-                            "dnsmasq-dhcp: DHCPACK(enp3s0) 192.168.200.101 d0:94:66:1a:2b:01 idrac-7XK2Q83\n"
-                            "dnsmasq-dhcp: DHCPACK(enp3s0) 192.168.200.102 94:40:c9:3c:4d:02 ILOCZJ2410ABC")
+                            "dnsmasq-dhcp: DHCP, IP range 192.0.2.100 -- 192.0.2.200, lease time 1h\n"
+                            "dnsmasq-dhcp: DHCPACK(eth0) 192.0.2.101 d0:94:66:1a:2b:01 idrac-7XK2Q83\n"
+                            "dnsmasq-dhcp: DHCPACK(eth0) 192.0.2.102 94:40:c9:3c:4d:02 ILOCZJ2410ABC\n"
+                            "dnsmasq-dhcp: DHCPACK(eth0) 192.0.2.103 08:94:ef:5e:6f:03 XCC-7X06-J30AB12\n"
+                            "dnsmasq-dhcp: DHCPACK(eth0) 192.0.2.104 3c:ec:ef:7a:8b:04")
     pump(0.3)
     shot("screenshot-1-dhcp.png")
 
@@ -175,6 +198,13 @@ def main():
     path = c.backup(old[1], "Administrator", PW["hpe"], "hpe", "neuware")
     c.close_sessions()
     doc = json.loads(path.read_text(encoding="utf-8"))
+    for rpath, body in doc["resources"].items():
+        if "/EthernetInterfaces/" in rpath and isinstance(body, dict):
+            body["HostName"] = "srv-hpe-02"
+            body["IPv4StaticAddresses"] = [{"Address": "10.20.0.12", "SubnetMask": "255.255.255.0",
+                                            "Gateway": "10.20.0.1"}]
+            body["IPv4Addresses"] = body["IPv4StaticAddresses"]
+            break
     label = "CZJ2410ABC"
     d = i18n.DATA / "sicherungen" / label
     d.mkdir(parents=True, exist_ok=True)
