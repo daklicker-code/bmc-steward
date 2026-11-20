@@ -14,4 +14,6 @@ bmc-vault.json
 bmc-rotation.json
 bmc-console.json
 bmc-mitarbeiter.json
+bmc-einstellungen.json
+bmc-design.json
 tests/.timings.json

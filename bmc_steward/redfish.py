@@ -175,6 +175,7 @@ def scrub(data):
 class RedfishClient:
     """Gemeinsamer Unterbau: HTTP/Redfish-Zugriff und Hersteller-Erkennung, ohne eigenen Ablauf."""
 
+    TIMEOUT = 30                # Sekunden für Anfragen ohne eigenes Limit (Einstellungen → Experten)
     DEFAULT_USER = {"dell": "root", "hpe": "Administrator", "hpe_old": "Administrator", "smc": "ADMIN",
                     "lenovo": "USERID"}
     NAME = {"dell": "Dell (iDRAC)", "hpe": "HPE (iLO)", "hpe_old": "HPE (iLO 3/4)", "smc": "Supermicro",
@@ -560,8 +561,10 @@ class RedfishClient:
         return self.tls[ip]
 
     # ---------- HTTP ----------
-    def api(self, ip, user, pw, method, path, data=None, timeout=30, _retry=True):
-        """Sendet eine Anfrage, gibt den HTTP-Code zurück (0 = keine Verbindung); Antwort in self.body."""
+    def api(self, ip, user, pw, method, path, data=None, timeout=None, _retry=True):
+        """Sendet eine Anfrage, gibt den HTTP-Code zurück (0 = keine Verbindung); Antwort in self.body.
+        Ohne `timeout` gilt TIMEOUT (Einstellung „Zeitlimit für BMC-Anfragen“)."""
+        timeout = timeout or self.TIMEOUT
         self.body = None
         self.resp_headers = {}
         if self.dry:

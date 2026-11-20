@@ -22,6 +22,14 @@ from .redfish import RedfishClient
 STAFF_FIELDS = ("name", "email", "phone", "address", "extra")
 
 
+def pdf_dir():
+    """Vorgeschlagener Ordner für PDFs: Einstellung „Ordner für PDFs“, sonst der persönliche Ordner."""
+    from pathlib import Path
+    from . import settings
+    d = settings.get("audit_dir")
+    return Path(d) if d and Path(d).is_dir() else Path.home()
+
+
 def staff_file():
     """Mitarbeiterliste im Datenordner (nur für den eigenen Benutzer lesbar)."""
     return i18n.DATA / "bmc-mitarbeiter.json"
@@ -510,7 +518,12 @@ class AuditPage(QWidget):
         h.addWidget(add)
         h.addWidget(rem)
         h.addStretch(1)
+        self.mail_btn = QPushButton(T("Per E-Mail …"))
+        self.mail_btn.setToolTip(T("Schickt das Audit-Blatt als PDF an den Mitarbeiter oder an andere Empfänger "
+                                   "(SMTP aus den Einstellungen oder das eigene Mailprogramm)."))
+        self.mail_btn.clicked.connect(lambda: MailDialog(self, self.pdf_for_mail).exec())
         h.addWidget(self.pdf_btn)
+        h.addWidget(self.mail_btn)
         v.addLayout(h)
         rightw.addWidget(box, 3)
         self.reload_staff()
@@ -573,9 +586,13 @@ class AuditPage(QWidget):
         self.addr_box.blockSignals(False)
 
     def pick(self, i):
+        """Server aus der Liste übernehmen und – voreingestellt – gleich auslesen."""
+        from . import settings
         data = self.addr_box.itemData(i)
         if data:
             self.take(*data)
+            if settings.get("audit_auto_read"):
+                self.read()
 
     def read(self):
         ip = self.addr.text().strip()
@@ -617,7 +634,7 @@ class AuditPage(QWidget):
         name = "Systemaudit-{0}-{1}.pdf".format(self.serial.text().strip() or "Server",
                                                 self.date.date().toString("yyyy-MM-dd"))
         name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in name)
-        path, _ = QFileDialog.getSaveFileName(self, T("Als PDF speichern …"), str(Path.home() / name),
+        path, _ = QFileDialog.getSaveFileName(self, T("Als PDF speichern …"), str(pdf_dir() / name),
                                               T("PDF-Datei (*.pdf)"))
         if path:
             if not path.lower().endswith(".pdf"):
@@ -651,6 +668,25 @@ class AuditPage(QWidget):
         """Was für jedes Blatt gilt: Checkliste, Bemerkung, Mitarbeiter, Datum."""
         return ([c.isChecked() for c in self.checks], self.remark.toPlainText().strip(), self.current_staff(),
                 self.date.date().toString("dd.MM.yyyy"))
+
+    def mail_values(self, count=1):
+        """Werte für die Platzhalter in Betreff und Text der Mail."""
+        st = self.current_staff()
+        return {"seriennummer": self.serial.text().strip(), "modell": self.model.text().strip(),
+                "hersteller": self.maker.text().strip(), "datum": self.date.date().toString("dd.MM.yyyy"),
+                "mitarbeiter": st.get("name", "") if isinstance(st, dict) else st, "anzahl": count}
+
+    def pdf_for_mail(self):
+        """Audit-Blatt in einen privaten Zwischenordner schreiben: (Pfad, Platzhalterwerte)."""
+        import tempfile
+        from pathlib import Path
+        name = "Systemaudit-{0}-{1}.pdf".format(self.serial.text().strip() or "Server",
+                                                self.date.date().toString("yyyy-MM-dd"))
+        name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in name)
+        path = Path(tempfile.mkdtemp(prefix="bmc-steward-mail-")) / name
+        render_pdf(path, {"manufacturer": self.maker.text().strip(), "model": self.model.text().strip(),
+                          "serial": self.serial.text().strip()}, self.rows(), *self.common())
+        return path, self.mail_values()
 
     def save_pdf(self, path):
         head = {"manufacturer": self.maker.text().strip(), "model": self.model.text().strip(),
@@ -796,6 +832,12 @@ class BatchAuditDialog(QDialog):
         self.go = QPushButton(T("Auslesen und als PDF speichern …"))
         self.go.clicked.connect(self.start)
         h.addWidget(self.go)
+        self.last_pdf = None
+        self.mail_btn = QPushButton(T("Per E-Mail …"))
+        self.mail_btn.setEnabled(False)
+        self.mail_btn.setToolTip(T("Schickt das zuletzt gespeicherte PDF per E-Mail."))
+        self.mail_btn.clicked.connect(lambda: MailDialog(self, lambda: self.last_pdf).exec())
+        h.addWidget(self.mail_btn)
         lay.addLayout(h)
         self.out = QTextBrowser()
         lay.addWidget(self.out, 1)
@@ -845,7 +887,7 @@ class BatchAuditDialog(QDialog):
         if not path:
             from pathlib import Path
             name = "Systemaudit-{0}-Server-{1}.pdf".format(len(good), self.page.date.date().toString("yyyy-MM-dd"))
-            path, _ = QFileDialog.getSaveFileName(self, T("Als PDF speichern …"), str(Path.home() / name),
+            path, _ = QFileDialog.getSaveFileName(self, T("Als PDF speichern …"), str(pdf_dir() / name),
                                                   T("PDF-Datei (*.pdf)"))
             if not path:
                 return
@@ -859,6 +901,15 @@ class BatchAuditDialog(QDialog):
             self.say(T("  FEHLER: {0}").format(e), "err")
             return
         self.say(T("PDF gespeichert: {0} Server, {1} Seite(n): {2}").format(len(good), n, path), "ok")
+        values = self.page.mail_values(len(good))
+        if len(good) > 1:
+            values["seriennummer"] = T("{0} Server").format(len(good))
+            values["modell"] = ", ".join(r["model"] for _, r in good if r.get("model"))
+        else:
+            values.update(seriennummer=good[0][1]["serial"], modell=good[0][1]["model"],
+                          hersteller=good[0][1]["manufacturer"])
+        self.last_pdf = (path, values)
+        self.mail_btn.setEnabled(True)
         if bad:
             self.say(T("{0} Server nicht ausgelesen (siehe oben), nicht im PDF.").format(bad), "warn")
 
@@ -867,3 +918,171 @@ class BatchAuditDialog(QDialog):
             self.thread.requestInterruption()
             self.thread.wait(5000)
         super().done(code)
+
+
+class MailThread(QThread):
+    done = pyqtSignal(str)              # "" = verschickt, sonst die Fehlermeldung
+
+    def __init__(self, parent, job):
+        super().__init__(parent)
+        self.job = job
+
+    def run(self):
+        self.done.emit(self.job())
+
+
+class MailDialog(QDialog):
+    """Audit-PDF per E-Mail: an den Mitarbeiter (vorgeschlagen) oder an beliebige Empfänger."""
+
+    def __init__(self, parent, maker):
+        from . import settings, vault
+        super().__init__(parent)
+        self.maker = maker              # liefert (PDF-Pfad, Platzhalterwerte) oder None
+        self.thread = None
+        self.cfg = settings.load()
+        self.setWindowTitle(T("Audit per E-Mail"))
+        self.resize(560, 460)
+        made = maker()
+        self.pdf, values = made if made else (None, {})
+        lay = QVBoxLayout(self)
+        f = QFormLayout()
+        f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.to = QComboBox()
+        self.to.setEditable(True)
+        staff = load_staff()
+        for e in staff:
+            if e["email"]:
+                self.to.addItem(e["email"])
+        cur = parent.page.current_staff() if hasattr(parent, "page") else parent.current_staff()
+        mine = cur.get("email", "") if isinstance(cur, dict) else ""
+        self.to.setEditText(mine)
+        self.to.setToolTip(T("Mehrere Empfänger mit Komma oder Semikolon trennen."))
+        self.cc = QLineEdit()
+        self.cc.setPlaceholderText(T("optional"))
+        subj, body = settings.mail_texts(self.cfg)
+        self.subject = QLineEdit(mailer_fill(subj, values))
+        self.body = QPlainTextEdit(mailer_fill(body, values))
+        f.addRow(T("An"), self.to)
+        f.addRow(T("Kopie"), self.cc)
+        f.addRow(T("Betreff"), self.subject)
+        f.addRow(T("Text"), self.body)
+        self.attach = QLabel(str(self.pdf.name) if self.pdf else T("kein PDF"))
+        f.addRow(T("Anhang"), self.attach)
+        self.pw = QLineEdit()
+        self.pw.setEchoMode(QLineEdit.EchoMode.Password)
+        self.remember = QCheckBox(T("Passwort im System-Schlüsselbund merken"))
+        self.remember.setEnabled(vault.available())
+        self.vault_key = f"smtp-{self.cfg['smtp_user']}@{self.cfg['smtp_host']}"
+        if self.cfg["smtp_user"]:
+            saved = vault.fetch(self.vault_key, "")
+            self.pw.setText(saved)
+            self.remember.setChecked(bool(saved))
+            f.addRow(T("SMTP-Passwort"), self.pw)
+            f.addRow("", self.remember)
+        lay.addLayout(f)
+        self.status = QLabel(T("Versand über {0}").format(self.cfg["smtp_host"]) if self.cfg["smtp_host"]
+                             else T("Kein SMTP-Server eingestellt (Einstellungen → E-Mail). Das eigene "
+                                    "Mailprogramm geht trotzdem."))
+        self.status.setWordWrap(True)
+        lay.addWidget(self.status)
+        h = QHBoxLayout()
+        self.send_btn = QPushButton(T("Senden"))
+        self.send_btn.setEnabled(bool(self.cfg["smtp_host"] and self.pdf))
+        self.send_btn.clicked.connect(lambda: self.send())
+        client = QPushButton(T("Im Mailprogramm öffnen"))
+        client.setToolTip(T("Öffnet das eigene Mailprogramm mit Empfänger, Betreff, Text und dem PDF als Anhang."))
+        client.setEnabled(bool(self.pdf))
+        client.clicked.connect(self.open_client)
+        close = QPushButton(T("Schließen"))
+        close.clicked.connect(self.reject)
+        h.addWidget(client)
+        h.addStretch(1)
+        h.addWidget(self.send_btn)
+        h.addWidget(close)
+        lay.addLayout(h)
+
+    def recipients(self):
+        from . import mailer
+        return mailer.addresses(self.to.currentText()), mailer.addresses(self.cc.text())
+
+    def send(self, wait=False):
+        """SMTP-Versand im Hintergrund; `wait` (Tests) wartet und gibt True/False zurück."""
+        from . import mailer, vault
+        try:
+            to, cc = self.recipients()
+        except ValueError as e:
+            self.status.setText(T("Ungültige Adresse: {0}").format(e))
+            return False
+        if not to:
+            self.status.setText(T("Bitte mindestens einen Empfänger eintragen."))
+            return False
+        if self.cfg["smtp_user"] and not self.pw.text():
+            self.status.setText(T("Bitte das SMTP-Passwort eintragen."))
+            self.pw.setFocus()
+            return False
+        if self.cfg["smtp_user"] and self.remember.isEnabled():
+            vault.store(self.vault_key, "", self.pw.text() if self.remember.isChecked() else "")
+        cfg, pw, subject, body, pdf = dict(self.cfg), self.pw.text(), self.subject.text(), \
+            self.body.toPlainText(), self.pdf
+
+        def job():
+            try:
+                mailer.send(cfg, pw, to, subject, body, [pdf], cc=cc)
+                return ""
+            except Exception as e:              # Netz, Anmeldung, Zertifikat: verständlich melden
+                return str(e) or type(e).__name__
+        self.send_btn.setEnabled(False)
+        self.status.setText(T("Wird gesendet …"))
+        self.thread = MailThread(self, job)
+        self.thread.done.connect(self.sent)
+        self.thread.start()
+        if wait:
+            self.thread.wait(30000)
+            from PyQt6.QtWidgets import QApplication
+            for _ in range(5):
+                QApplication.processEvents()
+            return self.status.property("ok") is True
+        return True
+
+    def sent(self, err):
+        from .applog import LOG
+        self.send_btn.setEnabled(True)
+        self.status.setProperty("ok", not err)
+        if err:
+            self.status.setText(T("Nicht gesendet: {0}").format(err))
+            LOG.info(T("Audit-Mail nicht gesendet: {0}").format(err))
+        else:
+            self.status.setText(T("Gesendet an {0}.").format(self.to.currentText()))
+            LOG.info(T("Audit-Mail gesendet an {0} ({1})").format(self.to.currentText(), self.pdf.name))
+
+    def open_client(self):
+        import subprocess
+        from . import mailer
+        try:
+            to, _ = self.recipients()
+        except ValueError as e:
+            self.status.setText(T("Ungültige Adresse: {0}").format(e))
+            return
+        cmd = mailer.client_command(to, self.subject.text(), self.body.toPlainText(), self.pdf)
+        if cmd:
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.status.setText(T("Mailprogramm geöffnet."))
+                return
+            except OSError:
+                pass
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.pdf.parent)))
+        self.status.setText(T("Kein Mailprogramm mit Anhang gefunden. Der Ordner mit dem PDF ist geöffnet: "
+                              "{0}").format(self.pdf))
+
+    def reject(self):
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.wait(30000)
+        super().reject()
+
+
+def mailer_fill(template, values):
+    from . import mailer
+    return mailer.fill(template, values)

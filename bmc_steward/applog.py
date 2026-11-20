@@ -6,7 +6,8 @@ jede Aktion (Knöpfe, Haken, Auswahl, Seitenwechsel) sowie die Meldungen der Lä
 * **Info** (Standard): Aktionen und Ergebnisse.
 * **Debug**: zusätzlich technische Einzelheiten (Umgebung, Fenstergröße, Pfade).
 
-Alles bleibt im Speicher; die Textdatei mit dem Protokoll entsteht erst, wenn man „Protokoll“ drückt.
+Alles bleibt im Speicher; die Textdatei mit dem Protokoll entsteht erst, wenn man „Protokoll“ drückt – oder
+fortlaufend je Tag, wenn das in den Einstellungen eingeschaltet ist (set_file).
 Passwörter gehören nie hinein: Eingabefelder werden nicht protokolliert, nur Beschriftungen von Knöpfen.
 """
 import collections
@@ -48,6 +49,8 @@ class AppLog(QObject):
         super().__init__()
         self._entries = collections.deque(maxlen=MAX_ENTRIES)
         self.level = INFO
+        self._file = None               # offene Protokolldatei (Einstellung „fortlaufend in Datei“) oder None
+        self._file_path = None
 
     def add(self, level, text, color=None, bold=False):
         text = str(text)
@@ -56,7 +59,46 @@ class AppLog(QObject):
         e = Entry(level, text, color, bold)
         self._entries.append(e)
         if level >= self.level:
+            if self._file is not None:
+                self._write(e)
             self.added.emit(e)
+
+    def _write(self, e):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e.ts))
+        tag = "DEBUG" if e.level < INFO else "INFO "
+        first, *rest = e.text.split("\n")
+        try:
+            self._file.write("\n".join([f"{stamp} {tag} {first}"] + ["    " + r for r in rest]) + "\n")
+            self._file.flush()
+        except (OSError, ValueError):
+            self._file = None           # Datenträger voll oder weg: Protokoll im Fenster läuft weiter
+
+    def set_file(self, path):
+        """Protokoll zusätzlich fortlaufend in diese Datei schreiben (anhängen, Rechte 0600); None = aus."""
+        if path is not None and self._file is not None and str(path) == str(self._file_path):
+            return
+        if self._file is not None:
+            try:
+                self._file.close()
+            except OSError:
+                pass
+        self._file = self._file_path = None
+        if path is None:
+            return
+        import os
+        from . import i18n
+        try:
+            i18n.private_dir(Path(path).parent)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            self._file = os.fdopen(fd, "a", encoding="utf-8")
+            self._file_path = path
+        except OSError:
+            self._file = None
+
+    def set_max(self, n):
+        """Wie viele Zeilen im Speicher bleiben; die neuesten bleiben erhalten."""
+        if n != self._entries.maxlen:
+            self._entries = collections.deque(self._entries, maxlen=n)
 
     def info(self, text, color=None, bold=False):
         self.add(INFO, text, color, bold)

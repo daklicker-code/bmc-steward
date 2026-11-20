@@ -37,7 +37,7 @@ from .dhcp_tab import DhcpTabMixin
 from .existing_tab import ExistingTabMixin
 from .services_tab import ServicesTabMixin
 from .scanner import ScannerDialog
-from . import applog, selfguard, theme, trust, vault
+from . import applog, selfguard, settings, theme, trust, vault
 from .applog import LOG, LevelCombo, LogLabel, LogView
 
 
@@ -618,6 +618,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Zeigt alle automatischen Sicherungen und ermöglicht das Vorbefüllen\n"
             "der Neuware-Maske mit gesicherten Netzwerkeinstellungen."))
         restore_btn.clicked.connect(self.open_restore_dialog)
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedWidth(34)
+        settings_btn.setAccessibleName(T("Einstellungen"))
+        settings_btn.setToolTip(T("Einstellungen") + ": " + T("Schriftart und -größe, Design, Protokoll, "
+                                                             "Systemaudit, E-Mail-Versand und Experteneinstellungen."))
+        settings_btn.clicked.connect(self.open_settings)
+        self.settings_btn = settings_btn
         tools = QGridLayout()                      # 2 x 2 statt vier abgeschnittener Knöpfe in einer Reihe
         tools.setContentsMargins(0, 0, 0, 0)
         tools.setSpacing(6)
@@ -629,6 +636,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         bottom.setSpacing(6)
         bottom.addWidget(self.lang, 1)
         bottom.addWidget(self.design, 1)
+        bottom.addWidget(settings_btn)
         sl.addLayout(bottom)
         body = QHBoxLayout()
         body.setSpacing(14)
@@ -714,6 +722,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             hl.addWidget(c)
             hl.addWidget(t)
             lay.insertWidget(0, head)
+
+    def open_settings(self):
+        from .settings import SettingsDialog
+        if SettingsDialog(self, QApplication.instance()).exec():
+            self.design.setCurrentIndex(max(0, self.design.findData(theme.load_choice())))
 
     def design_changed(self, *_):
         choice = self.design.currentData() or "auto"
@@ -1806,7 +1819,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.worker = EngineThread(
             self, rows=todo, cur_user=self.cur_user.text().strip(), cur_pass=self.cur_pass.text(),
             new_user=self.new_user.text(), new_pass=self.new_pass.text(), slot=self.slot.value(), dry=dry,
-            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked())
+            vendor=self.vendor.currentData() or None, lock_factory=self.lock_factory.isChecked(),
+            verify_wait=settings.get("verify_wait"))
         self.worker.line.connect(self.show_line)
         self.worker.row_done.connect(self.mark_done)
         self.worker.result.connect(self.done)
@@ -2248,6 +2262,7 @@ def run():
     app = QApplication(sys.argv)
     theme.apply(app, sheet=False)             # hell/dunkel, automatisch nach System; Stylesheet nach dem Aufbau
     theme.follow_system(app)
+    settings.apply(app)                       # Schrift, Protokoll (Stufe, Datei), Zeitlimit
     LOG.info(T("BMC-Steward {0} gestartet").format(__version__), bold=True)
     LOG.info(T("Sprache: {0}").format(i18n.LANG))
     LOG.info(T("Trockenlauf ist voreingestellt: Es wird erst etwas geändert, wenn „Scharf starten“ gedrückt wird."))
