@@ -1490,10 +1490,13 @@ class ConsoleMixin:
         user, pw = self.row_login(ip)
         if only_done and not user:
             return
-        pw = pw or self.cur_pass.text()
+        if not user:
+            pw = pw or self.cur_pass.text()             # Werkskonto: sonst das Werks-Passwort von oben
         if user:
             self.con_user.setText(user)
             self.con_user_auto = user
+            if not pw:
+                self.con_pass.clear()                   # Passwort nach scharfem Lauf geleert: neu eintippen, kein altes
         elif getattr(self, "con_user_auto", "") and self.con_user.text().strip() == self.con_user_auto:
             self.con_user.clear()                       # frühere automatische Vorgabe nicht auf andere Geräte mitnehmen
             self.con_user_auto = ""
@@ -1540,7 +1543,7 @@ class ConsoleMixin:
             self.console_set_status(T("Bitte eine Adresse eintragen."), True)
             return None
         nu, np_ = self.row_login(ip)
-        if nu and self.con_user.text().strip() == nu and self.con_pass.text() != np_ \
+        if nu and np_ and self.con_user.text().strip() == nu and self.con_pass.text() != np_ \
                 and self.con_pass.text() == self.con_pws.get(ip, self.con_pass.text()):
             self.con_pass.setText(np_)                  # neuer Benutzer, aber noch das Werks-Passwort der Zeile im Feld
         return ip, self.con_user.text().strip(), self.con_pass.text(), self.con_vendor.currentData() or ""
