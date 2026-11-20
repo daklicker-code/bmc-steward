@@ -2240,8 +2240,34 @@ def _excepthook(kind, err, tb):
     except Exception:
         pass
 
+# Harmloses Rauschen, das Qt auf die Konsole schreibt und das sich nicht über Kategorien abschalten lässt
+# (Kategorie „default“, gleiche wie echte Warnungen). Der KDE-Dateidialog (KIO-Worker, Sockets) löst beim
+# Aufräumen dutzendfach „QObject::disconnect: wildcard call disconnects from destroyed signal of …“ aus.
+QT_NOISE = ("QObject::disconnect: wildcard call disconnects from destroyed signal",)
+
+
+def install_qt_message_filter():
+    """Blendet die Meldungen aus QT_NOISE aus; alle anderen Qt-Meldungen erscheinen wie gewohnt auf stderr
+    (im Format von QT_MESSAGE_PATTERN, falls gesetzt)."""
+    from PyQt6.QtCore import QtMsgType, qFormatLogMessage, qInstallMessageHandler
+
+    def handler(mode, ctx, msg):
+        if msg.startswith(QT_NOISE):
+            return
+        try:
+            sys.stderr.write(qFormatLogMessage(mode, ctx, msg) + "\n")
+            sys.stderr.flush()
+        except (OSError, ValueError, AttributeError):
+            pass
+        if mode == QtMsgType.QtFatalMsg:
+            os.abort()
+
+    qInstallMessageHandler(handler)
+
+
 def run():
     set_language(load_lang())
+    install_qt_message_filter()
     sys.excepthook = _excepthook
     # Chromium (QtWebEngine) meldet bei jedem BMC mit selbstsigniertem Zertifikat einen fehlgeschlagenen
     # Handshake (net_error -202), obwohl BmcPage das Zertifikat danach akzeptiert. Das flutet die Konsole;
