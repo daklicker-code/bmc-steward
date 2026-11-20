@@ -66,7 +66,8 @@ class _Fleet(_WebBase):
         guard = SelfGuard(os.path.join(str(i18n.DATA), "guard.json"), probe=False)
         for p in (patch("bmc_steward.selfguard.get", return_value=guard),
                   patch.object(RedfishClient, "pause", _fast_pause),
-                  patch.object(vbmc, "TASK_STEP", 0.02)):
+                  patch.object(vbmc, "TASK_STEP", 0.02),
+                  patch.object(vbmc, "BMC_RESTART", 0.3)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -107,12 +108,12 @@ class TestLifecycleAllVendors(_Fleet):
 
         # 2 Neuware: Trockenlauf ändert nichts
         row = [(addr, fpw, addr, "255.255.255.0", "127.0.0.1", "srv-gp")]
-        self.assertTrue(Engine(row, "", "", NEW_USER, NEW_PW, dry=True, log=log, verify_wait=1).run())
+        self.assertTrue(Engine(row, "", "", NEW_USER, NEW_PW, dry=True, log=log, verify_wait=30).run())
         self.assertNotIn(NEW_USER, b.accounts)
 
         # 3 Neuware scharf: Administrator, Hostname, Werkskonto gesperrt (iLO 3/4: Zufallspasswort)
         lines.clear()
-        self.assertTrue(Engine(row, "", "", NEW_USER, NEW_PW, dry=False, log=log, verify_wait=1).run(), lines)
+        self.assertTrue(Engine(row, "", "", NEW_USER, NEW_PW, dry=False, log=log, verify_wait=30).run(), lines)
         settle(b)
         self.assertEqual(b.accounts[NEW_USER]["password"], NEW_PW)
         self.assertEqual(b.hostname, "srv-gp")
@@ -126,7 +127,7 @@ class TestLifecycleAllVendors(_Fleet):
         self.assertTrue(ProbeEngine([(addr, NEW_USER, NEW_PW)], log=log, on_result=lambda ip, r: res.update(r)).run())
         self.assertTrue(res["admin"])
         row2 = [(addr, NEW_PW, addr, "255.255.255.0", "127.0.0.1", "srv-gp")]
-        self.assertTrue(Engine(row2, NEW_USER, "", NEW_USER, NEW_PW, dry=False, log=log, verify_wait=1).run())
+        self.assertTrue(Engine(row2, NEW_USER, "", NEW_USER, NEW_PW, dry=False, log=log, verify_wait=30).run())
         settle(b)
 
         # 5 UEFI lesen und setzen
@@ -199,6 +200,93 @@ class TestLifecycleAllVendors(_Fleet):
         self.assertTrue(FirmwareEngine([(addr, pw)], NEW_USER, {"source": "uri", "uri": "https://files.example/fw.bin",
                                                                 "proto": "HTTPS", "apply": "onreset"},
                                        dry=False, log=log).run(), lines)
+
+
+class TestRestartBeforeLock(_Fleet):
+    """Ein BMC, der nach dem Einrichten neu startet und seine Adresse behält (iLO mit gleicher IP), antwortet direkt
+    nach dem Reset-Befehl noch kurz. Das Werkskonto darf erst gesperrt werden, wenn er einmal weg und wieder da war –
+    sonst liefe die Sperre in sein Herunterfahren."""
+
+    def test_ilo_same_address_is_locked_only_after_restart(self):
+        from bmc_steward.redfish import Engine
+        for gen in ("ilo6", "ilo4"):
+            with self.subTest(gen=gen), patch.object(vbmc, "BMC_RESTART", 1.0):
+                b, addr = self.boot("hpe", gen)
+                fuser, fpw = FACTORY[b.vendor]
+                seen = []
+                orig = Engine.lock_factory_account
+
+                def lock(eng, *a):
+                    seen.append((b.moving, b.status))          # Zustand des BMC beim Sperren
+                    return orig(eng, *a)
+                lines = []
+                with patch.object(Engine, "lock_factory_account", lock):
+                    ok = Engine([(addr, fpw, addr, "255.255.255.0", "127.0.0.254", "srv")], "", "", NEW_USER, NEW_PW,
+                                dry=False, log=lambda t, k="": lines.append(t), verify_wait=30).run()
+                self.assertTrue(ok, lines)
+                self.assertTrue(any("startet neu" in t for t in lines), lines)
+                self.assertEqual(seen, [(0, "neu gestartet")], "erst nach dem Neustart sperren")
+                if b.vendor == "hpe_old":
+                    self.assertNotEqual(b.accounts[fuser]["password"], fpw)
+                else:
+                    self.assertFalse(b.accounts[fuser]["enabled"])
+
+
+class TestVerifyAfterRestart(unittest.TestCase):
+    """Kontrollphase von Engine.run() ohne Netzwerk: wer wartet worauf."""
+
+    def _engine(self, rows, restarts, alive):
+        qapp()
+        from bmc_steward.redfish import Engine
+        self.logs, self.locked, self.checked, self.pauses, self.alive_calls = [], [], [], [], []
+        eng = Engine(rows=rows, cur_user="", cur_pass="pw", new_user="ops", new_pass="Neu-Pass-1!", dry=False,
+                     log=lambda t, k="": self.logs.append(t), verify_wait=30, vendor="hpe")
+        eng.pause = lambda s: self.pauses.append(s)
+        eng.in_use = lambda ip: False
+        eng.tls_mode = lambda ip, timeout=10: "modern"
+        eng.backup = lambda *a, **k: None
+
+        def setup(cur_ip, pw, new_ip, mask, gw, host):
+            eng.verify_path = "/redfish/v1/Managers/1/"
+            eng.restarts = restarts
+            return True
+        eng.setup_hpe = setup
+        eng.check_login = lambda ip, path: self.checked.append(ip) or True
+        eng.identity = lambda ip: ""
+        eng.lock_factory_account = lambda ip, v, f: self.locked.append(ip) or True
+
+        def fake_alive(ip):
+            self.alive_calls.append(ip)
+            return alive.pop(0) if alive else False
+        eng.alive = fake_alive
+        return eng
+
+    def test_same_address_waits_until_gone_then_checks(self):
+        eng = self._engine([("10.0.0.5", "pw", "10.0.0.5", "255.255.255.0", "10.0.0.1", "h")], True,
+                           alive=[True, True, False])
+        self.assertTrue(eng.run(), self.logs)
+        self.assertEqual(len(self.alive_calls), 3)                  # zweimal noch da, dann weg
+        self.assertEqual((self.checked, self.locked), (["10.0.0.5"], ["10.0.0.5"]))
+
+    def test_never_restarted_is_checked_but_factory_account_stays(self):
+        eng = self._engine([("10.0.0.5", "pw", "10.0.0.5", "255.255.255.0", "10.0.0.1", "h")], True, alive=[])
+        eng.alive = lambda ip: True                                 # geht nie weg
+        eng.RESTART_SEEN = 0
+        self.assertFalse(eng.run())
+        self.assertEqual(self.locked, [])
+        text = "\n".join(self.logs)
+        self.assertIn("nicht neu gestartet", text)
+        self.assertIn("WERKSKONTO AKTIV", text)
+
+    def test_new_address_or_no_restart_needs_no_waiting(self):
+        for rows, restarts in (([("10.0.0.5", "pw", "10.0.0.50", "255.255.255.0", "10.0.0.1", "h")], True),
+                               ([("10.0.0.5", "pw", "10.0.0.5", "255.255.255.0", "10.0.0.1", "h")], False)):
+            with self.subTest(rows=rows, restarts=restarts):
+                eng = self._engine(rows, restarts, alive=[])
+                self.assertTrue(eng.run(), self.logs)
+                self.assertEqual(self.alive_calls, [])
+                self.assertEqual(self.locked, [rows[0][2]])
+                self.assertLessEqual(self.pauses[0], 2, "keine feste 20-s-Wartezeit mehr")
 
 
 class TestDellReservedSlot(_Fleet):

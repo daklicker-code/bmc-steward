@@ -1011,6 +1011,7 @@ class Engine(RedfishClient):
                             {"ResetType": "ForceRestart"}, {}):
             return False
         self.log(T("  iLO-Neustart ausgelöst"), "ok")
+        self.restarts = True
         return True
 
     # ---------- HPE iLO 3 und iLO 4 (RIBCL) ----------
@@ -1070,6 +1071,7 @@ class Engine(RedfishClient):
             if not self.moved(ip, code):
                 return False
             self.log(T("  Netzwerk und Hostname gesetzt, das iLO startet von selbst neu"), "ok")
+            self.restarts = True
             return True
         self.fail(T("Netzwerk und Hostname"), code)
         return False
@@ -1192,6 +1194,7 @@ class Engine(RedfishClient):
     def run(self):
         """Gibt True zurück, wenn alle Server ohne Fehler durchliefen."""
         done, failed, inventory = [], [], []
+        restart = set()             # BMC startet neu und behält seine Adresse: erst „weg“, dann „wieder da“
         for cur_ip, row_pw, new_ip, mask, gw, host in self.rows:
             if self.stopped():
                 self.log(T("== Abgebrochen, übrige Server nicht bearbeitet"), "err")
@@ -1231,8 +1234,11 @@ class Engine(RedfishClient):
                 self.backup(cur_ip, self.cur_user, pw, v, "neuware")
             if self.hpe_ident and v != "hpe":
                 self.log(T("  Seriennummer/Produkt-ID: nur bei HPE iLO 5/6 möglich, hier übersprungen."))
+            self.restarts = False
             if getattr(self, "setup_" + v)(cur_ip, pw, new_ip, mask, gw, host):
                 done.append((new_ip, self.verify_path))
+                if self.restarts and addr_key(new_ip) == addr_key(cur_ip) and not self.dry:
+                    restart.add(new_ip)
                 if self.lock_factory:
                     factory = self.factory_user_of(v)
                     if factory:
@@ -1251,8 +1257,15 @@ class Engine(RedfishClient):
             self.log(T('Kontrolle der neuen Adressen (bis zu {0}s)... Die Liste bleibt bis dahin '
                       'gesperrt; „Abbrechen“ beendet die Kontrolle vorzeitig.').format(self.verify_wait))
             pending, start, end = list(done), time.monotonic(), time.monotonic() + self.verify_wait
-            unlocked = []
-            self.pause(min(self.verify_wait, 20))
+            unlocked, last_note = [], start
+            # Startet ein BMC neu und behält dabei seine Adresse (iLO mit unveränderter IP), antwortet er direkt
+            # nach dem Reset-Befehl noch ein paar Sekunden. Würde jetzt kontrolliert und das Werkskonto gesperrt,
+            # liefe das mitten in sein Herunterfahren: die Sperre ginge verloren oder würde falsch gemeldet. Diese
+            # Server werden erst kontrolliert, nachdem sie einmal weg waren. Alle anderen sofort: Eine neue Adresse
+            # antwortet ohnehin erst, wenn der BMC wieder läuft.
+            gone = {ip: False for ip in restart}
+            down_by = start + min(self.verify_wait, self.RESTART_SEEN)
+            self.pause(min(self.verify_wait, 2))
             while pending and not self.stopped():
                 still, out_of_time = [], False
                 for ip, path in pending:
@@ -1262,12 +1275,22 @@ class Engine(RedfishClient):
                     if out_of_time:
                         still.append((ip, path))
                         continue
-                    if self.check_login(ip, path):
+                    if gone.get(ip) is False:                  # wartet noch darauf, dass er weg ist
+                        if not self.alive(ip):
+                            gone[ip] = True
+                            self.log(T("  {0}: BMC startet neu, warte, bis er wieder antwortet …").format(ip))
+                        elif time.monotonic() >= down_by:
+                            gone[ip] = None             # nie weg gewesen: kontrollieren, aber nicht sperren
+                            self.log(T("  {0}: Der BMC ist nicht neu gestartet. Hostname und Adresse werden erst "
+                                       "beim nächsten BMC-Neustart aktiv.").format(ip), "err")
+                        still.append((ip, path))
+                    elif self.check_login(ip, path):
                         info = self.identity(ip) if path != "ribcl" else ""
                         self.log(T('  OK      {0}').format(ip) + (f"   {info}" if info else ""), "ok")
                         if info:
                             inventory.append(f"{ip}   {info}")
-                        if ip in self.factory and not self.lock_factory_account(ip, *self.factory[ip]):
+                        no_restart = ip in gone and gone[ip] is None
+                        if ip in self.factory and (no_restart or not self.lock_factory_account(ip, *self.factory[ip])):
                             unlocked.append(ip)
                     else:
                         still.append((ip, path))
@@ -1276,9 +1299,12 @@ class Engine(RedfishClient):
                 pending = still
                 if not pending or out_of_time or self.stopped():
                     break
-                self.log(T('  ... noch {0} von {1} Server(n) nicht erreichbar, warte weiter ({2}s vergangen)')
-                         .format(len(pending), len(done), int(time.monotonic() - start)))
-                self.pause(10)
+                now = time.monotonic()
+                if now - last_note >= 10:                       # Fortschritt höchstens alle 10 s
+                    last_note = now
+                    self.log(T('  ... noch {0} von {1} Server(n) nicht erreichbar, warte weiter ({2}s vergangen)')
+                             .format(len(pending), len(done), int(now - start)))
+                self.pause(2 if any(v is False for v in gone.values()) else 5)
             for ip, _ in pending:
                 self.log(T('  FEHLT   {0}').format(ip), "err")
                 failed.append(ip)
@@ -1319,13 +1345,15 @@ class Engine(RedfishClient):
                 s.close()
         return False
 
+    RESTART_SEEN = 60       # so lange darf ein BMC nach dem Reset-Befehl brauchen, bis er weg ist
+
     @staticmethod
     def alive(ip):
-        """True, wenn unter der Adresse noch ein BMC auf Port 443 antwortet."""
+        """True, wenn unter der Adresse (IP oder IP:Port, Vorgabe 443) noch ein BMC antwortet."""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2)
         try:
-            return s.connect_ex((ip, 443)) == 0
+            return s.connect_ex(hostport(ip)) == 0
         except OSError:
             return False
         finally:

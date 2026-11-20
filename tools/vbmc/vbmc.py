@@ -140,6 +140,7 @@ OLD_ILO = ("ilo3", "ilo4")              # laufen über RIBCL (Hersteller-Kürzel
 SSH_SOL_CMD = {"dell": "console com2", "hpe": "vsp", "hpe_old": "vsp", "lenovo": "console 1"}
 
 SSH_PORT, IPMI_PORT, REDFISH_STD = 22, 623, 443
+BMC_RESTART = 3.0                       # Sekunden, die ein BMC nach Manager.Reset weg ist (echtes iLO: 1–3 Minuten)
 TASK_STEP = 0.8                         # Sekunden je Fortschrittsstufe eines Firmware-Tasks (Tests verkürzen das)
 
 
@@ -1127,9 +1128,10 @@ class Handler(BaseHTTPRequestHandler):
             self.read_raw()
             b.sim.log("ilo_reset", self.actor())
             self.send(200, {"ok": True})
-            if b.pending_ip:
-                self.server.fleet.migrate(b, *b.pending_ip)
-                b.pending_ip = None
+            # Wie ein echter BMC: antwortet noch, fährt dann herunter und ist BMC_RESTART Sekunden weg.
+            # Eine vorgemerkte Adresse (iLO) wird dabei aktiv.
+            self.server.fleet.migrate(b, *(b.pending_ip or (b.host,)), downtime=BMC_RESTART)
+            b.pending_ip = None
             return
         if p == sysp + "/Actions/ComputerSystem.Reset":
             kind = self.read_json().get("ResetType", "")
@@ -1581,8 +1583,8 @@ class Handler(BaseHTTPRequestHandler):
                 new_ip, b.dhcp = (mi.group(1), mm.group(1) if mm else None, mg.group(1) if mg else None), False
             parts.append(self._ribcl_resp(0x0000, "No error"))
         self.send_text(200, "".join(parts), "text/xml")
-        if new_ip:
-            self.server.fleet.migrate(b, *new_ip)
+        if new_ip:                                  # iLO 3/4 startet nach MOD_NETWORK_SETTINGS von selbst neu
+            self.server.fleet.migrate(b, *new_ip, downtime=BMC_RESTART)
 
     @staticmethod
     def _ribcl_resp(status, message):
@@ -1843,7 +1845,7 @@ class Fleet:
             bmc.netns = None
         return True
 
-    def migrate(self, bmc, new_addr, mask=None, gw=None):
+    def migrate(self, bmc, new_addr, mask=None, gw=None, downtime=0):
         """Neue Adresse übernehmen (wie ein echter BMC kurz nach der Antwort). Im Netzlabor bekommt die
         Karte des Servers die neue Adresse; ohne Netzlabor wandert der Redfish-Dienst auf die 127.x-Adresse
         (SSH/IPMI bleiben dort auf der Startadresse)."""
@@ -1874,6 +1876,12 @@ class Fleet:
 
         def do():
             time.sleep(0.6)
+            if downtime:                    # BMC-Neustart: eine Weile unter keiner Adresse erreichbar
+                with self.lock:
+                    self._unbind_redfish(bmc)
+                    bmc.status = "BMC startet neu …"
+                self.emit()
+                time.sleep(downtime)
             with self.lock:
                 old_host, old_port, old_ipv4 = bmc.host, bmc.port, dict(bmc.ipv4)
                 self._unbind_redfish(bmc)
@@ -1901,6 +1909,8 @@ class Fleet:
                     print(f"  [migrate] {old} -> {new_addr} fehlgeschlagen: {e}{hint}", file=sys.stderr)
                     self.emit()
                     return
+            if downtime:
+                bmc.status = "neu gestartet"
             print(f"  [migrate] {old} -> {bmc.addr} ({NAME[bmc.vendor]})")
             self.emit()
 

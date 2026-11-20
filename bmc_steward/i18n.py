@@ -827,6 +827,16 @@ TR = {
 "BLOQUÉ : ",
 "GSPERRT: "
 ],
+"  {0}: BMC startet neu, warte, bis er wieder antwortet …": [
+"  {0}: BMC is restarting, waiting until it answers again …",
+"  {0} : le BMC redémarre, on attend qu’il réponde à nouveau …",
+"  {0}: BMC startet neu, wart, bis er wieder antwortet …"
+],
+"  {0}: Der BMC ist nicht neu gestartet. Hostname und Adresse werden erst beim nächsten BMC-Neustart aktiv.": [
+"  {0}: The BMC did not restart. Hostname and address only take effect at the next BMC restart.",
+"  {0} : le BMC n’a pas redémarré. Le nom d’hôte et l’adresse ne s’appliquent qu’au prochain redémarrage du BMC.",
+"  {0}: Dä BMC isch nöd neu gstartet. Hostname und Adrässe gälted erscht bim nächschte BMC-Neustart."
+],
 "  ... noch {0} von {1} Server(n) nicht erreichbar, warte weiter ({2}s vergangen)": [
 "  ... {0} of {1} server(s) still not reachable, waiting ({2}s elapsed)",
 "  ... encore {0} serveur(s) sur {1} injoignable(s), on attend ({2} s écoulées)",
