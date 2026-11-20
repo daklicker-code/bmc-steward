@@ -422,6 +422,13 @@ class AuditPage(QWidget):
         t = html.escape(text).replace("  ", "&nbsp;&nbsp;")
         self.out.append(f'<span style="color:{color}">{t}</span>' if color else f"<span>{t}</span>")
 
+    def start(self, ip, user, pw):
+        """Von einer anderen Seite aus: Server übernehmen und gleich auslesen."""
+        self.addr.setText(ip)
+        self.user.setText(user or "")
+        self.pw.setText(pw or "")
+        self.read()
+
     def set_row(self, ip, pw):
         self.addr.setText(ip)
         if pw:

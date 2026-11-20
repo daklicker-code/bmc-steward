@@ -994,6 +994,11 @@ class ConsoleMixin:
         self.con_setup.setToolTip(T("Merkt „beim nächsten Start ins UEFI-Setup“ vor und startet den Server hart neu\n"
                                     "(per Redfish). Nur mit Rückfrage."))
         self.con_setup.clicked.connect(self.console_boot_setup)
+        self.con_audit = QPushButton(T("Systemaudit …"))
+        self.con_audit.setToolTip(T("Liest diesen Server für das Audit-Blatt aus und öffnet „Systemaudit“. Nur lesend;\n"
+                                    "eine laufende Konsole bleibt verbunden."))
+        self.con_audit.clicked.connect(lambda: self.open_audit(self.con_ip.currentText().strip(),
+                                                               self.con_user.text().strip(), self.con_pass.text()))
         self.con_status = QLabel()
         self.con_status.setWordWrap(True)
         self.con_fold = QPushButton()
@@ -1022,6 +1027,7 @@ class ConsoleMixin:
         btns.addWidget(self.con_disconnect)
         btns.addWidget(self.con_start)
         btns.addStretch()
+        btns.addWidget(self.con_audit)
         btns.addWidget(self.con_setup)
         btns.addWidget(self.con_full)
         btns.addWidget(self.con_fold)

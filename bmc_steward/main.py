@@ -449,6 +449,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                                      "Nur lesend, ein Anmeldeversuch je Gerät mit dem Passwort der Zeile (iLO 3/4: ohne Anmeldung).\n"
                                      "Das geschieht auch automatisch beim Eintragen einer Aktuellen IP. Eingetragenes wird nie überschrieben."))
         self.serial_btn.clicked.connect(self.read_serials)
+        self.new_audit_btn = QPushButton(T("Systemaudit …"))
+        self.new_audit_btn.setToolTip(T("Liest die markierte Zeile (sonst die erste) für das Audit-Blatt aus und öffnet "
+                                        "„Systemaudit“. Nur lesend; grüne Zeilen unter der neuen Adresse mit dem neuen "
+                                        "Administrator."))
+        self.new_audit_btn.clicked.connect(self.audit_from_list)
         log_open = QPushButton(T("Protokoll"))
         log_open.setToolTip(T("Öffnet das Protokoll als Textdatei im Standard-Editor.\n"
                               "Passwörter stehen nicht darin; geändert wird nichts."))
@@ -458,6 +463,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         actions.addWidget(self.dry)
         actions.addStretch()
         actions.addWidget(self.serial_btn)
+        actions.addWidget(self.new_audit_btn)
         actions.addWidget(log_open)
         actions.addWidget(self.log_level)
         actions.addWidget(self.stop)
@@ -753,10 +759,31 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "Seriennummern, eine Checkliste, Bemerkung und ein Feld für die Unterschrift.<br><b>Ablauf:</b> "
             "Adresse und Passwort eintragen, auslesen (nur lesend), Werte prüfen, Checkliste ausfüllen, "
             "als PDF speichern.")))
+        self.audit_page = page
         self.audit = AuditPage(page)
         self.audit.row_wanted.connect(self.audit_row)
         lay.addWidget(self.audit, 1)
         return page
+
+    def open_audit(self, ip, user, pw):
+        """Seite „Systemaudit“ zeigen und den Server gleich auslesen (aus Neuware, Bestandsserver, UEFI-Konsole)."""
+        if not ip:
+            self.status.setText(T("Für das Systemaudit zuerst eine Adresse eintragen."))
+            return
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.audit_page))
+        self.audit.start(ip, user, pw)
+
+    def audit_from_list(self):
+        """Markierte (sonst erste) Zeile der Serverliste; grüne Zeilen unter der neuen Adresse mit dem neuen
+        Administrator, sonst Aktuelle IP mit Werkszugang."""
+        r = self.table.currentRow()
+        if r < 0 and self.table.rowCount():
+            r = 0
+        if r < 0:
+            return self.open_audit("", "", "")
+        if self.is_done(r) and self.cell(r, 2):
+            return self.open_audit(self.cell(r, 2), self.new_user.text().strip(), self.new_pass.text())
+        self.open_audit(self.cell(r, 0), self.cur_user.text().strip(), self.cell(r, 1) or self.cur_pass.text())
 
     def audit_row(self):
         """Markierte (sonst erste) Zeile der Serverliste in „Systemaudit“ übernehmen; grüne Zeilen unter der

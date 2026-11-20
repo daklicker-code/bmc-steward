@@ -100,3 +100,58 @@ class TestAuditPage(_WebBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAuditFromOtherPages(unittest.TestCase):
+    """„Systemaudit …“ in Neuware, Bestandsserver und UEFI-Konsole: Server übernehmen, Seite zeigen, auslesen."""
+
+    @classmethod
+    def setUpClass(cls):
+        qapp()
+        from bmc_steward import i18n
+        i18n.set_language("de")
+        from bmc_steward.main import Window
+        cls.w = Window()
+
+    def setUp(self):
+        self.started = []
+        self.w.audit.read = lambda: self.started.append((self.w.audit.addr.text(), self.w.audit.user.text(),
+                                                        self.w.audit.pw.text()))
+
+    def shown(self):
+        return self.w.tabs.currentIndex() == self.w.tabs.indexOf(self.w.audit_page)
+
+    def test_from_new_hardware_row(self):
+        from PyQt6.QtWidgets import QTableWidgetItem
+        w = self.w
+        w.table.setItem(0, 0, QTableWidgetItem("10.0.0.5"))
+        w.table.setItem(0, 1, QTableWidgetItem("werk123"))
+        w.table.setCurrentCell(0, 0)
+        w.cur_user.setText("root")
+        w.new_audit_btn.click()
+        self.assertTrue(self.shown())
+        self.assertEqual(self.started, [("10.0.0.5", "root", "werk123")])
+
+    def test_from_existing_servers_row(self):
+        from PyQt6.QtWidgets import QTableWidgetItem
+        w = self.w
+        for c, val in enumerate(("10.0.0.7", "8443", "admin", "geheim")):
+            w.ex_table.setItem(0, c, QTableWidgetItem(val))
+        w.ex_table.setCurrentCell(0, 0)
+        w.ex_audit_btn.click()
+        self.assertTrue(self.shown())
+        self.assertEqual(self.started, [("10.0.0.7:8443", "admin", "geheim")])
+
+    def test_from_console(self):
+        w = self.w
+        w.con_ip.setEditText("10.0.0.9")
+        w.con_user.setText("USERID")
+        w.con_pass.setText("PASSW0RD")
+        w.con_audit.click()
+        self.assertTrue(self.shown())
+        self.assertEqual(self.started, [("10.0.0.9", "USERID", "PASSW0RD")])
+
+    def test_without_address_nothing_starts(self):
+        self.w.con_ip.setEditText("")
+        self.w.con_audit.click()
+        self.assertEqual(self.started, [])

@@ -104,10 +104,15 @@ class ExistingTabMixin:
         pull = QPushButton(T("Aus Serverliste holen"))
         pull.setToolTip(T("Übernimmt Adressen und Passwörter aus „Neuware“ (Aktuelle IP, Passwort)."))
         pull.clicked.connect(self.ex_pull)
+        self.ex_audit_btn = QPushButton(T("Systemaudit …"))
+        self.ex_audit_btn.setToolTip(T("Liest den markierten Server (sonst den ersten) für das Audit-Blatt aus und "
+                                       "öffnet „Systemaudit“. Nur lesend."))
+        self.ex_audit_btn.clicked.connect(self.ex_audit)
         btns = QHBoxLayout()
         for b in (add, rem, pull):
             btns.addWidget(b)
         btns.addStretch()
+        btns.addWidget(self.ex_audit_btn)
         box_list = QGroupBox(T("Bestandsserver"))
         v = QVBoxLayout(box_list)
         v.addWidget(self.ex_table)
@@ -176,6 +181,18 @@ class ExistingTabMixin:
     def ex_remove_rows(self):
         for r in sorted({i.row() for i in self.ex_table.selectedIndexes()}, reverse=True):
             self.ex_table.removeRow(r)
+
+    def ex_audit(self):
+        """Markierte (sonst erste ausgefüllte) Zeile an „Systemaudit“."""
+        r = self.ex_table.currentRow()
+        if r < 0 or not self.ex_cell(r, 0):
+            r = next((i for i in range(self.ex_table.rowCount()) if self.ex_cell(i, 0)), -1)
+        if r < 0:
+            return self.open_audit("", "", "")
+        port = self.ex_cell(r, 1) or "443"
+        ip = self.ex_cell(r, 0) if port == "443" else f"{self.ex_cell(r, 0)}:{port}"
+        pw = self.ex_table.item(r, 3).text() if self.ex_table.item(r, 3) else ""
+        self.open_audit(ip, self.ex_cell(r, 2), pw)
 
     def ex_cell(self, r, c):
         item = self.ex_table.item(r, c)
