@@ -1,0 +1,7 @@
+{
+ "name": "Portscan",
+ "version": "1.0",
+ "api": 1,
+ "description": "Prüft, welche TCP-Ports (und optional IPMI über UDP 623) auf BMCs und Servern offen sind – mit Vorlagen für BMC-Dienste, Dienstkennung, Banner und CSV-Export. Nur Verbindungsaufbau, keine Anmeldung.",
+ "author": "BMC-Steward"
+}

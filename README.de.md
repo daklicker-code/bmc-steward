@@ -88,6 +88,9 @@ der grüne Knopf.
 - Fehlt ein optionales Paket, zeigt die betroffene Seite den passenden Installationsbefehl.
 - **Plugins** erweitern das Tool um eigene Seiten und Abläufe: ein Ordner mit `plugin.json` und `plugin.py` unter
   `<Datenordner>/plugins/`, einzeln freizugeben unter ⚙ → „Plugins“. Beispiel: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
+  Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
+  BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
+  Nur Verbindungsaufbau, keine Anmeldung.
 
 ## Schutz vor Fehlbedienung
 
