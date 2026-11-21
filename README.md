@@ -87,6 +87,7 @@ the green button.
   `<data folder>/plugins/`, approved one by one under ⚙ → “Plugins”; the tool then offers a restart. Example: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
   Plugins can show their own consoles as tabs in the monitor (`api.add_console`, terminal widget via `api.terminal`).
   While a plugin console is open or something runs in a plugin (`api.set_lamp(True)`), its menu item lights up yellow like the test lab.
+  Plugins exchange data through topics (`api.publish`, `api.subscribe`); the rack planner publishes its current plan as `aufbauplaner.plan`.
   Ready-made plugin **Port scan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): checks open TCP ports (presets for
   BMC and server services, optionally IPMI via UDP 623 and banners) on addresses, networks or the server list, with CSV export.
   Connection attempts only, no login.

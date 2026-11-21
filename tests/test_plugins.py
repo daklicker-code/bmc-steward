@@ -142,6 +142,37 @@ class TestLoading(Base):
         host.emit("closing")                          # darf nicht werfen
         self.assertEqual(host.build_pages(), [])
 
+    def test_shared_topics_between_plugins(self):
+        """publish/subscribe (ab 3.20.0): neuester Stand je Thema, Kopie statt gemeinsamem Objekt, Fehler bleiben beim
+        einen Plugin, Spätankömmlinge bekommen den letzten Stand."""
+        self.make("sender", code="def register(api):\n"
+                                 "    global API\n"
+                                 "    API = api\n")
+        self.make("empf", code="GOT = []\n"
+                               "def register(api):\n"
+                               "    api.subscribe('test.plan', lambda d: GOT.append(d))\n"
+                               "    api.subscribe('test.plan', lambda d: 1 / 0)\n")
+        self.approve("sender", "empf")
+        host = plugins.Host()
+        host.load()
+        api = self.module("sender").API
+        data = {"cables": [1, 2]}
+        api.publish("test.plan", data)
+        got = self.module("empf").GOT
+        self.assertEqual(got, [{"cables": [1, 2]}])
+        data["cables"].append(3)
+        self.assertEqual(got[0]["cables"], [1, 2])               # Empfänger hat eine eigene Kopie
+        self.assertEqual(api.published("test.plan"), {"cables": [1, 2]})
+        late = []
+        api.subscribe("test.plan", late.append)                  # bekommt sofort den letzten Stand
+        self.assertEqual(late, [{"cables": [1, 2]}])
+        self.assertIsNone(api.published("test.anderes"))
+        for bad in ("", "Leer zeichen", "x" * 81):
+            with self.assertRaises(ValueError):
+                api.publish(bad, {})
+        with self.assertRaises(ValueError):
+            api.publish("test.plan", {"x": object()})             # nur JSON-fähige Daten
+
     def test_unknown_event_rejected(self):
         self.make("eins", code="def register(api):\n    api.on('gibtsnicht', print)\n")
         self.approve("eins")

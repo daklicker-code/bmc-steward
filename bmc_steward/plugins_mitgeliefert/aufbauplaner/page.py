@@ -112,6 +112,7 @@ THEMES = {
                  "QTreeWidget::item { padding: 3px 2px; } QTreeWidget::item:selected { background: #1f6b52; }"),
     ),
 }
+PUBLISH_TOPIC = "aufbauplaner.plan"         # unter diesem Thema steht der aktuelle Plan für andere Plugins
 # Eigene, herstellerneutrale Palette (keine Markenfarben): die Streifen unterscheiden nur die Geräteart/Gruppe.
 STRIPE_COLOR = {"dell": "#8a4fc0", "hpe": "#1f8f8f", "smc": "#4a8f2a", "lenovo": "#c9741a", "gen": "#6b7280",
                 "switch": "#0284c7", "fw": "#b0457a", "pdu": "#a07a1a", "patch": "#64748b", "blank": "#cbd5e1",
@@ -2365,6 +2366,23 @@ class PlannerTabMixin:
         if hasattr(self, "pl_undo"):
             self.pl_snap = json.dumps(plan.to_dict(), sort_keys=True)
         self.planner_refresh()
+        self.planner_publish()
+
+    def planner_publish(self):
+        """Plan für andere Plugins veröffentlichen (Thema „aufbauplaner.plan“, ab BMC-Steward 3.20.0), z. B. damit ein
+        Simulator die Verkabelung live übernimmt. Nur wenn er sich seit der letzten Veröffentlichung geändert hat."""
+        api = getattr(self, "api", None)
+        if api is None or not hasattr(api, "publish"):
+            return
+        data = self.plan.to_dict()
+        text = json.dumps(data, sort_keys=True)
+        if text == getattr(self, "pl_published", None):
+            return
+        self.pl_published = text
+        try:
+            api.publish(PUBLISH_TOPIC, data)
+        except Exception as e:      # noqa: BLE001 – der Planer arbeitet auch ohne Abnehmer weiter
+            LOG.debug(f"Aufbauplaner: Veröffentlichen fehlgeschlagen: {e}")
 
     def planner_inventory(self):
         """Server der Serverliste („Neuware“) als Bestand: Schlüssel Seriennummer, sonst aktuelle IP, sonst Name."""
@@ -2393,6 +2411,7 @@ class PlannerTabMixin:
             self.pl_redo.clear()
         self.pl_snap = now
         self.planner_update_history()
+        self.planner_publish()
 
     def planner_update_history(self):
         self.pl_undo_btn.setEnabled(bool(self.pl_undo))

@@ -6515,6 +6515,8 @@ TR = {
 "plugin.py fehlt": ["plugin.py is missing", "plugin.py manque", "plugin.py fählt"],
 "plugin.py hat keine Funktion register(api)": ["plugin.py has no function register(api)", "plugin.py n'a pas de fonction register(api)", "plugin.py het kei Funktion register(api)"],
 "unbekanntes Ereignis {0}, möglich: {1}": ["unknown event {0}, possible: {1}", "événement inconnu {0}, possibles : {1}", "unbekannts Ereignis {0}, möglich: {1}"],
+"ungültiges Thema {0}": ["invalid topic {0}", "sujet non valide {0}", "ungültigs Thema {0}"],
+"Daten für {0} sind nicht JSON-fähig: {1}": ["data for {0} is not JSON serialisable: {1}", "les données pour {0} ne sont pas sérialisables en JSON : {1}", "Date für {0} sind nöd JSON-fähig: {1}"],
 "von {0}": ["by {0}", "par {0}", "vo {0}"],
 "{0} fehlt": ["{0} is missing", "{0} manque", "{0} fählt"],
 "{0} gehört einem anderen Benutzer": ["{0} belongs to another user", "{0} appartient à un autre utilisateur", "{0} ghört emne andere Benutzer"],

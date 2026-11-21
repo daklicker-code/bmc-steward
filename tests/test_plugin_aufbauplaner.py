@@ -2,6 +2,8 @@
 Ausfall-Simulation, Speichern/Laden und die Plugin-Seite im Hauptfenster (Übernahme in die Serverliste, Bestand
 aus „Neuware“)."""
 import json
+import tempfile
+from pathlib import Path
 import unittest
 from tests._support import qapp
 
@@ -836,6 +838,26 @@ class TestPluginIntegration(unittest.TestCase):
         self.assertIsNone(importlib.util.find_spec("bmc_steward.planner"))
         self.assertIsNone(importlib.util.find_spec("bmc_steward.planner_tab"))
         self.assertNotIn("Aufbauplaner", i18n.TR)                  # Texte liegen im Plugin
+
+    def test_plan_published_for_other_plugins(self):
+        """Ab 3.20.0 veröffentlicht der Planer jeden geänderten Plan unter „aufbauplaner.plan“ (Live-Kopplung)."""
+        from bmc_steward import plugins
+        win, w = _aufbauplaner.window()
+        try:
+            got = []
+            dummy = plugins.Plugin(Path(tempfile.mkdtemp()))
+            plugins.PluginAPI(dummy, win.plugin_host).subscribe("aufbauplaner.plan", got.append)
+            w.planner_set_plan(planner.eseries_demo_plan(w.planner_inventory()), dirty=False)
+            self.assertEqual(got[-1]["format"], "bmc-steward-plan")
+            self.assertTrue(any(d.get("cat") == "netapp_e5760" for d in got[-1]["devices"]))
+            n, count = len(got[-1]["cables"]), len(got)
+            w.plan.disconnect(w.plan.cables[0]["id"])
+            w.planner_changed()
+            self.assertEqual(len(got[-1]["cables"]), n - 1)
+            w.planner_changed()                                     # unverändert: keine neue Veröffentlichung
+            self.assertEqual(len(got), count + 1)
+        finally:
+            _aufbauplaner.close(win, w)
 
     def test_menu_lamp_and_close_request(self):
         from unittest import mock

@@ -90,6 +90,7 @@ der grüne Knopf.
   `<Datenordner>/plugins/`, einzeln freizugeben unter ⚙ → „Plugins“; danach bietet das Tool einen Neustart an. Beispiel: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
   Plugins können eigene Konsolen als Reiter im Monitor zeigen (`api.add_console`, Terminal-Widget über `api.terminal`).
   Solange eine Plugin-Konsole offen ist oder in einem Plugin etwas läuft (`api.set_lamp(True)`), leuchtet sein Menüpunkt gelb wie das Testlabor.
+  Plugins tauschen Daten über Themen aus (`api.publish`, `api.subscribe`); der Aufbauplaner veröffentlicht seinen aktuellen Plan als `aufbauplaner.plan`.
   Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
   BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
   Nur Verbindungsaufbau, keine Anmeldung.

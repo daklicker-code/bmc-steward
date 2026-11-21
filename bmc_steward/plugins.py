@@ -13,6 +13,8 @@ nur für den Benutzer lesbaren Datenordner, Konsolen-Sitzungen, die als Reiter i
 Testlabor (ab 3.14.0: put_servers, set_lamp, testlab_state, testlab_load, Ereignis close_request).
 Ab 3.16.0 leuchtet der Menüpunkt eines Plugins gelb wie beim Testlabor, solange eine seiner Konsolen offen ist;
 api.set_lamp(True) schaltet dieselbe gelbe „läuft“-Leuchte selbst ein (z. B. solange ein Simulator läuft).
+Ab 3.20.0 tauschen Plugins Daten über Themen aus: api.publish(thema, daten) und api.subscribe(thema, fn), z. B.
+veröffentlicht der Aufbauplaner seinen Plan unter „aufbauplaner.plan“.
 
 Mitgelieferte Plugins (bmc_steward/plugins_mitgeliefert/<kennung>/, z. B. der Aufbauplaner) gehören zum
 Programm: Sie laden ab dem ersten Start ohne Freigabe und lassen sich in den Einstellungen abschalten. Ein
@@ -43,6 +45,7 @@ from .i18n import T
 API_VERSION = 1
 EVENTS = ("window_ready", "server_done", "run_finished", "close_request", "closing")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+TOPIC_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 MAX_BYTES = 20 * 1024 * 1024        # größere Plugin-Ordner werden nicht gelesen
 WINDOWS = sys.platform.startswith("win")
 
@@ -402,6 +405,35 @@ class PluginAPI:
             w.tabs.setCurrentIndex(w.tabs.indexOf(w.vbmc_page))
         return True
 
+    def publish(self, topic, data):
+        """Daten unter einem Thema für andere Plugins veröffentlichen (ab 3.20.0). `data` muss JSON-fähig sein; jeder
+        Empfänger bekommt eine eigene Kopie, das Programm merkt sich den neuesten Stand. Thema: Kleinbuchstaben,
+        Ziffern, Punkt, _ und -, z. B. „aufbauplaner.plan“. Aufruf nur im Hauptthread (Oberfläche)."""
+        if not isinstance(topic, str) or not TOPIC_RE.match(topic):
+            raise ValueError(T("ungültiges Thema {0}").format(topic))
+        try:
+            text = json.dumps(data, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            raise ValueError(T("Daten für {0} sind nicht JSON-fähig: {1}").format(topic, e)) from None
+        self._host.topics[topic] = text
+        self._host.deliver(topic, text)
+
+    def published(self, topic):
+        """Neuester Stand eines Themas (Kopie) oder None, wenn noch nichts veröffentlicht wurde (ab 3.20.0)."""
+        text = self._host.topics.get(topic)
+        return None if text is None else json.loads(text)
+
+    def subscribe(self, topic, fn):
+        """fn(daten) bei jeder Veröffentlichung unter `topic` aufrufen (ab 3.20.0); gibt es schon einen Stand, sofort
+        damit. Ein Fehler in fn landet im Protokoll und betrifft nur dieses Plugin."""
+        if not isinstance(topic, str) or not TOPIC_RE.match(topic):
+            raise ValueError(T("ungültiges Thema {0}").format(topic))
+        if not callable(fn):
+            raise TypeError("fn")
+        self._host.subs.setdefault(topic, []).append((self._plugin, fn))
+        if topic in self._host.topics:
+            self._host.deliver(topic, self._host.topics[topic], only=fn)
+
     def set_lamp(self, color=None):
         """Leuchte am Menüpunkt der eigenen Seite(n) ein- oder ausschalten. True: gelb wie beim Testlabor
         („hier läuft etwas“, ab 3.16.0), eine Farbe wie "#3b8beb": diese Farbe, None: aus. Solange eine Konsole
@@ -424,6 +456,20 @@ class Host:
         self.consoles = []           # ConsoleHandle der Plugins, Reihenfolge = Reihenfolge im Monitor
         self.page_widgets = []       # (Plugin, QWidget) der gebauten Seiten, für set_lamp
         self.lamps = {}              # Kennung -> mit set_lamp gesetzte Farbe des Plugins
+        self.topics = {}             # Thema -> neuester Stand als JSON-Text (publish)
+        self.subs = {}               # Thema -> [(Plugin, fn)] (subscribe)
+
+    def deliver(self, topic, text, only=None):
+        """Veröffentlichten Stand an die Abonnenten verteilen; ein Fehler betrifft nur das eine Plugin."""
+        from .applog import LOG
+        for plugin, fn in list(self.subs.get(topic, ())):
+            if only is not None and fn is not only:
+                continue
+            try:
+                fn(json.loads(text))
+            except Exception as e:          # noqa: BLE001
+                LOG.info(T("Plugin {0}: Fehler bei {1}: {2}").format(plugin.name, topic, _short(e)))
+                LOG.debug(traceback.format_exc())
 
     def update_lamps(self):
         """Leuchten an den Menüpunkten der Plugins: die mit set_lamp gesetzte Farbe, sonst gelb wie beim

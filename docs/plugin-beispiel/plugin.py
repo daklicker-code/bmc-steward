@@ -12,6 +12,8 @@ Die Schnittstelle `api`:
     api.servers()                      Serverliste ohne Passwörter (ip, new_ip, mask, gateway, hostname, serial, done)
     api.add_console(titel, widget)     eigene Konsole als Reiter im Monitor; Menüpunkt leuchtet gelb, solange sie offen ist
     api.set_lamp(True)                 gelbe Leuchte am Menüpunkt wie beim Testlabor („läuft“), None = aus
+    api.publish(thema, daten)          JSON-fähige Daten für andere Plugins (ab 3.20.0), api.published(thema) liest sie
+    api.subscribe(thema, fn)           fn(daten) bei jeder Veröffentlichung, z. B. „aufbauplaner.plan“ (Plan des Aufbauplaners)
 """
 import csv
 import time
