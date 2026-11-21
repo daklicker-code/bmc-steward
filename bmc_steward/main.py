@@ -3,7 +3,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
-from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
+from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QProcess, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
 import html
 import platform
 import ipaddress
@@ -742,8 +742,38 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
 
     def open_settings(self):
         from .settings import SettingsDialog
-        if SettingsDialog(self, QApplication.instance()).exec():
+        dlg = SettingsDialog(self, QApplication.instance())
+        if dlg.exec():
             self.design.setCurrentIndex(max(0, self.design.findData(theme.load_choice())))
+        if dlg.plugins_changed:                 # Plugins werden nur beim Start geladen
+            self.ask_restart()
+
+    def ask_restart(self):
+        """Nach geänderten Plugin-Freigaben fragen, ob BMC-Steward gleich neu starten soll. True = Neustart läuft."""
+        ans = QMessageBox.question(
+            self, T("Neu starten?"),
+            T("Die Plugin-Freigaben wurden geändert. Plugins werden erst beim Start geladen oder entladen.\n\n"
+              "BMC-Steward jetzt neu starten?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        return ans == QMessageBox.StandardButton.Yes and self.restart_app()
+
+    def restart_app(self):
+        """Beendet BMC-Steward wie über das Fenster (Rückfragen bei laufendem Vorgang oder ungespeicherter Liste
+        inklusive) und startet es mit denselben Argumenten neu. False, wenn das Schließen abgebrochen wurde."""
+        if not self.close():
+            LOG.info(T("Neustart abgebrochen"))
+            return False
+        frozen = getattr(sys, "frozen", False)
+        args = sys.argv[1:] if frozen else [os.path.abspath(sys.argv[0])] + sys.argv[1:]
+        res = QProcess.startDetached(sys.executable, args, os.getcwd())
+        if not (res[0] if isinstance(res, tuple) else res):
+            LOG.info(T("Neustart fehlgeschlagen – BMC-Steward bitte von Hand starten."))
+            QMessageBox.warning(None, T("Neu starten?"), T("Neustart fehlgeschlagen – BMC-Steward bitte von Hand "
+                                                           "starten."))
+        else:
+            LOG.info(T("BMC-Steward startet neu"))
+        QApplication.instance().quit()
+        return True
 
     def design_changed(self, *_):
         choice = self.design.currentData() or "auto"

@@ -268,3 +268,65 @@ class TestWindow(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRestartAfterApproval(Base):
+    """Nach einer geänderten Freigabe fragt das Programm, ob es neu starten soll."""
+
+    def window(self):
+        from bmc_steward.main import Window
+        w = Window()
+        self.addCleanup(lambda: (setattr(w, "dirty", False), w.close()))
+        return w
+
+    def test_settings_report_changed_approvals(self):
+        from bmc_steward.settings import SettingsDialog
+        self.make("eins")
+        dlg = SettingsDialog()
+        dlg.plugin_page.table.item(0, 0).setCheckState(plugins_checked())
+        with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.Yes):
+            dlg.save()
+        self.assertTrue(dlg.plugins_changed)
+        dlg2 = SettingsDialog()
+        dlg2.save()
+        self.assertFalse(dlg2.plugins_changed)
+
+    def test_asks_and_restarts(self):
+        from bmc_steward import main
+        w = self.window()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as ask, \
+                patch.object(main.QProcess, "startDetached", return_value=(True, 4711)) as start, \
+                patch.object(main.QApplication, "quit") as quit_:
+            self.assertTrue(w.ask_restart())
+        ask.assert_called_once()
+        start.assert_called_once()
+        self.assertEqual(start.call_args[0][0], sys.executable)
+        quit_.assert_called_once()
+        self.assertFalse(w.isVisible())
+
+    def test_no_restart_when_declined_or_close_cancelled(self):
+        from bmc_steward import main
+        w = self.window()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No), \
+                patch.object(main.QProcess, "startDetached") as start:
+            self.assertFalse(w.ask_restart())
+        start.assert_not_called()
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                patch.object(main.Window, "close", return_value=False), \
+                patch.object(main.QProcess, "startDetached") as start, \
+                patch.object(main.QApplication, "quit") as quit_:
+            self.assertFalse(w.ask_restart())             # z. B. Lauf aktiv oder Liste nicht gespeichert
+        start.assert_not_called()
+        quit_.assert_not_called()
+
+    def test_open_settings_asks_only_after_change(self):
+        from bmc_steward import main, settings
+        w = self.window()
+        for changed, calls in ((False, 0), (True, 1)):
+            def fake_exec(dlg, changed=changed):
+                dlg.plugins_changed = changed
+                return 1
+            with patch.object(settings.SettingsDialog, "exec", fake_exec), \
+                    patch.object(main.Window, "ask_restart") as ask:
+                w.open_settings()
+            self.assertEqual(ask.call_count, calls)

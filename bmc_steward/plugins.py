@@ -366,7 +366,7 @@ def settings_page():
             btns.addWidget(again)
             btns.addStretch(1)
             lay.addLayout(btns)
-            note = QLabel(T("Änderungen an den Freigaben wirken beim nächsten Start."))
+            note = QLabel(T("Änderungen an den Freigaben wirken nach einem Neustart; nach dem Speichern bietet BMC-Steward ihn an."))
             note.setObjectName("muted")
             lay.addWidget(note)
             self.fill()

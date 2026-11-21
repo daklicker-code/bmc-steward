@@ -150,6 +150,7 @@ class SettingsDialog(QDialog):
         self.resize(640, 520)
         s = load()
         self.widgets = {}
+        self.plugins_changed = False             # Plugin-Freigaben geändert: Hauptfenster bietet Neustart an
         tabs = QTabWidget()
 
         # Darstellung
@@ -349,7 +350,8 @@ class SettingsDialog(QDialog):
 
     def save(self):
         s = save(self.values())
-        self.plugin_page.apply(self)
+        if self.plugin_page.apply(self):
+            self.plugins_changed = True
         theme.save_choice(self.design.currentData() or "auto")
         if self.app is not None:
             theme.apply(self.app, self.design.currentData() or "auto")

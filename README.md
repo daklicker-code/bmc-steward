@@ -84,7 +84,7 @@ the green button.
 - **Tooltips** on every field explain what it does and what to watch out for.
 - If an optional package is missing, the page concerned shows the matching install command.
 - **Plugins** extend the tool with your own pages and workflows: a folder with `plugin.json` and `plugin.py` under
-  `<data folder>/plugins/`, approved one by one under ⚙ → “Plugins”. Example: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
+  `<data folder>/plugins/`, approved one by one under ⚙ → “Plugins”; the tool then offers a restart. Example: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
   Ready-made plugin **Port scan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): checks open TCP ports (presets for
   BMC and server services, optionally IPMI via UDP 623 and banners) on addresses, networks or the server list, with CSV export.
   Connection attempts only, no login.
