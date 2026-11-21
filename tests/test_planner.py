@@ -422,8 +422,7 @@ class TestPage(unittest.TestCase):
         p = Plan()
         p.add_rack("X", 12)
         w.planner_set_plan(p, dirty=False)
-        item = next(w.pl_lib.item(i) for i in range(w.pl_lib.count())
-                    if w.pl_lib.item(i).data(0x0100) == "cat:leaf")
+        item = next(it for it in w.pl_lib.leaves() if it.data(0, 0x0100) == "cat:leaf")
         w.planner_lib_double(item)
         leaf = w.plan.placed("switch")[0]
         self.assertEqual(leaf["pos"], 12)
@@ -604,7 +603,7 @@ class TestPage(unittest.TestCase):
         empty = w.plan.racks[2]
         m = w.planner_context_menu("slot", (empty["id"], 20))
         sub = next(a.menu() for a in m.actions() if a.text() == "Hier einbauen")
-        netapp = next(a.menu() for a in sub.actions() if a.text() == "NetApp-Speicher")
+        netapp = next(a.menu() for a in sub.actions() if a.text() == "Speicher")
         next(a for a in netapp.actions() if a.text().startswith("NetApp DS224C")).trigger()
         shelf = next(d for d in w.plan.placed("shelf") if d["rack"] == empty["id"])
         self.assertEqual((shelf["pos"], shelf["u"]), (19, 2))   # oben bündig an HE 20
@@ -631,12 +630,11 @@ class TestPage(unittest.TestCase):
         self.assertEqual(len(w.plan.racks), racks)
         # Katalog: Suche und Racks per Doppelklick
         w.pl_lib_filter.setText("atto")
-        shown = [w.pl_lib.item(i).text() for i in range(w.pl_lib.count()) if not w.pl_lib.item(i).isHidden()]
+        shown = [it.text(0) for it in w.pl_lib.leaves() if not it.isHidden()]
         self.assertTrue(any("ATTO FibreBridge" in t for t in shown))
         self.assertFalse(any("Leaf" in t for t in shown))
         w.pl_lib_filter.clear()
-        item = next(w.pl_lib.item(i) for i in range(w.pl_lib.count())
-                    if w.pl_lib.item(i).data(0x0100) == "rack:47")
+        item = next(it for it in w.pl_lib.leaves() if it.data(0, 0x0100) == "rack:47")
         w.planner_lib_double(item)
         self.assertEqual(w.plan.racks[-1]["h"], 47)
         # Rack per Drag & Drop aus dem Katalog auf eine Bodenplatte
@@ -708,6 +706,75 @@ class TestPage(unittest.TestCase):
         w.pl_part_filter.clear()
         w.pl_canvas.grab()
         w.plan_dirty = False
+
+    def test_catalog_categories(self):
+        """Katalog nach Kategorien gegliedert, beim Start alle eingeklappt; die Suche klappt nur vorübergehend
+        auf, selbst Aufgeklapptes bleibt nach Änderungen am Plan offen."""
+        from bmc_steward.main import Window
+        from bmc_steward.planner import CATALOG
+        w = Window()
+        try:
+            lib = w.pl_lib
+            keys = [c.data(0, lib.CAT_KEY) for c in lib.categories()]
+            self.assertEqual(keys, ["inv", "rack", "server", "switch", "fw", "storage", "patch", "power", "acc"])
+            self.assertFalse(any(c.isExpanded() for c in lib.categories()))
+            payloads = {it.data(0, 0x0100) for it in lib.leaves()}
+            self.assertTrue({f"cat:{k}" for k in CATALOG} <= payloads)        # nichts fehlt im Katalog
+            self.assertEqual({it.data(0, 0x0100) for it in (lib.category("switch").child(i)
+                                                             for i in range(lib.category("switch").childCount()))},
+                             {"cat:oob", "cat:access", "cat:leaf", "cat:spine", "cat:netapp_bes53248",
+                              "cat:brocade_g620"})
+            # Klick auf eine Kategorie klappt sie auf; das bleibt nach einer Änderung am Plan so
+            lib.itemClicked.emit(lib.category("switch"), 0)
+            self.assertTrue(lib.category("switch").isExpanded())
+            w.planner_add_rack(h=24)
+            self.assertTrue(lib.category("switch").isExpanded())
+            self.assertFalse(lib.category("rack").isExpanded())
+            # Suche: nur passende Kategorien sichtbar und offen, danach wieder wie vorher
+            w.pl_lib_filter.setText("netapp")
+            visible = [c.data(0, lib.CAT_KEY) for c in lib.categories() if not c.isHidden()]
+            self.assertEqual(visible, ["switch", "storage"])
+            self.assertTrue(lib.category("storage").isExpanded())
+            w.pl_lib_filter.setText("speicher")                                # Treffer im Kategorienamen
+            st = lib.category("storage")
+            self.assertTrue(all(not st.child(i).isHidden() for i in range(st.childCount())))
+            w.pl_lib_filter.clear()
+            self.assertEqual([c.data(0, lib.CAT_KEY) for c in lib.categories() if c.isExpanded()], ["switch"])
+            # Kategorien lassen sich nicht ziehen, Einträge schon
+            self.assertIsNone(lib.mimeData([lib.category("switch")]).data(lib.mimeTypes()[0]).data() or None)
+            leaf = next(it for it in lib.leaves() if it.data(0, 0x0100) == "cat:leaf")
+            self.assertEqual(bytes(lib.mimeData([leaf]).data(lib.mimeTypes()[0])), b"cat:leaf")
+        finally:
+            w.plan_dirty = w.dirty = False
+            w.close()
+
+    def test_drop_device_on_floor_rack_and_save(self):
+        """Ein Gerät lässt sich im Grundriss direkt auf ein Rack ziehen; „Speichern“ schreibt danach ohne
+        erneute Rückfrage in dieselbe Datei."""
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from PyQt6.QtWidgets import QFileDialog
+        w = self.w
+        p = Plan()
+        r = p.add_rack("F1", 12)
+        w.planner_set_plan(p, dirty=False)
+        w.planner_set_view("floor")
+        w.pl_floor.devDropped.emit("cat:oob", r["id"])
+        self.assertEqual([(d["name"], d["pos"]) for d in w.plan.placed()], [("oob-01", 12)])
+        self.assertEqual(w.planner_current_view(), "floor")                   # Grundriss bleibt stehen
+        self.assertIn("F1", w.pl_status.text())
+        self.assertTrue(w.pl_file_label.text().endswith("•"))
+        path = str(Path(tempfile.mkdtemp()) / "plan.json")
+        with mock.patch.object(QFileDialog, "getSaveFileName", return_value=(path, "")) as ask:
+            self.assertTrue(w.planner_save())
+            w.planner_place_payload("cat:leaf", r["id"])
+            self.assertTrue(w.planner_save())
+            self.assertEqual(ask.call_count, 1)
+        self.assertEqual(w.pl_file_label.text(), "plan.json")
+        saved = json.loads(Path(path).read_text(encoding="utf-8"))["devices"]
+        self.assertEqual(sorted(d["name"] for d in saved if d.get("rack")), ["leaf-01", "oob-01"])
+        w.plan_path = None
 
     def test_simulation_toggle(self):
         w = self.w

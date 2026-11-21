@@ -71,7 +71,7 @@ the green button.
 |---|---|
 | **Capture** | Reads the Redfish tree of a real device strictly read-only and saves it redacted (no serial numbers, addresses, certificates or keys). Two captures can be compared, e.g. before and after a firmware update. |
 | **Test lab** | Virtual Dell, HPE, Lenovo and Supermicro BMCs (`tools/vbmc/`) for practising without hardware: loopback, a virtual staging switch or the real LAN. |
-| **Rack planner** | Plans racks, cabling and addresses, checks redundancy and PDU load, produces a bill of materials and hands hostnames and BMC addresses to “New hardware”. Servers can be fitted with power supplies, network cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives – by right-clicking a server or port; the path view shows card and transceiver at each end. Dragging with the left button on free space pans the view. |
+| **Rack planner** | Plans racks, cabling and addresses, checks redundancy and PDU load, produces a bill of materials and hands hostnames and BMC addresses to “New hardware”. Servers can be fitted with power supplies, network cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives – by right-clicking a server or port; the path view shows card and transceiver at each end. The catalogue is grouped into categories (racks, server, switches, firewalls, storage, patch panels, power, accessories), collapsed at start; devices can also be dropped straight onto a rack on the floor plan. Dragging with the left button on free space pans the view. |
 | **Help** | Every step and the vendor specifics, with search and table of contents. |
 
 ### Around the pages

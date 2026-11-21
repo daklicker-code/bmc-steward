@@ -55,15 +55,17 @@ THEMES = {
                 "sas": "#67e8f9", "cluster": "#f9a8d4"},
         BAR_CSS=("QFrame#plBar { background: #1f3a5f; border-radius: 3px; }"
                  "QFrame#plBar QPushButton, QFrame#plBar QToolButton { color: #ffffff; background: transparent;"
-                 " border: 1px solid #3d6491; border-radius: 3px; padding: 4px 10px; }"
+                 " border: 1px solid #3d6491; border-radius: 3px; padding: 4px 8px; }"
                  "QFrame#plBar QPushButton:hover, QFrame#plBar QToolButton:hover { background: #2b4d78; }"
                  "QFrame#plBar QPushButton:checked { background: #2563eb; border-color: #93c5fd; }"
-                 "QFrame#plBar QPushButton#seg { border-radius: 0; padding: 4px 12px; }"
+                 "QFrame#plBar QPushButton#seg { border-radius: 0; padding: 4px 10px; }"
                  "QFrame#plBar QComboBox { background: #ffffff; color: #111827; border-radius: 3px; padding: 3px 8px; }"
                  "QFrame#plBar QLabel { color: #ffffff; }"),
         CRUMB_CSS="QLabel#plCrumb { background: #eef2f7; color: #1f3a5f; border: 1px solid #c9d3df; padding: 3px 8px; }",
         SCROLL_CSS="QScrollArea { background: #e6eaef; border: 1px solid #c9d3df; }",
-        LIB_CSS="QListWidget { background: #ffffff; color: #111827; } QListWidget::item { padding: 3px 6px; }",
+        LIB_CSS=("QTreeWidget { background: #ffffff; color: #111827; }"
+                 "QTreeWidget::item { padding: 3px 2px; } QTreeWidget::item:selected { background: #dbeafe;"
+                 " color: #111827; }"),
     ),
     "dark": dict(
         BG=_C("#0b1214"), RACK_BG=_C("#0a1012"), RACK_LINE=_C("#2a3c3f"), RAIL=_C("#2f4245"), STRIPE=_C("#111b1d"),
@@ -86,17 +88,17 @@ THEMES = {
                 "sas": "#22d3ee", "cluster": "#f472b6"},
         BAR_CSS=("QFrame#plBar { background: #0f191b; border: 1px solid #1d2b2e; border-radius: 6px; }"
                  "QFrame#plBar QPushButton, QFrame#plBar QToolButton { color: #bcd0cd; background: #142124;"
-                 " border: 1px solid #23363a; border-radius: 6px; padding: 4px 10px; }"
+                 " border: 1px solid #23363a; border-radius: 6px; padding: 4px 8px; }"
                  "QFrame#plBar QPushButton:hover, QFrame#plBar QToolButton:hover { border-color: #2f5049; }"
                  "QFrame#plBar QPushButton:checked { background: #183631; border-color: #34d399; color: #6ee7b7; }"
-                 "QFrame#plBar QPushButton#seg { border-radius: 0; padding: 4px 12px; }"
+                 "QFrame#plBar QPushButton#seg { border-radius: 0; padding: 4px 10px; }"
                  "QFrame#plBar QComboBox { background: #111c1e; color: #d6e2e0; border: 1px solid #23363a;"
                  " border-radius: 6px; padding: 3px 8px; }"
                  "QFrame#plBar QLabel { color: #8aa29e; }"),
         CRUMB_CSS="QLabel#plCrumb { background: #101a1c; color: #8aa29e; border: 1px solid #1d2b2e; padding: 3px 8px; }",
         SCROLL_CSS="QScrollArea { background: #0b1214; border: 1px solid #1d2b2e; }",
-        LIB_CSS=("QListWidget { background: #0b1214; color: #d6e2e0; border: 1px solid #1d2b2e; }"
-                 "QListWidget::item { padding: 3px 6px; } QListWidget::item:selected { background: #1f6b52; }"),
+        LIB_CSS=("QTreeWidget { background: #0b1214; color: #d6e2e0; border: 1px solid #1d2b2e; }"
+                 "QTreeWidget::item { padding: 3px 2px; } QTreeWidget::item:selected { background: #1f6b52; }"),
     ),
 }
 # Eigene, herstellerneutrale Palette (keine Markenfarben): die Streifen unterscheiden nur die Geräteart/Gruppe.
@@ -149,6 +151,15 @@ def rack_label(plan, r):
     return r["name"] if coord in (r["name"], "–") else f"{r['name']} · {coord}"
 
 
+def _section(title):
+    """Überschrift eines Bereichs in der linken Spalte."""
+    lab = QLabel(title)
+    f = lab.font()
+    f.setBold(True)
+    lab.setFont(f)
+    return lab
+
+
 def _group(title):
     """Attributgruppe der Eigenschaften: Rahmen mit Titel und Formular darin."""
     box = QGroupBox(title)
@@ -157,27 +168,100 @@ def _group(title):
     return box, form
 
 
-class PlannerLibrary(QListWidget):
-    """Bibliothek: Einträge lassen sich in ein Rack ziehen (oder doppelklicken)."""
+CAT_ROLE = Qt.ItemDataRole.UserRole + 1          # Schlüssel einer Katalog-Kategorie
+
+
+class PlannerLibrary(QTreeWidget):
+    """Katalog: Kategorien (Serverliste, Racks, Server, Switches …), beim Start alle eingeklappt. Ein Klick auf
+    eine Kategorie klappt sie auf oder zu; Einträge lassen sich in ein Rack ziehen oder doppelklicken. Welche
+    Kategorien offen sind, bleibt beim Neuaufbau (nach jeder Änderung am Plan) erhalten; die Suche klappt nur
+    vorübergehend auf."""
+    CAT_KEY = CAT_ROLE
 
     def __init__(self):
         super().__init__()
+        self.setHeaderHidden(True)
+        self.setColumnCount(1)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setIndentation(12)
+        self.setAnimated(True)
+        self.setUniformRowHeights(False)
         self.setWordWrap(True)
-        self.setSpacing(1)
-        self.setStyleSheet("QListWidget::item { padding: 3px 6px; }")
+        self.setIconSize(QSize(26, 20))
+        self.setExpandsOnDoubleClick(False)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.opened = set()              # aufgeklappte Kategorien; beim Start keine
+        self.quiet = False               # programmatisches Auf-/Zuklappen nicht merken
+        self.itemClicked.connect(self._clicked)
+        self.itemExpanded.connect(lambda it: self._remember(it, True))
+        self.itemCollapsed.connect(lambda it: self._remember(it, False))
 
     def mimeTypes(self):
         return [MIME]
 
     def mimeData(self, items):
         md = QMimeData()
-        payload = items[0].data(Qt.ItemDataRole.UserRole) if items else None
+        payload = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
         if payload:
             md.setData(MIME, payload.encode("utf-8"))
         return md
+
+    def categories(self):
+        return [self.topLevelItem(i) for i in range(self.topLevelItemCount())]
+
+    def category(self, key):
+        return next((c for c in self.categories() if c.data(0, CAT_ROLE) == key), None)
+
+    def leaves(self):
+        """Alle Einträge unterhalb der Kategorien (auch die ohne Nutzdaten wie „Leer …“)."""
+        return [c.child(i) for c in self.categories() for i in range(c.childCount())]
+
+    def set_open(self, item, on):
+        self.quiet = True
+        try:
+            item.setExpanded(on)
+        finally:
+            self.quiet = False
+
+    def _clicked(self, item, _col=0):
+        if item.data(0, CAT_ROLE):
+            item.setExpanded(not item.isExpanded())
+
+    def _remember(self, item, on):
+        key = item.data(0, CAT_ROLE)
+        if key and not self.quiet:
+            (self.opened.add if on else self.opened.discard)(key)
+
+
+def lib_icon(kind, u=1, stripe=None, rack=False):
+    """Kleines Symbol für den Katalog: Gerätefront in der Farbe der Geräteart, so hoch wie die Einbauhöhe;
+    Racks als Schrank mit Höheneinheiten."""
+    from PyQt6.QtGui import QIcon, QPixmap
+    dpr = 2
+    pm = QPixmap(26 * dpr, 20 * dpr)
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if rack:
+        p.setPen(QPen(RACK_LINE, 1.2))
+        p.setBrush(QBrush(RACK_BG))
+        p.drawRoundedRect(QRectF(8, 1, 10, 18), 1.5, 1.5)
+        p.setPen(QPen(RAIL, 0.8))
+        for k in range(1, 6):
+            p.drawLine(QPointF(10, 1 + 3 * k), QPointF(16, 1 + 3 * k))
+    else:
+        fill, edge = KIND_FILL.get(kind, ("#e5e7eb", "#6b7280"))
+        h = min(18.0, 4.0 + 3.5 * u)
+        r = QRectF(1, 10 - h / 2, 24, h)
+        p.setPen(QPen(QColor(edge), 1))
+        p.setBrush(QBrush(QColor(fill)))
+        p.drawRoundedRect(r, 1.5, 1.5)
+        p.fillRect(QRectF(r.x() + 1, r.y() + 1, 3, r.height() - 2), QColor(STRIPE_COLOR.get(stripe or kind, edge)))
+    p.end()
+    return QIcon(pm)
 
 
 class ZoomPan:
@@ -487,7 +571,7 @@ class RackCanvas(ZoomPan, QWidget):
         if not self.plan.racks:
             p.setPen(MUTED)
             p.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter,
-                       T("Noch kein Rack – oben „＋ Rack“ klicken."))
+                       T("Noch kein Rack – im Katalog „Racks“ aufklappen oder oben „＋ Rack“ klicken."))
             return
         small = QFont(self.font())
         small.setPointSizeF(7)
@@ -925,6 +1009,7 @@ class FloorCanvas(ZoomPan, QWidget):
     zoomChanged = pyqtSignal(float)
     contextRequested = pyqtSignal(str, object, object)
     rackDropped = pyqtSignal(int, int, int)        # Höhe, Spalte, Reihe
+    devDropped = pyqtSignal(str, str)              # Katalog-Eintrag ("cat:leaf", "inv:…"), Rack-ID
 
     TS, HEAD, LEFT, M, FOOT = 42, 24, 30, 10, 30
 
@@ -934,6 +1019,7 @@ class FloorCanvas(ZoomPan, QWidget):
         self.tile_sel = None
         self.drag = None
         self.ghost = None                # (x, y, passt?, Ausrichtung)
+        self.drop_rack = None            # Rack, auf das gerade ein Gerät gezogen wird
         self.zp_init()
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
@@ -999,7 +1085,12 @@ class FloorCanvas(ZoomPan, QWidget):
         sel = self.rv.sel
         for r in plan.racks:
             if r.get("x") is not None:
-                self._paint_rack(p, r, sel == ("rack", r["id"]))
+                self._paint_rack(p, r, sel == ("rack", r["id"]) or self.drop_rack == r["id"])
+        if not plan.racks:
+            p.setPen(MUTED)
+            p.drawText(QRectF(x0, y0, w, h).adjusted(20, 20, -20, -20),
+                       Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+                       T("Noch kein Rack – im Katalog „Racks“ aufklappen und ein Rack auf eine Bodenplatte ziehen."))
         if self.ghost:
             gx, gy, ok, orient = self.ghost
             col = QColor(STATE_COLOR["ok"] if ok else STATE_COLOR["down"])
@@ -1169,13 +1260,26 @@ class FloorCanvas(ZoomPan, QWidget):
         kind, _, val = bytes(md.data(MIME)).decode("utf-8", "replace").partition(":")
         return int(val) if kind == "rack" and val.isdigit() else None
 
+    @staticmethod
+    def _dev_payload(md):
+        text = bytes(md.data(MIME)).decode("utf-8", "replace")
+        return text if text.partition(":")[0] in ("cat", "inv") else None
+
     def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(MIME) and self._rack_payload(e.mimeData()):
+        md = e.mimeData()
+        if md.hasFormat(MIME) and (self._rack_payload(md) or self._dev_payload(md)):
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):
+        md = e.mimeData()
+        if self._dev_payload(md):                    # Gerät auf ein Rack im Grundriss ziehen
+            r = self.rack_at(self._pt(e))
+            self.drop_rack = r["id"] if r else None
+            self.update()
+            e.acceptProposedAction() if r else e.ignore()
+            return
         t = self.tile_at(self._pt(e))
-        if not t or not self._rack_payload(e.mimeData()):
+        if not t or not self._rack_payload(md):
             self.ghost = None
             self.update()
             e.ignore()
@@ -1185,14 +1289,22 @@ class FloorCanvas(ZoomPan, QWidget):
         e.acceptProposedAction()
 
     def dragLeaveEvent(self, e):
-        self.ghost = None
+        self.ghost = self.drop_rack = None
         self.update()
 
     def dropEvent(self, e):
-        h = self._rack_payload(e.mimeData())
-        t = self.tile_at(self._pt(e))
-        self.ghost = None
+        md = e.mimeData()
+        h, dev = self._rack_payload(md), self._dev_payload(md)
+        pt = self._pt(e)
+        self.ghost = self.drop_rack = None
         self.update()
+        if dev:
+            r = self.rack_at(pt)
+            if r:
+                e.acceptProposedAction()
+                self.devDropped.emit(dev, r["id"])
+            return
+        t = self.tile_at(pt)
         if h and t:
             e.acceptProposedAction()
             self.rackDropped.emit(h, t[0], t[1])
@@ -1632,11 +1744,9 @@ class PlannerTabMixin:
         v.setContentsMargins(4, 4, 4, 4)
         v.setSpacing(6)
         v.addWidget(intro_label(T(
-            "<b>Aufbauplaner</b> plant den Einbau vor Ort: Racks mit frei wählbarer Höhe anlegen, Server aus der "
-            "Serverliste und Switches hineinziehen, Ports verkabeln. Die Prüfung zeigt Lücken (BMC ohne Kabel, "
-            "fehlende Redundanz, PDU-Last), „Netze“ vergibt Hostnamen und BMC-Adressen und übernimmt sie in "
-            "„Neuware“, „Ins Testlabor“ baut die Server als virtuelle BMCs nach. Gespeichert wird nur auf "
-            "Knopfdruck.")))
+            "<b>Aufbauplaner</b>: Racks aufstellen, Geräte aus dem Katalog hineinziehen, verkabeln und prüfen. "
+            "„Netze“ übergibt Hostnamen und BMC-Adressen an „Neuware“. Gespeichert wird nur auf Knopfdruck "
+            "(Strg+S).")))
 
         # Werkzeugleiste (dunkelblau wie die Kopfzeile üblicher DCIM-Werkzeuge)
         bar = QFrame()
@@ -1650,22 +1760,31 @@ class PlannerTabMixin:
         fm = QMenu(file_btn)
         fm.addAction(T("Neuer Plan"), self.planner_new)
         fm.addAction(T("Plan laden …"), self.planner_load)
-        fm.addAction(T("Plan speichern …"), self.planner_save)
+        fm.addAction(T("Plan speichern"), lambda: self.planner_save())
+        fm.addAction(T("Plan speichern unter …"), lambda: self.planner_save(ask=True))
         fm.addSeparator()
         fm.addAction(T("Beispielaufbau laden"), self.planner_demo)
         fm.addAction(T("Beispiel NetApp MetroCluster laden"), self.planner_demo_netapp)
         file_btn.setMenu(fm)
         tb.addWidget(file_btn)
+        save_btn = QPushButton(T("Speichern"))
+        save_btn.setToolTip(T("Plan speichern (Strg+S); beim ersten Mal fragt das Tool nach dem Dateinamen."))
+        save_btn.clicked.connect(lambda: self.planner_save())
+        tb.addWidget(save_btn)
+        tb.addSpacing(10)
         self.pl_undo_btn = QPushButton("↶")
         self.pl_undo_btn.setToolTip(T("Rückgängig (Strg+Z)"))
         self.pl_undo_btn.clicked.connect(self.planner_undo)
         self.pl_redo_btn = QPushButton("↷")
         self.pl_redo_btn.setToolTip(T("Wiederholen (Strg+Y)"))
         self.pl_redo_btn.clicked.connect(self.planner_redo)
-        tb.addWidget(self.pl_undo_btn)
-        tb.addWidget(self.pl_redo_btn)
+        for b in (self.pl_undo_btn, self.pl_redo_btn):
+            b.setObjectName("seg")
+            tb.addWidget(b)
+        tb.addSpacing(10)
         add_rack = QPushButton(T("＋ Rack"))
-        add_rack.setToolTip(T("Neues Rack mit 42 HE anlegen; die Höhe lässt sich danach rechts ändern."))
+        add_rack.setToolTip(T("Neues 42-HE-Rack auf die gewählte oder nächste freie Bodenplatte stellen. Andere "
+                              "Höhen: im Katalog unter „Racks“."))
         add_rack.clicked.connect(lambda: self.planner_add_rack())
         tb.addWidget(add_rack)
         tpl_btn = QToolButton()
@@ -1705,12 +1824,14 @@ class PlannerTabMixin:
         self.pl_cable_btn.toggled.connect(self.planner_cable_mode)
         tb.addWidget(self.pl_cable_btn)
         self.pl_net = QComboBox()
+        self.pl_net.setToolTip(T("Netz der neuen Kabel; „automatisch“ leitet es aus den Ports ab."))
         self.pl_net.addItem(T("Kabeltyp: automatisch"), None)
         for k, name in net_names().items():
             if k != "patch":
                 self.pl_net.addItem(name, k)
         self.pl_net.currentIndexChanged.connect(lambda *_: setattr(self.pl_canvas, "net_choice",
                                                                    self.pl_net.currentData()))
+        self.pl_net.setVisible(False)                # nur beim Verkabeln von Belang
         tb.addWidget(self.pl_net)
         self.pl_sim_btn = QPushButton(T("Ausfall simulieren"))
         self.pl_sim_btn.setCheckable(True)
@@ -1718,7 +1839,6 @@ class PlannerTabMixin:
                                      "ob sie erreichbar bleiben. Ändert nichts am Plan."))
         self.pl_sim_btn.toggled.connect(self.planner_sim_toggle)
         tb.addWidget(self.pl_sim_btn)
-        tb.addSpacing(12)
         zoom_out = QPushButton("−")
         zoom_out.setToolTip(T("Verkleinern (Mausrad zurück, Strg+Minus)"))
         zoom_out.clicked.connect(lambda: self.planner_zoom(1 / ZoomPan.ZSTEP))
@@ -1731,10 +1851,20 @@ class PlannerTabMixin:
         fit = QPushButton(T("Einpassen"))
         fit.setToolTip(T("Alles ins Fenster einpassen"))
         fit.clicked.connect(self.planner_zoom_fit)
+        # Zoom gehört zur Zeichenfläche: eigene kleine Leiste rechts in der Pfadzeile
+        zoom_bar = QFrame()
+        zoom_bar.setObjectName("plBar")
+        zl = QHBoxLayout(zoom_bar)
+        zl.setContentsMargins(4, 2, 4, 2)
+        zl.setSpacing(0)
         for b in (zoom_out, self.pl_zoom_label, zoom_in, fit):
             b.setObjectName("seg")
-            tb.addWidget(b)
+            zl.addWidget(b)
+        self.pl_zoom_bar = zoom_bar
         tb.addStretch(1)
+        self.pl_file_label = QLabel()
+        self.pl_file_label.setObjectName("plFile")
+        tb.addWidget(self.pl_file_label)
         legend = QLabel()
         legend.setObjectName("legend")
         self.pl_legend = legend
@@ -1759,9 +1889,11 @@ class PlannerTabMixin:
         crumb_row.setSpacing(10)
         crumb_row.addWidget(self.pl_crumb, 1)
         crumb_row.addWidget(legend)
+        crumb_row.addWidget(zoom_bar)
         v.addLayout(crumb_row)
 
-        # Links: Navigator (Standort › Raum › Reihe › Rack › Gerät) und Katalog
+        # Links: oben der Katalog (Kategorien, beim Start eingeklappt), darunter der Navigator
+        # (Standort › Raum › Reihe › Rack › Gerät) – beide gleichzeitig sichtbar
         self.pl_tree = QTreeWidget()
         self.pl_tree.setHeaderHidden(True)
         self.pl_tree.itemClicked.connect(self.planner_tree_clicked)
@@ -1771,19 +1903,31 @@ class PlannerTabMixin:
         self.pl_lib_filter.textChanged.connect(self.planner_filter_lib)
         self.pl_lib = PlannerLibrary()
         self.pl_lib.itemDoubleClicked.connect(self.planner_lib_double)
+        self.pl_lib.customContextMenuRequested.connect(self.planner_lib_menu)
         lib_box = QWidget()
         ll = QVBoxLayout(lib_box)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(4)
+        ll.addWidget(_section(T("Katalog")))
         ll.addWidget(self.pl_lib_filter)
         ll.addWidget(self.pl_lib, 1)
-        hint = QLabel(T("In ein Rack ziehen oder doppelklicken."))
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
-        ll.addWidget(hint)
-        self.pl_left = QTabWidget()
-        self.pl_left.addTab(self.pl_tree, T("Navigator"))
-        self.pl_left.addTab(lib_box, T("Katalog"))
-        self.pl_left.setCurrentIndex(1)
+        self.pl_lib_hint = QLabel()
+        self.pl_lib_hint.setWordWrap(True)
+        self.pl_lib_hint.setStyleSheet("color: palette(mid);")
+        ll.addWidget(self.pl_lib_hint)
+        nav_box = QWidget()
+        nl = QVBoxLayout(nav_box)
+        nl.setContentsMargins(0, 4, 0, 0)
+        nl.setSpacing(4)
+        nl.addWidget(_section(T("Navigator")))
+        nl.addWidget(self.pl_tree, 1)
+        self.pl_left = QSplitter(Qt.Orientation.Vertical)
+        self.pl_left.addWidget(lib_box)
+        self.pl_left.addWidget(nav_box)
+        self.pl_left.setStretchFactor(0, 3)
+        self.pl_left.setStretchFactor(1, 2)
+        self.pl_left.setSizes([380, 360])
+        self.pl_left.setChildrenCollapsible(False)
 
         # Mitte: Rack-Ansicht, darunter Objektliste und Simulationsprotokoll
         self.pl_canvas = RackCanvas()
@@ -1807,6 +1951,7 @@ class PlannerTabMixin:
         self.pl_floor.contextRequested.connect(self.planner_context)
         self.pl_floor.zoomChanged.connect(self.planner_zoom_shown)
         self.pl_floor.rackDropped.connect(lambda h, x, y: self.planner_add_rack(h=h, at=(x, y)))
+        self.pl_floor.devDropped.connect(self.planner_place_payload)
         self.pl_floor_scroll = QScrollArea()
         self.pl_floor_scroll.setWidget(self.pl_floor)
         self.pl_floor_scroll.setWidgetResizable(True)
@@ -1876,7 +2021,7 @@ class PlannerTabMixin:
         ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
         for keys, slot in (("K", self.pl_cable_btn.toggle), ("Ctrl+Z", self.planner_undo),
                            ("Ctrl+Y", self.planner_redo), ("Ctrl+Shift+Z", self.planner_redo),
-                           ("Ctrl+S", self.planner_save), ("Ctrl++", lambda: self.planner_zoom(ZoomPan.ZSTEP)),
+                           ("Ctrl+S", lambda: self.planner_save()), ("Ctrl++", lambda: self.planner_zoom(ZoomPan.ZSTEP)),
                            ("Ctrl+=", lambda: self.planner_zoom(ZoomPan.ZSTEP)),
                            ("Ctrl+-", lambda: self.planner_zoom(1 / ZoomPan.ZSTEP)),
                            ("Ctrl+0", lambda: self.planner_zoom(None)), ("F", lambda: self.planner_set_view("floor")),
@@ -2232,6 +2377,10 @@ class PlannerTabMixin:
     def planner_update_history(self):
         self.pl_undo_btn.setEnabled(bool(self.pl_undo))
         self.pl_redo_btn.setEnabled(bool(self.pl_redo))
+        name = Path(self.plan_path).name if self.plan_path else T("Unbenannter Plan")
+        self.pl_file_label.setText(name + (" •" if self.plan_dirty else ""))
+        self.pl_file_label.setToolTip((self.plan_path or T("Noch nicht gespeichert")) +
+                                      ("\n" + T("Ungespeicherte Änderungen") if self.plan_dirty else ""))
 
     def _planner_restore(self, snap):
         sel = self.pl_canvas.sel
@@ -2275,10 +2424,12 @@ class PlannerTabMixin:
         self.planner_fill_objects()
         self.planner_fill_participants()
         self.planner_selection_changed()
+        self.planner_update_history()
 
     def planner_selection_changed(self):
         self.planner_fill_props()
         self.planner_fill_crumb()
+        self.planner_lib_hint()
         self.pl_floor.update()
 
     # ================================================================ Ansicht, Navigator, Objektliste
@@ -2294,6 +2445,7 @@ class PlannerTabMixin:
         self.pl_canvas.pending = None
         if view != "rear" and self.pl_cable_btn.isChecked():
             self.pl_cable_btn.setChecked(False)
+        self.pl_legend.setVisible(view == "rear")      # Kabelfarben gibt es nur auf der Rückseite
         self.pl_canvas.update()
         self.pl_floor.update()
         self.planner_zoom_shown()
@@ -2321,10 +2473,12 @@ class PlannerTabMixin:
         self.planner_theme = name
         apply_theme(name)
         self.pl_bar.setStyleSheet(BAR_CSS)
+        self.pl_zoom_bar.setStyleSheet(BAR_CSS)
         self.pl_crumb.setStyleSheet(CRUMB_CSS)
         self.pl_scroll.setStyleSheet(SCROLL_CSS)
         self.pl_floor_scroll.setStyleSheet(SCROLL_CSS)
         self.pl_lib.setStyleSheet(LIB_CSS)
+        self.pl_file_label.setStyleSheet("QLabel#plFile { font-style: italic; }")
         self.planner_fill_lib()
         self.pl_legend.setText(" ".join(f"<span style='color:{NET_COLOR[k].name()}'>━━</span> {n}"
                                         for k, n in net_names().items() if k != "patch"))
@@ -2491,85 +2645,143 @@ class PlannerTabMixin:
 
     # ================================================================ Bibliothek
     def planner_fill_lib(self):
+        """Katalog neu aufbauen; offene Kategorien, Auswahl und Bildlauf bleiben erhalten."""
         lib = self.pl_lib
+        cur = lib.currentItem()
+        cur_payload = cur.data(0, Qt.ItemDataRole.UserRole) if cur else None
+        scroll = lib.verticalScrollBar().value()
         lib.clear()
+        bold = QFont(lib.font())
+        bold.setBold(True)
 
-        def header(text):
-            it = QListWidgetItem(text)
-            f = it.font()
-            f.setBold(True)
-            it.setFont(f)
+        def category(key, title, n):
+            it = QTreeWidgetItem([f"{title}  ({n})" if n else title])
+            it.setData(0, CAT_ROLE, key)
+            it.setData(0, CAT_ROLE + 1, title)
+            it.setFont(0, bold)
             it.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            it.setBackground(QBrush(HEAD_BG))
-            it.setForeground(QBrush(TEXT))
-            lib.addItem(it)
+            it.setToolTip(0, T("Klick klappt die Kategorie auf oder zu."))
+            lib.addTopLevelItem(it)
+            return it
+
+        def entry(parent, payload, text, tip, icon):
+            it = QTreeWidgetItem(parent, [text])
+            it.setData(0, Qt.ItemDataRole.UserRole, payload)
+            it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
+            it.setToolTip(0, tip)
+            it.setIcon(0, icon)
+            return it
 
         inv = [d for d in self.plan.devs if d.get("inv")]
         open_inv = [d for d in inv if not d.get("rack")]
-        header(T("Serverliste ({0} offen · {1} eingebaut)").format(len(open_inv), len(inv) - len(open_inv)))
-        if not inv:
-            it = QListWidgetItem(T("Leer – Server zuerst in „Neuware“ eintragen oder per DHCP übernehmen."))
+        cat = category("inv", T("Serverliste ({0} offen · {1} eingebaut)").format(
+            len(open_inv), len(inv) - len(open_inv)), 0)
+        if not open_inv:
+            it = QTreeWidgetItem(cat, [T("Leer – Server zuerst in „Neuware“ eintragen oder per DHCP übernehmen.")
+                                       if not inv else T("Alle Server der Serverliste sind eingebaut.")])
             it.setFlags(Qt.ItemFlag.NoItemFlags)
-            lib.addItem(it)
         for d in open_inv:
-            it = QListWidgetItem(f"{d['name']}\n{d.get('model') or T('Hersteller unbekannt')} · {d['u']} " + T("HE"))
-            it.setData(Qt.ItemDataRole.UserRole, f"inv:{d['id']}")
-            it.setToolTip(T("In ein Rack ziehen; die Einbauhöhe lässt sich danach rechts ändern."))
-            lib.addItem(it)
-        header(T("Racks"))
+            entry(cat, f"inv:{d['id']}",
+                  f"{d['name']}\n{d.get('model') or T('Hersteller unbekannt')} · {d['u']} " + T("HE"),
+                  T("In ein Rack ziehen; die Einbauhöhe lässt sich danach rechts ändern."),
+                  lib_icon("server", d["u"], d.get("vendor") or "gen"))
+        cat = category("rack", T("Racks"), len(RACK_SIZES))
         for h in RACK_SIZES:
-            it = QListWidgetItem(T("Rack {0} HE").format(h) + "\n" + T("600 × 1200 mm · auf den Grundriss ziehen"))
-            it.setData(Qt.ItemDataRole.UserRole, f"rack:{h}")
-            it.setToolTip(T("Auf eine freie Bodenplatte im Grundriss ziehen oder doppelklicken."))
-            lib.addItem(it)
-        for group, entries in catalog_texts():
-            header(group)
-            for key, name, sub in entries:
-                it = QListWidgetItem(f"{name}\n{sub} · {CATALOG[key]['u']} " + T("HE"))
-                it.setData(Qt.ItemDataRole.UserRole, f"cat:{key}")
-                it.setToolTip(CATALOG[key]["model"] or name)
-                lib.addItem(it)
+            entry(cat, f"rack:{h}", T("Rack {0} HE").format(h) + "\n600 × 1200 mm",
+                  T("Auf eine freie Bodenplatte im Grundriss ziehen oder doppelklicken."), lib_icon(None, rack=True))
+        for key, title, entries in catalog_texts():
+            cat = category(key, title, len(entries))
+            for ck, name, sub in entries:
+                spec = CATALOG[ck]
+                entry(cat, f"cat:{ck}", f"{name}\n{sub} · {spec['u']} " + T("HE"),
+                      f"{name} – {sub}" + (f"\n{spec['model']}" if spec["model"] else ""),
+                      lib_icon(spec["kind"], spec["u"], spec.get("vendor") or spec["kind"]))
+        for c in lib.categories():
+            lib.set_open(c, c.data(0, CAT_ROLE) in lib.opened)
+            for k in range(c.childCount()):
+                if cur_payload and c.child(k).data(0, Qt.ItemDataRole.UserRole) == cur_payload:
+                    lib.setCurrentItem(c.child(k))
         self.planner_filter_lib(self.pl_lib_filter.text())
+        lib.verticalScrollBar().setValue(scroll)
+        self.planner_lib_hint()
+
+    def planner_lib_hint(self):
+        rid = self.planner_target_rack()
+        self.pl_lib_hint.setText(
+            T("In ein Rack ziehen oder doppelklicken – dann landet der Eintrag in Rack {0}.").format(self.plan.rack(rid)["name"]) if rid else
+            T("Noch kein Rack: „Racks“ aufklappen und ein Rack auf den Grundriss ziehen."))
 
     def planner_filter_lib(self, text):
-        """Katalog eingrenzen; eine Überschrift bleibt sichtbar, solange darunter etwas passt."""
+        """Katalog eingrenzen: passende Kategorien klappen auf, die übrigen verschwinden. Ohne Suchtext gilt
+        wieder, was der Nutzer selbst auf- und zugeklappt hat."""
         text = (text or "").strip().lower()
         lib = self.pl_lib
-        head, seen = None, False
-        for i in range(lib.count()):
-            it = lib.item(i)
-            is_head = bool(it.flags() & Qt.ItemFlag.ItemIsEnabled) and not it.data(Qt.ItemDataRole.UserRole) \
-                and it.font().bold()
-            if is_head:
-                if head is not None:
-                    head.setHidden(bool(text) and not seen)
-                head, seen = it, False
-                continue
-            hit = not text or text in it.text().lower() or text in (it.toolTip() or "").lower()
-            it.setHidden(not hit)
-            seen = seen or (hit and bool(it.data(Qt.ItemDataRole.UserRole)))
-        if head is not None:
-            head.setHidden(bool(text) and not seen)
+        for c in lib.categories():
+            title_hit = bool(text) and text in (c.data(0, CAT_ROLE + 1) or "").lower()
+            seen = False
+            for k in range(c.childCount()):
+                it = c.child(k)
+                payload = it.data(0, Qt.ItemDataRole.UserRole)
+                hit = not text or title_hit or (bool(payload) and (text in it.text(0).lower()
+                                                                   or text in (it.toolTip(0) or "").lower()))
+                it.setHidden(not hit)
+                seen = seen or (hit and bool(payload))
+            c.setHidden(bool(text) and not seen)
+            lib.set_open(c, seen if text else c.data(0, CAT_ROLE) in lib.opened)
 
-    def planner_lib_double(self, item):
-        payload = item.data(Qt.ItemDataRole.UserRole)
+    def planner_lib_menu(self, pos):
+        lib = self.pl_lib
+        it = lib.itemAt(pos)
+        menu = QMenu(lib)
+        payload = it.data(0, Qt.ItemDataRole.UserRole) if it else None
+        if payload:
+            rid = self.planner_target_rack()
+            if payload.startswith("rack:"):
+                menu.addAction(T("Rack aufstellen"), lambda: self.planner_lib_double(it))
+            elif rid:
+                menu.addAction(T("In Rack {0} einbauen").format(self.plan.rack(rid)["name"]),
+                               lambda: self.planner_lib_double(it))
+            menu.addSeparator()
+        menu.addAction(T("Alle Kategorien aufklappen"), lambda: self.planner_lib_open_all(True))
+        menu.addAction(T("Alle Kategorien zuklappen"), lambda: self.planner_lib_open_all(False))
+        menu.exec(lib.viewport().mapToGlobal(pos))
+
+    def planner_lib_open_all(self, on):
+        lib = self.pl_lib
+        self.pl_lib_filter.clear()
+        for c in lib.categories():
+            c.setExpanded(on)
+
+    def planner_lib_double(self, item, _col=0):
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
         if not payload:
             return
-        kind, _, key = payload.partition(":")
-        if kind == "rack":
-            self.planner_add_rack(h=int(key))
+        if payload.startswith("rack:"):
+            self.planner_add_rack(h=int(payload.partition(":")[2]))
             return
         rid = self.planner_target_rack()
         if rid is None:
-            self.planner_say(T("Zuerst ein Rack anlegen."), True)
+            self.planner_say(T("Zuerst ein Rack aufstellen: „Racks“ im Katalog aufklappen."), True)
             return
+        self.planner_place_payload(payload, rid, show=True)
+
+    def planner_place_payload(self, payload, rid, show=False):
+        """Katalog-Eintrag ("cat:…" oder "inv:…") oben in Rack `rid` einbauen (PDUs unten); `show` holt ihn in
+        der Rack-Ansicht ins Bild (beim Ziehen auf den Grundriss bleibt der Grundriss stehen)."""
+        kind, _, key = payload.partition(":")
+        r = self.plan.rack(rid)
         d = self.plan.new_device(key) if kind == "cat" else self.plan.dev(key)
+        if r is None or d is None:
+            return
         pos = self.plan.free_pos(rid, d["u"], top=d["kind"] != "pdu")
         if pos is None or not self.plan.place(d, rid, pos):
-            self.planner_say(T("Im Rack {0} ist nicht genug Platz.").format(self.plan.rack(rid)["name"]), True)
+            self.planner_say(T("Im Rack {0} ist nicht genug Platz.").format(r["name"]), True)
             return
         self.pl_canvas.sel = ("dev", d["id"])
         self.planner_changed()
+        if show:
+            self.planner_select("dev", d["id"])
+        self.planner_say(T("{0} in Rack {1} auf HE {2} eingebaut.").format(d["name"], r["name"], pos))
 
     def planner_target_rack(self):
         """Gewähltes Rack bzw. das Rack des gewählten Geräts, sonst das erste."""
@@ -2586,20 +2798,23 @@ class PlannerTabMixin:
     def planner_add_rack(self, h=42, at=None):
         r = self.plan.add_rack(h=h, at=at or self.pl_floor.tile_sel)
         self.pl_floor.tile_sel = None
+        self.pl_canvas.sel = ("rack", r["id"])
+        self.planner_changed()
         if r.get("x") is None:
             self.planner_say(T("Rack {0} angelegt, aber im Grundriss ist kein Platz mehr frei.").format(r["name"]),
                              True)
-        self.pl_canvas.sel = ("rack", r["id"])
-        self.planner_changed()
+        else:
+            self.planner_say(T("Rack {0} ({1} HE) auf {2} aufgestellt.").format(r["name"], r["h"], self.plan.coord(r)))
         if self.planner_current_view() != "floor":
             self.pl_scroll.horizontalScrollBar().setValue(self.pl_scroll.horizontalScrollBar().maximum())
 
     def planner_cable_mode(self, on):
         if on and self.pl_sim_btn.isChecked():
             self.pl_sim_btn.setChecked(False)
-        if on and self.pl_canvas.view != "rear":
+        if on and self.planner_current_view() != "rear":
             self.planner_set_view("rear")
         self.pl_canvas.cable_mode = on
+        self.pl_net.setVisible(on)
         self.pl_canvas.pending = None
         self.pl_canvas.update()
         self.planner_say(T("Verkabeln: Port anklicken, dann den Gegenport.") if on else "")
@@ -2673,15 +2888,20 @@ class PlannerTabMixin:
                 warn = sum(1 for c in plan.checks() if c[0] != "info")
                 self.pl_summary.setText(T(
                     "<p><b>{0}</b> Racks · <b>{1}</b> Geräte · <b>{2}</b> Kabel · <b>{3}</b> Hinweise</p>"
-                    "<p><b>So geht's</b><br>1. Server und Switches aus der Bibliothek in ein Rack ziehen.<br>"
-                    "2. Gerät oder Rack anklicken: Name, Einbauhöhe, Rackhöhe hier ändern.<br>"
-                    "3. „Verkabeln“ (Taste K): Port anklicken, dann den Gegenport.<br>"
-                    "4. „Prüfung“ zeigt Lücken, „Netze“ vergibt Hostnamen und Adressen.<br>"
-                    "5. „Ausfall simulieren“ zeigt, welche Server ein gezogenes Kabel trifft.<br>"
-                    "6. Rechtsklick auf einen Server: Netzteile, Netzwerkkarten, Transceiver und Laufwerke "
-                    "stecken.<br>"
-                    "7. Mausrad zoomt, Ziehen mit links auf freier Fläche verschiebt die Ansicht, Rechtsklick öffnet "
-                    "das Bearbeitungsmenü, Strg+Z macht rückgängig.</p>").format(
+                    "<p><b>So geht's</b></p><ol>"
+                    "<li><b>Racks aufstellen:</b> im Katalog „Racks“ aufklappen und ein Rack auf eine Bodenplatte "
+                    "im Grundriss ziehen.</li>"
+                    "<li><b>Geräte einbauen:</b> eine Kategorie aufklappen (Server, Switches, Speicher …) und den "
+                    "Eintrag in ein Rack ziehen – im Grundriss oder in der Vorderansicht. Ein Doppelklick baut ihn "
+                    "ins gewählte Rack ein.</li>"
+                    "<li><b>Bearbeiten:</b> Rack, Gerät, Port oder Kabel anklicken, die Angaben stehen dann hier. "
+                    "Ein Rechtsklick zeigt alle Aktionen, bei Servern auch Netzteile, Netzwerkkarten und "
+                    "Laufwerke.</li>"
+                    "<li><b>Verkabeln</b> (Taste K): einen Port anklicken, dann den Gegenport.</li>"
+                    "<li><b>Prüfen:</b> „Prüfung“ zeigt Lücken, „Netze“ vergibt Hostnamen und Adressen, „Ausfall "
+                    "simulieren“ zeigt, welche Server ein gezogenes Kabel trifft.</li></ol>"
+                    "<p>Mausrad zoomt, Ziehen auf freier Fläche verschiebt die Ansicht. Strg+Z macht rückgängig, "
+                    "Strg+S speichert.</p>").format(
                     len(plan.racks), len(devs), len(plan.cables), warn))
                 self.pl_props.setCurrentIndex(0)
         finally:
@@ -3088,7 +3308,7 @@ class PlannerTabMixin:
                     a = im.addAction(f"{d['name']} ({d['u']} {T('HE')})",
                                      lambda d=d: self.planner_insert(rid, pos, inv=d["id"]))
                     a.setEnabled(self._planner_slot_for(rid, pos, d["u"]) is not None)
-            for group, entries in catalog_texts():
+            for _cat, group, entries in catalog_texts():
                 gm = sub.addMenu(group)
                 for key, name, _ in entries:
                     u = CATALOG[key]["u"]
@@ -3666,9 +3886,12 @@ class PlannerTabMixin:
         self.planner_set_plan(demo_plan(self.planner_inventory()), dirty=False)
         self.planner_say(T("Beispielaufbau geladen – die ersten Server der Serverliste sind eingebaut."))
 
-    def planner_save(self):
-        start = self.plan_path or str(HERE / "aufbauplan.json")
-        path, _ = QFileDialog.getSaveFileName(self, T("Plan speichern"), start, T("Aufbauplan (*.json)"))
+    def planner_save(self, ask=False):
+        """Speichern: in die zuletzt benutzte Datei, sonst (oder mit `ask`) nach Rückfrage des Dateinamens."""
+        path = self.plan_path if self.plan_path and not ask else None
+        if not path:
+            start = self.plan_path or str(HERE / "aufbauplan.json")
+            path, _ = QFileDialog.getSaveFileName(self, T("Plan speichern"), start, T("Aufbauplan (*.json)"))
         if not path:
             return False
         try:
@@ -3679,6 +3902,7 @@ class PlannerTabMixin:
             return False
         self.plan_path = path
         self.plan_dirty = False
+        self.planner_update_history()
         self.planner_say(T("Plan gespeichert: {0}").format(path))
         LOG.debug(T("Aufbauplan gespeichert: {0}").format(path))
         return True

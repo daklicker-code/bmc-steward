@@ -87,24 +87,26 @@ CATALOG = {
 
 
 def catalog_texts():
-    """Anzeigename und Kurzbeschreibung je Katalog-Eintrag in der gewählten Sprache (Reihenfolge = Bibliothek)."""
+    """Anzeigename und Kurzbeschreibung je Katalog-Eintrag in der gewählten Sprache, nach Kategorien gegliedert
+    (Reihenfolge = Katalog). Je Kategorie: (Schlüssel, Titel, [(Katalog-Schlüssel, Name, Beschreibung)])."""
     return [
-        (T("Switches"), [("oob", T("OOB-Mgmt-Switch"), T("24×1G · BMC-Netz")),
-                         ("access", T("Access-Switch"), "48×1G + 4×SFP+"),
-                         ("leaf", T("Leaf-Switch"), "48×25G + 8×100G"),
-                         ("spine", T("Spine-Switch"), "32×100G")]),
-        (T("Infrastruktur"), [("fw", T("Firewall"), "8×10G + 2 WAN"),
-                              ("patch", T("Patchpanel"), T("24 Ports Cat6a")),
-                              ("pdu", T("PDU 16 A"), T("3,7 kW Anschlussleistung")),
-                              ("blank", T("Blindblende"), T("Luftführung"))]),
-        (T("Geplante Server"), [("server1", T("Neuer Server (1 HE)"), T("Platzhalter, noch nicht geliefert")),
-                                ("server2", T("Neuer Server (2 HE)"), T("Platzhalter, noch nicht geliefert"))]),
-        (T("NetApp-Speicher"), [("netapp_aff", "NetApp AFF A400", T("Controller-HA-Paar, 2 Knoten")),
-                                ("netapp_ds224c", "NetApp DS224C", T("Disk Shelf, 24 SSD")),
-                                ("netapp_ds460c", "NetApp DS460C", T("Disk Shelf, 60 HDD")),
-                                ("atto_7600n", "ATTO FibreBridge 7600N", T("FC-auf-SAS-Bridge")),
-                                ("brocade_g620", "Brocade G620", T("FC-Switch 24 × 32G")),
-                                ("netapp_bes53248", "NetApp BES-53248", T("Cluster-Interconnect-Switch"))]),
+        ("server", T("Server"), [("server1", T("Neuer Server (1 HE)"), T("Platzhalter, noch nicht geliefert")),
+                                 ("server2", T("Neuer Server (2 HE)"), T("Platzhalter, noch nicht geliefert"))]),
+        ("switch", T("Switches"), [("oob", T("OOB-Mgmt-Switch"), T("24×1G · BMC-Netz")),
+                                   ("access", T("Access-Switch"), "48×1G + 4×SFP+"),
+                                   ("leaf", T("Leaf-Switch"), "48×25G + 8×100G"),
+                                   ("spine", T("Spine-Switch"), "32×100G"),
+                                   ("netapp_bes53248", "NetApp BES-53248", T("Cluster-Interconnect-Switch")),
+                                   ("brocade_g620", "Brocade G620", T("FC-Switch 24 × 32G"))]),
+        ("fw", T("Firewalls"), [("fw", T("Firewall"), "8×10G + 2 WAN")]),
+        ("storage", T("Speicher"), [("netapp_aff", "NetApp AFF A400", T("Controller-HA-Paar, 2 Knoten")),
+                                    ("netapp_ds224c", "NetApp DS224C", T("Disk Shelf, 24 SSD")),
+                                    ("netapp_ds460c", "NetApp DS460C", T("Disk Shelf, 60 HDD")),
+                                    ("atto_7600n", "ATTO FibreBridge 7600N", T("FC-auf-SAS-Bridge"))]),
+        ("patch", T("Patchpanels"), [("patch", T("Patchpanel"), T("24 Ports Cat6a")),
+                                     ("patch_lc", T("LWL-Spleißbox"), T("24 × LC Duplex"))]),
+        ("power", T("Stromversorgung"), [("pdu", T("PDU 16 A"), T("3,7 kW Anschlussleistung"))]),
+        ("acc", T("Zubehör"), [("blank", T("Blindblende"), T("Luftführung"))]),
     ]
 
 

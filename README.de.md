@@ -74,7 +74,7 @@ der grüne Knopf.
 |---|---|
 | **Aufnahme** | Liest den Redfish-Baum eines echten Geräts streng lesend und speichert ihn geschwärzt (keine Seriennummern, Adressen, Zertifikate oder Schlüssel). Zwei Aufnahmen lassen sich vergleichen, z. B. vor und nach einem Firmware-Update. |
 | **Testlabor** | Virtuelle Dell-, HPE-, Lenovo- und Supermicro-BMCs (`tools/vbmc/`) zum Üben ohne Hardware: Loopback, virtueller Staging-Switch oder echtes LAN. |
-| **Aufbauplaner** | Plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt Hostnamen und BMC-Adressen an „Neuware“. Server lassen sich mit Netzteilen, Netzwerkkarten, Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken – per Rechtsklick auf Server oder Port; die Streckenansicht zeigt Karte und Transceiver an jedem Ende. Ziehen mit links auf freier Fläche verschiebt die Ansicht. |
+| **Aufbauplaner** | Plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt Hostnamen und BMC-Adressen an „Neuware“. Server lassen sich mit Netzteilen, Netzwerkkarten, Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken – per Rechtsklick auf Server oder Port; die Streckenansicht zeigt Karte und Transceiver an jedem Ende. Der Katalog ist nach Kategorien gegliedert (Racks, Server, Switches, Firewalls, Speicher, Patchpanels, Stromversorgung, Zubehör) und beim Start eingeklappt; Geräte lassen sich auch im Grundriss direkt auf ein Rack ziehen. Ziehen mit links auf freier Fläche verschiebt die Ansicht. |
 | **Hilfe** | Jeder Schritt und die Besonderheiten je Hersteller, mit Suche und Inhaltsverzeichnis. |
 
 ### Rund um die Seiten
