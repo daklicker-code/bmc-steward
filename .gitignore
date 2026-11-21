@@ -18,3 +18,8 @@ bmc-mitarbeiter.json
 bmc-einstellungen.json
 bmc-design.json
 tests/.timings.json
+
+# Lokale Plugins und ihre Daten (privat, nie ins Repository)
+plugins/
+plugin-daten/
+bmc-plugins.json
