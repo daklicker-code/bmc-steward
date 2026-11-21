@@ -10,6 +10,8 @@ Die Schnittstelle `api`:
     api.on(ereignis, fn)               window_ready(), server_done(ip), run_finished(code), closing()
     api.add_page(titel, widget_oder_funktion, mark="◆")
     api.servers()                      Serverliste ohne Passwörter (ip, new_ip, mask, gateway, hostname, serial, done)
+    api.add_console(titel, widget)     eigene Konsole als Reiter im Monitor; Menüpunkt leuchtet gelb, solange sie offen ist
+    api.set_lamp(True)                 gelbe Leuchte am Menüpunkt wie beim Testlabor („läuft“), None = aus
 """
 import csv
 import time

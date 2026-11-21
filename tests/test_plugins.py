@@ -301,6 +301,42 @@ def register(api):
         host.load()
         self.assertEqual(host.consoles, [])
 
+    def test_running_lamp_like_testlab(self):
+        """Gelbe Leuchte wie beim Testlabor: set_lamp(True) und automatisch, solange eine Konsole offen ist."""
+        self.make("kons", code='''
+from PyQt6.QtWidgets import QLabel
+STATE = {}
+
+def register(api):
+    STATE["api"] = api
+    STATE["page"] = QLabel("Seite")
+    api.add_page("Konsolen", lambda: STATE["page"])
+    STATE["handle"] = api.add_console("Switch 1", QLabel("x"))
+''')
+        self.approve("kons")
+        from bmc_steward.main import Window
+        from bmc_steward.sidenav import LAB_LAMP, LAMP_ROLE
+        w = Window()
+        self.addCleanup(lambda: (setattr(w, "dirty", False), w.close()))
+        mod = self.module("kons")
+        item = w.tabs.menu.item(w.tabs.indexOf(mod.STATE["page"]))
+        self.assertEqual(item.data(LAMP_ROLE), LAB_LAMP)          # Konsole schon beim Laden offen
+        mod.STATE["handle"].remove()
+        self.assertIsNone(item.data(LAMP_ROLE))
+        api = mod.STATE["api"]
+        api.set_lamp(True)                                        # „läuft“: dieselbe Farbe wie das Testlabor
+        self.assertEqual(item.data(LAMP_ROLE), LAB_LAMP)
+        api.set_lamp(None)
+        self.assertIsNone(item.data(LAMP_ROLE))
+        api.set_lamp("#3b8beb")
+        self.assertEqual(item.data(LAMP_ROLE), "#3b8beb")
+        h = api.add_console("Switch 2", QLabel("y"))
+        self.assertEqual(item.data(LAMP_ROLE), "#3b8beb")         # eigene Farbe des Plugins hat Vorrang
+        api.set_lamp(None)
+        self.assertEqual(item.data(LAMP_ROLE), LAB_LAMP)          # Konsole noch offen
+        h.remove()
+        self.assertIsNone(item.data(LAMP_ROLE))
+
     def test_example_plugin_loads(self):
         import shutil
         from tests._support import REPO

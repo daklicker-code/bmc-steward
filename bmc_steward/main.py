@@ -565,6 +565,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.plugin_host.load()
         for n, (title, mark, widget) in enumerate(self.plugin_host.build_pages()):
             self.tabs.addTab(widget, title, mark=mark, section=T("Plugins") if n == 0 else None)
+        self.plugin_host.update_lamps()               # Konsolen, die Plugins schon beim Laden geöffnet haben
         help_page = QWidget()                      # Suche, Inhaltsverzeichnis und Text, darunter das animierte Logo
         hl = QVBoxLayout(help_page)
         hl.setContentsMargins(0, 0, 0, 0)

@@ -11,6 +11,8 @@ gemeinsame Protokoll, die Serverliste ohne Passwörter (lesen und Hostname/Adres
 nur für den Benutzer lesbaren Datenordner, Konsolen-Sitzungen, die als Reiter im Monitor links oben erscheinen
 (api.add_console, Terminal-Widget über api.terminal), die Leuchte am eigenen Menüpunkt und Server fürs
 Testlabor (ab 3.14.0: put_servers, set_lamp, testlab_state, testlab_load, Ereignis close_request).
+Ab 3.16.0 leuchtet der Menüpunkt eines Plugins gelb wie beim Testlabor, solange eine seiner Konsolen offen ist;
+api.set_lamp(True) schaltet dieselbe gelbe „läuft“-Leuchte selbst ein (z. B. solange ein Simulator läuft).
 
 Mitgelieferte Plugins (bmc_steward/plugins_mitgeliefert/<kennung>/, z. B. der Aufbauplaner) gehören zum
 Programm: Sie laden ab dem ersten Start ohne Freigabe und lassen sich in den Einstellungen abschalten. Ein
@@ -256,6 +258,7 @@ class ConsoleHandle:
         self.alive = False
         if self in self._host.consoles:
             self._host.consoles.remove(self)
+            self._host.update_lamps()
 
 
 class PluginAPI:
@@ -313,6 +316,7 @@ class PluginAPI:
             raise TypeError("activate")
         handle = ConsoleHandle(self._host, self._plugin, title, widget, activate, bool(hidden_ok))
         self._host.consoles.append(handle)
+        self._host.update_lamps()                   # gelbe Leuchte am Menüpunkt, solange die Konsole offen ist
         return handle
 
     def terminal(self):
@@ -399,19 +403,14 @@ class PluginAPI:
         return True
 
     def set_lamp(self, color=None):
-        """Leuchte am Menüpunkt der eigenen Seite(n) ein- (Farbe, z. B. "#3b8beb") oder ausschalten (None)."""
-        w = self._host.window
-        tabs = getattr(w, "tabs", None)
-        if tabs is None:
-            return
-        for plugin, widget in self._host.page_widgets:
-            if plugin is self._plugin:
-                try:
-                    i = tabs.indexOf(widget)
-                except RuntimeError:                # Seite schon abgebaut
-                    continue
-                if i >= 0:
-                    tabs.setLamp(i, color)
+        """Leuchte am Menüpunkt der eigenen Seite(n) ein- oder ausschalten. True: gelb wie beim Testlabor
+        („hier läuft etwas“, ab 3.16.0), eine Farbe wie "#3b8beb": diese Farbe, None: aus. Solange eine Konsole
+        des Plugins offen ist (add_console), leuchtet der Menüpunkt auch ohne set_lamp gelb."""
+        if color is True:
+            from .sidenav import LAB_LAMP
+            color = LAB_LAMP
+        self._host.lamps[self._plugin.id] = str(color) if color else None
+        self._host.update_lamps()
 
 
 class Host:
@@ -424,6 +423,23 @@ class Host:
         self.plugins = []
         self.consoles = []           # ConsoleHandle der Plugins, Reihenfolge = Reihenfolge im Monitor
         self.page_widgets = []       # (Plugin, QWidget) der gebauten Seiten, für set_lamp
+        self.lamps = {}              # Kennung -> mit set_lamp gesetzte Farbe des Plugins
+
+    def update_lamps(self):
+        """Leuchten an den Menüpunkten der Plugins: die mit set_lamp gesetzte Farbe, sonst gelb wie beim
+        Testlabor, solange eine Konsole des Plugins offen ist, sonst aus."""
+        tabs = getattr(self.window, "tabs", None)
+        if tabs is None or not self.page_widgets:
+            return
+        from .sidenav import LAB_LAMP
+        live = {h._plugin.id for h in self.consoles if h.alive}
+        for plugin, widget in self.page_widgets:
+            try:
+                i = tabs.indexOf(widget)
+            except RuntimeError:                    # Seite schon abgebaut
+                continue
+            if i >= 0:
+                tabs.setLamp(i, self.lamps.get(plugin.id) or (LAB_LAMP if plugin.id in live else None))
 
     def load(self):
         """Freigegebene Plugins laden und register(api) aufrufen. Gibt die Liste aller gefundenen zurück."""

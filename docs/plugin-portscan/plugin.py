@@ -245,6 +245,7 @@ class PortscanPage(QWidget):
                                        daemon=True, name="portscan")
         self.worker.start()
         self.timer.start()
+        self.lamp(True)
         return True
 
     def _run(self, targets, ports, opts, stop_flag, out):
@@ -257,6 +258,12 @@ class PortscanPage(QWidget):
 
     def running(self):
         return self.worker is not None and self.worker.is_alive()
+
+    def lamp(self, on):
+        """Gelbe Leuchte am Menüpunkt wie beim Testlabor, solange der Scan läuft (set_lamp ab BMC-Steward 3.14.0)."""
+        set_lamp = getattr(self.api, "set_lamp", None)
+        if set_lamp is not None:
+            set_lamp("#f2c200" if on else None)
 
     def stop(self):
         self.stop_flag.set()
@@ -285,6 +292,7 @@ class PortscanPage(QWidget):
         if ended:
             self.timer.stop()
             self.worker = None
+            self.lamp(False)
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             if self.stop_flag.is_set():

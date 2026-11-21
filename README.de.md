@@ -89,6 +89,7 @@ der grüne Knopf.
 - **Plugins** erweitern das Tool um eigene Seiten und Abläufe: ein Ordner mit `plugin.json` und `plugin.py` unter
   `<Datenordner>/plugins/`, einzeln freizugeben unter ⚙ → „Plugins“; danach bietet das Tool einen Neustart an. Beispiel: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
   Plugins können eigene Konsolen als Reiter im Monitor zeigen (`api.add_console`, Terminal-Widget über `api.terminal`).
+  Solange eine Plugin-Konsole offen ist oder in einem Plugin etwas läuft (`api.set_lamp(True)`), leuchtet sein Menüpunkt gelb wie das Testlabor.
   Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
   BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
   Nur Verbindungsaufbau, keine Anmeldung.

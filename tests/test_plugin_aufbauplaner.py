@@ -810,7 +810,7 @@ class TestPluginIntegration(unittest.TestCase):
             item = win.tabs.menu.item(i)
             self.assertEqual(item.text(), "Aufbauplaner")
             self.assertEqual(item.data(SECTION_ROLE), "Plugins")
-            # Ausfall-Simulation: blaue Leuchte am Menüpunkt des Plugins
+            # Ausfall-Simulation: gelbe Leuchte (wie Testlabor) am Menüpunkt des Plugins
             w.pl_sim_btn.setChecked(True)
             self.assertEqual(item.data(LAMP_ROLE), planner_tab.PLAN_LAMP)
             w.pl_sim_btn.setChecked(False)

@@ -35,7 +35,7 @@ from .planner import (CATALOG, DRIVE_MODELS, NIC_MODELS, PSU_BAYS, PSU_MODELS, c
                       port_name, psu_name, rack_tiles, server_slots, vendor_of)
 from .texts import T, help_html
 
-PLAN_LAMP = "#3b8beb"        # Leuchte im Menü: Ausfall-Simulation läuft
+PLAN_LAMP = "#f2c200"        # Leuchte im Menü: Ausfall-Simulation läuft (gelb wie beim Testlabor)
 # Zustand über einen Sprachwechsel hinweg: BMC-Steward baut dann das Fenster samt Plugin-Seiten neu auf, das
 # Plugin-Modul bleibt geladen. Hier liegt der Plan, damit die neue Seite dort weitermacht.
 STATE = {}
@@ -3760,7 +3760,7 @@ class PlannerTabMixin:
     # ================================================================ Ausfall-Simulation
     def planner_sim_toggle(self, on):
         cv = self.pl_canvas
-        self.api.set_lamp(PLAN_LAMP if on else None)       # blaue Leuchte im Menü, solange die Simulation läuft
+        self.api.set_lamp(PLAN_LAMP if on else None)       # gelbe Leuchte im Menü, solange die Simulation läuft
         if on:
             if self.pl_cable_btn.isChecked():
                 self.pl_cable_btn.setChecked(False)

@@ -154,7 +154,16 @@ class TestAsPlugin(unittest.TestCase):
         w.targets.setText("127.0.0.1")
         w.ports.setText(f"{srv.getsockname()[1]},{free_port()}")
         w.ipmi.setChecked(False)
-        self.assertTrue(w.start(confirm=False))
+        lamps = []
+        api = w.api
+        with patch.object(type(api), "set_lamp", lambda self, color=None: lamps.append(color)):
+            self.assertTrue(w.start(confirm=False))
+            self.assertEqual(lamps, ["#f2c200"])            # gelb wie das Testlabor, solange der Scan läuft
+            deadline = time.monotonic() + 10
+            while w.worker is not None and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.02)
+        self.assertEqual(lamps, ["#f2c200", None])
         deadline = time.monotonic() + 10
         while w.worker is not None and time.monotonic() < deadline:
             QApplication.processEvents()
