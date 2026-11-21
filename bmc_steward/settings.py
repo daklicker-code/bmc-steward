@@ -1,7 +1,7 @@
 """BMC-Steward: Einstellungsmanager.
 
 Alle Vorlieben an einem Ort, gespeichert in <Datenordner>/bmc-einstellungen.json (nur für den eigenen
-Benutzer lesbar, ohne Passwörter): Darstellung (Schriftart, Schriftgröße, Design), Protokoll (Stufe beim
+Benutzer lesbar, ohne Passwörter): Darstellung (Schriftart, Schriftgröße, Design, Konsolen-Reiter im Monitor), Protokoll (Stufe beim
 Start, fortlaufende Protokolldatei, Aufbewahrung, Zeilen im Speicher), Systemaudit (Auslesen bei Auswahl,
 Ablageordner, Vorlagen für Betreff und Text der E-Mail), E-Mail-Versand (SMTP) und Experteneinstellungen
 (Kontroll-Wartezeit nach dem Umstellen, Zeitlimit für BMC-Anfragen) und die Freigabe von Plugins. Das SMTP-Passwort liegt nie in der Datei,
@@ -39,6 +39,7 @@ SPEC = {
     "smtp_from": ("",),
     "verify_wait": (240, 30, 1800),       # Sekunden: Kontrolle der neuen Adressen nach dem Umstellen
     "http_timeout": (30, 5, 300),         # Sekunden: Zeitlimit für BMC-Anfragen ohne eigenes Limit
+    "monitor_tabs": (10, 1, 10),          # höchstens so viele Konsolen-Reiter im Monitor links oben
 }
 CHOICES = {"log_level": ("info", "debug"), "smtp_security": ("starttls", "ssl", "none")}
 
@@ -137,6 +138,8 @@ def apply(app=None, s=None):
     else:
         applog.LOG.set_file(None)
     RedfishClient.TIMEOUT = s["http_timeout"]
+    from . import monitor
+    monitor.set_max_tabs(s["monitor_tabs"])
     return s
 
 
@@ -181,6 +184,13 @@ class SettingsDialog(QDialog):
         design.setCurrentIndex(max(0, design.findData(theme.load_choice())))
         f.addRow(T("Design"), design)
         self.design = design
+        tabs_n = QSpinBox()
+        tabs_n.setRange(1, 10)
+        tabs_n.setValue(s["monitor_tabs"])
+        tabs_n.setToolTip(T("So viele offene Konsolen-Sitzungen (UEFI-Konsole, Konsolen von Plugins) zeigt der Monitor "
+                            "links oben als Reiter am oberen Rand. Weitere Sitzungen bleiben auf ihren Seiten erreichbar."))
+        f.addRow(T("Konsolen-Reiter im Monitor"), tabs_n)
+        self.widgets["monitor_tabs"] = tabs_n
         sys_font.setText(T("Die Sprache stellst du links unten im Menü um."))
         sys_font.setObjectName("muted")
         f.addRow("", sys_font)

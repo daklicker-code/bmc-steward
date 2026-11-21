@@ -62,7 +62,7 @@ the green button.
 |---|---|
 | **Board replacement** | Restores one server after a parts replacement, in five steps. Scenarios: system board with BMC · BMC only (replaced or reset to factory defaults) · processor board only · whole server replaced by a spare. “Check” shows what the board reports (serial number, type); enter label values only if they differ. **HPE iLO 5/6:** serial number and product ID from the chassis label and the iLO licence are set again. Network services and UEFI settings come from the backup of the old board, hostname and address go to “New hardware”. A spare keeps its own serial number. Advice per vendor (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **System audit** | A server's audit sheet as a PDF (A4 landscape): reads, read only, manufacturer, model, serial number plus memory, processors, power supplies and drives with part and serial numbers. Adds a checklist, a remark and a signature field; everything can be edited by hand. Several servers at once as one PDF (one sheet per server); store staff members once (optionally e-mail, phone, address, note) and then just choose them. Sending by e-mail (SMTP or your own mail program). Open as PDF, print, inventory as Excel/CSV, audit as JSON, automatic filing of every PDF, QR code with the serial number on the sheet. |
-| **Settings (⚙)** | Font and size, theme, log (level, continuous log file, retention), system audit (read on selection, PDF folder, mail templates), e-mail sending (SMTP), expert settings (check wait time, time limit for BMC requests) and plugin approval. Servers from “New hardware” and “Existing servers” in a selection list, also directly via “System audit …” from “New hardware”, “Existing servers” and “UEFI console”. |
+| **Settings (⚙)** | Font and size, theme, console tabs in the monitor, log (level, continuous log file, retention), system audit (read on selection, PDF folder, mail templates), e-mail sending (SMTP), expert settings (check wait time, time limit for BMC requests) and plugin approval. Servers from “New hardware” and “Existing servers” in a selection list, also directly via “System audit …” from “New hardware”, “Existing servers” and “UEFI console”. |
 | **UEFI console** | A server's UEFI/BIOS through the BMC: embedded HTML5 console, text console (SOL/SSH) or default browser. On-screen keyboard with vendor setup keys, “type text”, screenshots, full screen and automatic reconnect. “Boot into UEFI setup” restarts the server straight into the setup, after the self-protection check. |
 
 ### Tools
@@ -76,8 +76,9 @@ the green button.
 
 ### Around the pages
 
-- **Monitor (top left):** shows the connected server console as a live thumbnail; a click opens it full size. The
-  switch below selects the console type: **HTML5**, **Text** (SOL/SSH) or **Browser**.
+- **Monitor (top left):** shows the connected server console as a live thumbnail; a click opens it full size. With
+  several sessions open (UEFI console, plugin consoles) you switch between them with the tabs along its top edge – up to
+  10, adjustable under ⚙ → Appearance. The switch below selects the console type: **HTML5**, **Text** (SOL/SSH) or **Browser**.
 - **Bottom left:** self-protection list, remembered certificates, backups, restore, language and design.
 - **Profiles** remember recurring settings (never passwords, never the server list). **CSV import/export** of the
   server list, also straight from Excel.
@@ -85,6 +86,7 @@ the green button.
 - If an optional package is missing, the page concerned shows the matching install command.
 - **Plugins** extend the tool with your own pages and workflows: a folder with `plugin.json` and `plugin.py` under
   `<data folder>/plugins/`, approved one by one under ⚙ → “Plugins”; the tool then offers a restart. Example: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
+  Plugins can show their own consoles as tabs in the monitor (`api.add_console`, terminal widget via `api.terminal`).
   Ready-made plugin **Port scan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): checks open TCP ports (presets for
   BMC and server services, optionally IPMI via UDP 623 and banners) on addresses, networks or the server list, with CSV export.
   Connection attempts only, no login.

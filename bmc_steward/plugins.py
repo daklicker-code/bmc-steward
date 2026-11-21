@@ -7,7 +7,8 @@ Ein Plugin ist ein Ordner unter <Datenordner>/plugins/<kennung>/ mit zwei Dateie
 
 `register(api)` bekommt ein PluginAPI-Objekt: eigene Seiten im Menü (Bereich „Plugins“), Ereignisse
 (Fenster fertig, Server fertig umgestellt, Lauf beendet, Programmende), das gemeinsame Protokoll, die
-Serverliste ohne Passwörter und einen eigenen, nur für den Benutzer lesbaren Datenordner.
+Serverliste ohne Passwörter, einen eigenen, nur für den Benutzer lesbaren Datenordner und Konsolen-Sitzungen,
+die als Reiter im Monitor links oben erscheinen (api.add_console, Terminal-Widget über api.terminal).
 
 Sicherheit: Ein Plugin ist Python-Code und läuft mit allen Rechten des Programms. Deshalb lädt BMC-Steward
 nichts von selbst:
@@ -202,6 +203,23 @@ def _short(err):
     return f"{type(err).__name__}: {err}"[:300]
 
 
+class ConsoleHandle:
+    """Eine Konsolen-Sitzung eines Plugins im Monitor. remove() nimmt sie heraus, set_title() benennt sie um."""
+
+    def __init__(self, host, plugin, title, widget, activate, hidden_ok):
+        self._host, self._plugin = host, plugin
+        self.title, self.widget, self._activate, self.hidden_ok = str(title)[:60], widget, activate, hidden_ok
+        self.alive = True
+
+    def set_title(self, title):
+        self.title = str(title)[:60]
+
+    def remove(self):
+        self.alive = False
+        if self in self._host.consoles:
+            self._host.consoles.remove(self)
+
+
 class PluginAPI:
     """Was ein Plugin in register(api) bekommt. Nur diese Schnittstelle ist zugesichert (API_VERSION)."""
 
@@ -243,6 +261,25 @@ class PluginAPI:
         liefert (wird beim Fensteraufbau aufgerufen)."""
         self._host.pages.append((self._plugin, str(title), page, str(mark or "◆")[:2]))
 
+    def add_console(self, title, widget, activate=None, hidden_ok=True):
+        """Konsolen-Sitzung als Reiter im Monitor (links oben) anzeigen. `widget` wird nur abfotografiert (grab),
+        nie verändert. `activate()` wird beim Klick auf das Monitorbild gerufen; ohne sie wechselt das Programm zur
+        Plugin-Seite, die das Widget enthält. Gibt ein ConsoleHandle zurück (remove(), set_title())."""
+        from PyQt6.QtWidgets import QWidget
+        if not isinstance(widget, QWidget):
+            raise TypeError("widget")
+        if activate is not None and not callable(activate):
+            raise TypeError("activate")
+        handle = ConsoleHandle(self._host, self._plugin, title, widget, activate, bool(hidden_ok))
+        self._host.consoles.append(handle)
+        return handle
+
+    def terminal(self):
+        """Terminal-Widget des Programms (VT100/ANSI, wie die Textkonsole) oder None, wenn das Paket pyte fehlt.
+        Daten vom Gerät mit .feed(bytes) anzeigen; Tastendrücke kommen als Signal .send(bytes)."""
+        from .console import TermView, pyte
+        return TermView() if pyte is not None else None
+
     def servers(self):
         """Serverliste von „Neuware“ ohne Passwörter: Liste von dicts mit ip, new_ip, mask, gateway, hostname,
         serial und done."""
@@ -266,6 +303,7 @@ class Host:
         self.hooks = {e: [] for e in EVENTS}
         self.pages = []
         self.plugins = []
+        self.consoles = []           # ConsoleHandle der Plugins, Reihenfolge = Reihenfolge im Monitor
 
     def load(self):
         """Freigegebene Plugins laden und register(api) aufrufen. Gibt die Liste aller gefundenen zurück."""
@@ -281,11 +319,12 @@ class Host:
                 if p.id in enabled:
                     LOG.info(T("Plugin {0} nicht geladen: {1}").format(p.name, p.status(enabled)[0]))
                 continue
-            pages, hooks = len(self.pages), {e: len(v) for e, v in self.hooks.items()}
+            pages, hooks, cons = len(self.pages), {e: len(v) for e, v in self.hooks.items()}, len(self.consoles)
             try:
                 _import(p).register(PluginAPI(p, self))
             except Exception as e:          # noqa: BLE001 – ein Plugin darf das Programm nicht anhalten
                 del self.pages[pages:]
+                del self.consoles[cons:]
                 for ev, n in hooks.items():
                     del self.hooks[ev][n:]
                 p.error = _short(e)
@@ -313,6 +352,41 @@ class Host:
                 continue
             out.append((title, mark, widget))
         return out
+
+    def console_sessions(self):
+        """Offene Konsolen der Plugins für den Monitor: [(Schlüssel, Widget, verdeckt_ok, Beschriftung)]."""
+        out = []
+        for h in list(self.consoles):
+            try:
+                h.widget.objectName()               # wirft, wenn das Widget schon abgebaut ist
+            except RuntimeError:
+                h.remove()
+                continue
+            out.append((f"plugin:{id(h)}", h.widget, h.hidden_ok, h.title or h._plugin.name))
+        return out
+
+    def console_activate(self, key, window=None):
+        """Klick auf die Monitor-Vorschau einer Plugin-Konsole. True, wenn etwas geöffnet wurde."""
+        from .applog import LOG
+        h = next((h for h in self.consoles if f"plugin:{id(h)}" == key), None)
+        if h is None:
+            return False
+        if h._activate is not None:
+            try:
+                h._activate()
+                return True
+            except Exception as e:          # noqa: BLE001
+                LOG.info(T("Plugin {0}: Fehler bei {1}: {2}").format(h._plugin.name, "activate", _short(e)))
+                return False
+        tabs = getattr(window, "tabs", None)
+        if tabs is not None:
+            for i in range(tabs.count()):
+                page = tabs.widget(i)
+                if page is not None and (page is h.widget or page.isAncestorOf(h.widget)):
+                    tabs.setCurrentIndex(i)
+                    h.widget.setFocus()
+                    return True
+        return False
 
     def emit(self, event, *args):
         """Ereignis an alle Plugins; ein Fehler betrifft nur das eine Plugin."""

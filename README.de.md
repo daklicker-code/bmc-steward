@@ -65,7 +65,7 @@ der grüne Knopf.
 |---|---|
 | **Mainboard-Tausch** | Bringt einen Server nach einem Teiletausch in fünf Schritten wieder auf den alten Stand. Szenarien: Systemplatine mit BMC · nur BMC (getauscht oder auf Werkseinstellungen) · nur Prozessorplatine · ganzer Server durch Ersatzgerät. „Prüfen“ zeigt, was das Board meldet (Seriennummer, Typ); Werte vom Aufkleber nur bei Abweichung eintragen. **HPE iLO 5/6:** Seriennummer und Produkt-ID vom Gehäuse-Aufkleber und die iLO-Lizenz werden neu gesetzt. Netzwerkdienste und UEFI-Einstellungen kommen aus der Sicherung des alten Boards, Hostname und Adresse gehen an „Neuware“. Ein Ersatzgerät behält seine Seriennummer. Hinweise je Hersteller (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **Systemaudit** | Audit-Blatt eines Servers als PDF (A4 quer): liest nur lesend Hersteller, Modell, Seriennummer sowie Arbeitsspeicher, Prozessoren, Netzteile und Datenträger mit Part- und Seriennummern. Dazu Checkliste, Bemerkung und Unterschriftsfeld; alles von Hand änderbar. Mehrere Server auf einmal als ein PDF (je Server ein Blatt); Mitarbeiter einmal anlegen (optional E-Mail, Telefon, Adresse, Zusatz) und dann nur noch auswählen. Versand per E-Mail (SMTP oder eigenes Mailprogramm). Als PDF öffnen, drucken, Inventar als Excel/CSV, Audit als JSON, automatische Ablage jedes PDFs, QR-Code mit der Seriennummer auf dem Blatt. |
-| **Einstellungen (⚙)** | Schriftart und -größe, Design, Protokoll (Stufe, fortlaufende Protokolldatei, Aufbewahrung), Systemaudit (Auslesen bei Auswahl, PDF-Ordner, Mail-Vorlagen), E-Mail-Versand (SMTP), Experteneinstellungen (Kontroll-Wartezeit, Zeitlimit für BMC-Anfragen) und Freigabe der Plugins. Server aus „Neuware“ und „Bestandsserver“ in einer Auswahlliste, auch direkt per „Systemaudit …“ aus „Neuware“, „Bestandsserver“ und „UEFI-Konsole“. |
+| **Einstellungen (⚙)** | Schriftart und -größe, Design, Konsolen-Reiter im Monitor, Protokoll (Stufe, fortlaufende Protokolldatei, Aufbewahrung), Systemaudit (Auslesen bei Auswahl, PDF-Ordner, Mail-Vorlagen), E-Mail-Versand (SMTP), Experteneinstellungen (Kontroll-Wartezeit, Zeitlimit für BMC-Anfragen) und Freigabe der Plugins. Server aus „Neuware“ und „Bestandsserver“ in einer Auswahlliste, auch direkt per „Systemaudit …“ aus „Neuware“, „Bestandsserver“ und „UEFI-Konsole“. |
 | **UEFI-Konsole** | UEFI/BIOS eines Servers über den BMC: eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder Standardbrowser. Bildschirmtastatur mit Setup-Tasten je Hersteller, „Text tippen“, Bildschirmfoto, Vollbild und automatisches Neuverbinden. „Ins UEFI-Setup starten“ startet den Server nach der Eigenschutz-Prüfung direkt ins Setup. |
 
 ### Werkzeuge
@@ -80,7 +80,8 @@ der grüne Knopf.
 ### Rund um die Seiten
 
 - **Monitor (links oben):** zeigt die verbundene Server-Konsole als Live-Miniatur; ein Klick öffnet sie in voller
-  Größe. Der Schalter darunter wählt die Konsolenart: **HTML5**, **Text** (SOL/SSH) oder **Browser**.
+  Größe. Sind mehrere Sitzungen offen (UEFI-Konsole, Konsolen von Plugins), wechselt man über die Reiter am oberen Rand –
+  bis zu 10, einstellbar unter ⚙ → Darstellung. Der Schalter darunter wählt die Konsolenart: **HTML5**, **Text** (SOL/SSH) oder **Browser**.
 - **Links unten:** Eigenschutz-Liste, gemerkte Zertifikate, Sicherungen, Wiederherstellen, Sprache und Design.
 - **Profile** merken sich wiederkehrende Einstellungen (nie Passwörter, nie die Serverliste). **CSV-Import/-Export**
   der Serverliste, auch direkt aus Excel.
@@ -88,6 +89,7 @@ der grüne Knopf.
 - Fehlt ein optionales Paket, zeigt die betroffene Seite den passenden Installationsbefehl.
 - **Plugins** erweitern das Tool um eigene Seiten und Abläufe: ein Ordner mit `plugin.json` und `plugin.py` unter
   `<Datenordner>/plugins/`, einzeln freizugeben unter ⚙ → „Plugins“; danach bietet das Tool einen Neustart an. Beispiel: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
+  Plugins können eigene Konsolen als Reiter im Monitor zeigen (`api.add_console`, Terminal-Widget über `api.terminal`).
   Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
   BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
   Nur Verbindungsaufbau, keine Anmeldung.

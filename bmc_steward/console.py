@@ -804,10 +804,11 @@ class ConsoleMixin:
         Klick öffnet sie in voller Größe. Der Schalter spiegelt die Auswahl „Anzeige“ der Konsolenseite
         (gleiche Reihenfolge: HTML5, Text, Browser) und wird in build_console damit verbunden."""
         self.monitor = MonitorWidget(
-            self.console_source,
+            self.monitor_sessions,
             T("Kein Signal. Ein Klick öffnet die UEFI-Konsole, dort lässt sich eine Verbindung herstellen."),
-            T("Live-Vorschau der Server-Konsole. Ein Klick öffnet sie in voller Größe."))
-        self.monitor.clicked.connect(self.console_enter)
+            T("Live-Vorschau der Server-Konsole. Ein Klick öffnet sie in voller Größe. Sind mehrere Sitzungen "
+              "offen, wählen die Reiter am oberen Rand (oder ←/→) die Vorschau."))
+        self.monitor.clicked.connect(self.monitor_clicked)
         lack = " " + T("Benötigtes Paket fehlt, siehe Hinweis auf der Seite „UEFI-Konsole“.")
         self.con_switch = SegmentSwitch([
             ("HTML5", T("Bild: eingebettete HTML5-Konsole des BMC, Maus und Tastatur wie am Original.")
@@ -833,6 +834,23 @@ class ConsoleMixin:
             if view is not None:
                 return view, False, ip             # Web-Ansicht zeichnet nur, solange sie sichtbar ist
         return None
+
+    def monitor_sessions(self):
+        """Für den Monitor: alle offenen Sitzungen [(Schlüssel, Widget, verdeckt_ok, Beschriftung)] – zuerst die
+        UEFI-Konsole, dann die Konsolen der Plugins (höchstens so viele, wie in den Einstellungen erlaubt)."""
+        out = []
+        src = self.console_source()
+        if src is not None:
+            out.append(("uefi", src[0], src[1], src[2] or T("UEFI-Konsole")))
+        out.extend(self.plugin_host.console_sessions())
+        return out
+
+    def monitor_clicked(self):
+        """Klick aufs Monitorbild: die gewählte Sitzung öffnen; ohne Sitzung zur UEFI-Konsole."""
+        key = self.monitor.current_key()
+        if key and key != "uefi" and self.plugin_host.console_activate(key, self):
+            return
+        self.console_enter()
 
     def console_enter(self):
         """Klick auf den Monitor: zur Konsolenseite. Steht eine Verbindung, direkt in die Vollansicht der

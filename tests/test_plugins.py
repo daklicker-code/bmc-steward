@@ -252,6 +252,52 @@ class TestWindow(Base):
         self.assertTrue(servers[0]["done"])
         self.assertNotIn("password", servers[0])
 
+    def test_console_api(self):
+        self.make("kons", code='''
+from PyQt6.QtWidgets import QLabel
+STATE = {}
+
+def register(api):
+    w = QLabel("Konsole")
+    w.resize(200, 100)
+    STATE["handle"] = api.add_console("Switch 1", w, activate=lambda: STATE.setdefault("opened", 1))
+    STATE["term"] = api.terminal()
+    STATE["w"] = w
+''')
+        self.approve("kons")
+        host = plugins.Host()
+        self.assertTrue(host.load()[0].loaded)
+        mod = self.module("kons")
+        sess = host.console_sessions()
+        self.assertEqual(len(sess), 1)
+        key, widget, hidden_ok, title = sess[0]
+        self.assertEqual(title, "Switch 1")
+        self.assertTrue(hidden_ok)
+        self.assertTrue(host.console_activate(key))
+        self.assertEqual(mod.STATE["opened"], 1)
+        self.assertFalse(host.console_activate("plugin:0"))
+        from bmc_steward.console import pyte
+        self.assertEqual(mod.STATE["term"] is None, pyte is None)
+        mod.STATE["handle"].set_title("Switch A")
+        self.assertEqual(host.console_sessions()[0][3], "Switch A")
+        mod.STATE["handle"].remove()
+        self.assertEqual(host.console_sessions(), [])
+        with self.assertRaises(TypeError):
+            plugins.PluginAPI(host.plugins[0], host).add_console("x", "kein Widget")
+
+    def test_failed_register_removes_its_consoles(self):
+        self.make("halb", code='''
+from PyQt6.QtWidgets import QLabel
+
+def register(api):
+    api.add_console("x", QLabel("x"))
+    raise RuntimeError("kaputt")
+''')
+        self.approve("halb")
+        host = plugins.Host()
+        host.load()
+        self.assertEqual(host.consoles, [])
+
     def test_example_plugin_loads(self):
         import shutil
         from tests._support import REPO

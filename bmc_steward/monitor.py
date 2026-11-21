@@ -4,6 +4,10 @@ Der Monitor zeigt dezentes Schwarz-Weiß-Rauschen, solange keine Konsole verbund
 Verbindung steht, erscheint deren Bild verkleinert im Monitor; ein Klick öffnet die Konsole in voller
 Größe. Das Widget kennt die Konsole nicht selbst: Es fragt über eine Rückruffunktion, was gerade
 anzuzeigen ist, und macht von dem Widget nur Bildschirmfotos (grab), es greift nirgends ein.
+
+Sind mehrere Sitzungen offen (UEFI-Konsole, Konsolen von Plugins), stehen sie als Reiter am oberen Rand des
+Bildschirms; ein Klick auf einen Reiter (oder ←/→) wählt die Vorschau, ein Klick aufs Bild öffnet die gewählte
+Sitzung. Höchstens MAX_TABS Reiter (1 bis 10, Einstellungen → Darstellung).
 """
 import math
 import os
@@ -19,6 +23,29 @@ NOISE_MS = 70                   # ca. 14 Bilder pro Sekunde
 GRAB_MS = 400                   # Konsolen-Miniatur: ca. 2,5 Bilder pro Sekunde reichen als Vorschau
 # Grauwerte nur zwischen 12 und 40 von 255: sehr dunkel und kontrastarm, damit es nicht ablenkt
 _NOISE_LUT = bytes(12 + i * 28 // 255 for i in range(256))
+TAB_LIMIT = 10                  # mehr Reiter passen nicht sinnvoll in den kleinen Bildschirm
+MAX_TABS = TAB_LIMIT            # Einstellung „Konsolen-Reiter im Monitor“
+TAB_H = 17                      # Höhe der Reiterleiste über dem Bildschirm
+
+
+def set_max_tabs(n):
+    """Höchstzahl der Konsolen-Reiter im Monitor (1 bis 10)."""
+    global MAX_TABS
+    try:
+        MAX_TABS = max(1, min(TAB_LIMIT, int(n)))
+    except (TypeError, ValueError):
+        MAX_TABS = TAB_LIMIT
+    return MAX_TABS
+
+
+def sessions_of(info):
+    """Ergebnis der Rückruffunktion vereinheitlichen: None, eine Sitzung (Widget, verdeckt_ok, Beschriftung)
+    oder eine Liste von Sitzungen (Schlüssel, Widget, verdeckt_ok, Beschriftung) -> Liste, höchstens MAX_TABS."""
+    if not info:
+        return []
+    if isinstance(info, tuple):
+        return [("main", *info)]
+    return list(info)[:MAX_TABS]
 
 
 # ---------------------------------------------------------------------------------------- Logo-Aufbau
@@ -240,7 +267,9 @@ class AnimatedLogo(QWidget):
 
 class MonitorWidget(QWidget):
     """Kleiner Bildschirm mit Gehäuse. info() liefert (Widget, auch_verdeckt_abgreifbar, Beschriftung)
-    der laufenden Konsole oder None, wenn nichts verbunden ist."""
+    der laufenden Konsole, eine Liste solcher Sitzungen mit Schlüssel vorneweg
+    [(Schlüssel, Widget, verdeckt_ok, Beschriftung), …] oder None, wenn nichts verbunden ist.
+    current_key() nennt die gewählte Sitzung; clicked kommt beim Klick aufs Bild, nicht auf einen Reiter."""
     clicked = pyqtSignal()
     PAD, CHIN = 9, 22           # Rand um den Bildschirm, Kinn mit Leuchtpunkt und Beschriftung
 
@@ -253,6 +282,9 @@ class MonitorWidget(QWidget):
         self._fresh = False     # Bild stammt aus dem laufenden Abgriff, sonst Standbild
         self._caption = ""
         self._hover = False
+        self._tabs = []         # [(Schlüssel, Beschriftung)] der angezeigten Sitzungen
+        self._key = None        # gewählte Sitzung
+        self._sessions = []
         self._noise = self._make_noise()
         self._logo_clock = QElapsedTimer()      # läuft, solange das Rauschen zu sehen ist
         self._timer = QTimer(self)
@@ -272,11 +304,29 @@ class MonitorWidget(QWidget):
         raw = os.urandom(NOISE_W * NOISE_H).translate(_NOISE_LUT)
         return QImage(raw, NOISE_W, NOISE_H, NOISE_W, QImage.Format.Format_Grayscale8).copy()
 
+    def current_key(self):
+        """Schlüssel der gewählten Sitzung oder None (nichts verbunden)."""
+        return self._key if self._live else None
+
+    def select(self, key):
+        """Sitzung für die Vorschau wählen (Reiter)."""
+        if key != self._key and any(k == key for k, _ in self._tabs):
+            self._key = key
+            self._frame = None
+            self._tick()
+
     def _tick(self):
         try:
-            info = self._info()
+            sessions = sessions_of(self._info())
         except RuntimeError:                    # Konsolen-Widget wird gerade abgebaut
-            info = None
+            sessions = []
+        self._sessions = sessions
+        self._tabs = [(k, cap) for k, _w, _h, cap in sessions]
+        keys = [k for k, _ in self._tabs]
+        if self._key not in keys:
+            self._key = keys[0] if keys else None
+            self._frame = None
+        info = next(((w, h, cap) for k, w, h, cap in sessions if k == self._key), None)
         live = info is not None
         if live != self._live:
             self._live = live
@@ -334,8 +384,45 @@ class MonitorWidget(QWidget):
         super().hideEvent(e)
 
     # ---------- Zeichnen ----------
+    def _tabbar(self):
+        """Bereich der Reiterleiste; nur bei mindestens zwei Sitzungen, sonst None."""
+        if len(self._tabs) < 2:
+            return None
+        return QRectF(self.PAD, self.PAD - 3, self.width() - 2 * self.PAD, TAB_H)
+
+    def _tab_rects(self):
+        bar = self._tabbar()
+        if bar is None:
+            return []
+        w = bar.width() / len(self._tabs)
+        return [QRectF(bar.x() + i * w, bar.y(), w, bar.height()) for i in range(len(self._tabs))]
+
     def _screen(self):
-        return QRectF(self.PAD, self.PAD, self.width() - 2 * self.PAD, self.height() - self.PAD - self.CHIN)
+        top = self.PAD + (TAB_H - 1 if self._tabbar() is not None else 0)
+        return QRectF(self.PAD, top, self.width() - 2 * self.PAD, self.height() - top - self.CHIN)
+
+    def _paint_tabs(self, p, accent):
+        rects = self._tab_rects()
+        if not rects:
+            return
+        font = QFont(self.font())
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(max(6.0, font.pointSizeF() - 2.5))
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        for (key, cap), r in zip(self._tabs, rects):
+            active = key == self._key
+            box = r.adjusted(1, 0, -1, 0)
+            path = QPainterPath()
+            path.addRoundedRect(box, 3, 3)
+            p.setPen(QPen(accent if active else QColor("#3a3f47"), 1))
+            p.setBrush(QColor("#2b3037") if active else QColor("#1a1c20"))
+            p.drawPath(path)
+            p.setPen(QColor("#e6e9ee") if active else QColor("#8a919c"))
+            room = int(box.width() - 6)
+            opt = QTextOption(Qt.AlignmentFlag.AlignCenter)
+            opt.setWrapMode(QTextOption.WrapMode.NoWrap)
+            p.drawText(box, fm.elidedText(cap or "…", Qt.TextElideMode.ElideRight, room), opt)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -346,6 +433,7 @@ class MonitorWidget(QWidget):
         p.setBrush(QColor("#202226"))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 9, 9)
 
+        self._paint_tabs(p, accent)
         scr = self._screen()
         clip = QPainterPath()
         clip.addRoundedRect(scr, 4, 4)
@@ -416,12 +504,21 @@ class MonitorWidget(QWidget):
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
-            self.clicked.emit()
+            for (key, _cap), r in zip(self._tabs, self._tab_rects()):
+                if r.contains(e.position()):
+                    self.select(key)            # Reiter: nur die Vorschau wechseln
+                    break
+            else:
+                self.clicked.emit()
         super().mouseReleaseEvent(e)
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             self.clicked.emit()
+        elif e.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right) and len(self._tabs) > 1:
+            keys = [k for k, _ in self._tabs]
+            i = keys.index(self._key) if self._key in keys else 0
+            self.select(keys[(i + (1 if e.key() == Qt.Key.Key_Right else -1)) % len(keys)])
         else:
             super().keyPressEvent(e)
 

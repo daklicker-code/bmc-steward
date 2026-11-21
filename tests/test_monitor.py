@@ -269,6 +269,76 @@ class TestMonitorWidget(unittest.TestCase):
         self.assertFalse(self.m._timer.isActive())
 
 
+
+class TestMonitorTabs(unittest.TestCase):
+    """Mehrere Sitzungen: Reiter am oberen Rand, Auswahl per Klick oder ←/→, Höchstzahl aus den Einstellungen."""
+
+    def setUp(self):
+        import bmc_steward.monitor as mon
+        self.mon = mon
+        self.addCleanup(mon.set_max_tabs, mon.TAB_LIMIT)
+        self.cons = []
+        for i in range(12):
+            w = QWidget()
+            w.resize(320, 200)
+            self.cons.append((f"k{i}", w, True, f"Sitzung {i}"))
+        self.n = 3
+        self.m = MonitorWidget(lambda: self.cons[:self.n], "leer", "live")
+        self.m.resize(272, 196)
+
+    def test_single_session_has_no_tabbar(self):
+        self.n = 1
+        self.m._tick()
+        self.assertIsNone(self.m._tabbar())
+        self.assertEqual(self.m.current_key(), "k0")
+
+    def test_tabs_and_click_selects_without_opening(self):
+        self.m._tick()
+        self.assertEqual(len(self.m._tab_rects()), 3)
+        opened = []
+        self.m.clicked.connect(lambda: opened.append(1))
+        r = self.m._tab_rects()[2]
+        QTest.mouseClick(self.m, Qt.MouseButton.LeftButton, pos=r.center().toPoint())
+        self.assertEqual(self.m.current_key(), "k2")
+        self.assertEqual(self.m._caption, "Sitzung 2")
+        self.assertEqual(opened, [])                    # Reiter wählt nur die Vorschau
+        QTest.mouseClick(self.m, Qt.MouseButton.LeftButton, pos=self.m._screen().center().toPoint())
+        self.assertEqual(opened, [1])                   # Klick aufs Bild öffnet
+        self.assertFalse(self.m.grab().isNull())
+
+    def test_arrow_keys_cycle(self):
+        self.m._tick()
+        QTest.keyClick(self.m, Qt.Key.Key_Left)
+        self.assertEqual(self.m.current_key(), "k2")
+        QTest.keyClick(self.m, Qt.Key.Key_Right)
+        self.assertEqual(self.m.current_key(), "k0")
+
+    def test_limit_and_closed_session(self):
+        self.n = 12
+        self.m._tick()
+        self.assertEqual(len(self.m._tabs), 10)          # nie mehr als 10
+        self.mon.set_max_tabs(4)
+        self.m._tick()
+        self.assertEqual(len(self.m._tabs), 4)
+        self.assertEqual(self.mon.set_max_tabs(0), 1)
+        self.assertEqual(self.mon.set_max_tabs(99), 10)
+        self.m.select("k3")
+        self.n = 2                                       # gewählte Sitzung geschlossen -> erste
+        self.m._tick()
+        self.assertEqual(self.m.current_key(), "k0")
+        self.n = 0
+        self.m._tick()
+        self.assertIsNone(self.m.current_key())
+
+    def test_setting_applies_limit(self):
+        from bmc_steward import settings
+        s = settings.clean({"monitor_tabs": 3})
+        settings.apply(None, s)
+        self.assertEqual(self.mon.MAX_TABS, 3)
+        self.assertEqual(settings.clean({"monitor_tabs": 50})["monitor_tabs"], 10)
+        self.assertEqual(settings.clean({})["monitor_tabs"], 10)
+
+
 class TestWindowLayout(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -372,6 +442,29 @@ class TestWindowLayout(unittest.TestCase):
         finally:
             del self.w.console_source               # zurück zur echten Methode
             self.w.console_panel_show(True)
+
+    def test_plugin_console_becomes_tab_and_opens_its_page(self):
+        from bmc_steward import plugins
+        host = self.w.plugin_host
+        page = QWidget()
+        inner = QWidget(page)
+        inner.resize(200, 120)
+        idx = self.w.tabs.addTab(page, "Testseite")
+        fake = plugins.Plugin.__new__(plugins.Plugin)
+        fake.name = "Test"
+        h = plugins.ConsoleHandle(host, fake, "Gerät 1", inner, None, True)
+        host.consoles.append(h)
+        try:
+            self.w.monitor._tick()
+            self.assertIn(("plugin:" + str(id(h)), "Gerät 1"), self.w.monitor._tabs)
+            self.w.monitor.select("plugin:" + str(id(h)))
+            self.w.tabs.setCurrentIndex(0)
+            self.w.monitor.clicked.emit()
+            self.assertEqual(self.w.tabs.currentIndex(), idx)   # Klick öffnet die Plugin-Seite
+        finally:
+            h.remove()
+        self.w.monitor._tick()
+        self.assertEqual(self.w.monitor._tabs, [])
 
     def test_fold_button_toggles_settings(self):
         self.w.console_panel_show(True)
