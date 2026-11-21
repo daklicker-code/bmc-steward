@@ -263,8 +263,9 @@ class PluginAPI:
 
     def add_console(self, title, widget, activate=None, hidden_ok=True):
         """Konsolen-Sitzung als Reiter im Monitor (links oben) anzeigen. `widget` wird nur abfotografiert (grab),
-        nie verändert. `activate()` wird beim Klick auf das Monitorbild gerufen; ohne sie wechselt das Programm zur
-        Plugin-Seite, die das Widget enthält. Gibt ein ConsoleHandle zurück (remove(), set_title())."""
+        nie verändert. Klick auf das Monitorbild: das Programm wechselt zur Plugin-Seite, die das Widget enthält,
+        und ruft danach `activate()` (z. B. um den richtigen Reiter des Plugins zu zeigen). Gibt ein ConsoleHandle
+        zurück (remove(), set_title())."""
         from PyQt6.QtWidgets import QWidget
         if not isinstance(widget, QWidget):
             raise TypeError("widget")
@@ -371,22 +372,27 @@ class Host:
         h = next((h for h in self.consoles if f"plugin:{id(h)}" == key), None)
         if h is None:
             return False
-        if h._activate is not None:
-            try:
-                h._activate()
-                return True
-            except Exception as e:          # noqa: BLE001
-                LOG.info(T("Plugin {0}: Fehler bei {1}: {2}").format(h._plugin.name, "activate", _short(e)))
-                return False
+        done = False
         tabs = getattr(window, "tabs", None)
-        if tabs is not None:
+        if tabs is not None:                    # zuerst zur Plugin-Seite, die das Widget enthält …
             for i in range(tabs.count()):
                 page = tabs.widget(i)
                 if page is not None and (page is h.widget or page.isAncestorOf(h.widget)):
                     tabs.setCurrentIndex(i)
-                    h.widget.setFocus()
-                    return True
-        return False
+                    done = True
+                    break
+        if h._activate is not None:             # … dann darf das Plugin die Sitzung selbst nach vorn holen
+            try:
+                h._activate()
+                done = True
+            except Exception as e:          # noqa: BLE001
+                LOG.info(T("Plugin {0}: Fehler bei {1}: {2}").format(h._plugin.name, "activate", _short(e)))
+        if done:
+            try:
+                h.widget.setFocus()
+            except RuntimeError:
+                pass
+        return done
 
     def emit(self, event, *args):
         """Ereignis an alle Plugins; ein Fehler betrifft nur das eine Plugin."""

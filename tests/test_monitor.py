@@ -452,7 +452,8 @@ class TestWindowLayout(unittest.TestCase):
         idx = self.w.tabs.addTab(page, "Testseite")
         fake = plugins.Plugin.__new__(plugins.Plugin)
         fake.name = "Test"
-        h = plugins.ConsoleHandle(host, fake, "Gerät 1", inner, None, True)
+        called = []
+        h = plugins.ConsoleHandle(host, fake, "Gerät 1", inner, lambda: called.append(1), True)
         host.consoles.append(h)
         try:
             self.w.monitor._tick()
@@ -461,6 +462,7 @@ class TestWindowLayout(unittest.TestCase):
             self.w.tabs.setCurrentIndex(0)
             self.w.monitor.clicked.emit()
             self.assertEqual(self.w.tabs.currentIndex(), idx)   # Klick öffnet die Plugin-Seite
+            self.assertEqual(called, [1])                        # … und das Plugin holt die Sitzung nach vorn
         finally:
             h.remove()
         self.w.monitor._tick()
