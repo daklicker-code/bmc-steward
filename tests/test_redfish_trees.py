@@ -103,7 +103,7 @@ class TestHardeningAgainstTrees(unittest.TestCase):
         e = self.engine()
         e.svc_hard(self.servers["dell"].addr, "pw", "dell", self.cfg)
         attrs = self.servers["dell"].resource(MGR["dell"] + "/Attributes")
-        self.assertEqual(attrs["Attributes"]["Security.1.TLSProtocol"], "TLS 1.3 and Higher")
+        self.assertEqual(attrs["Attributes"]["WebServer.1.TLSProtocol"], "TLS 1.3 Only")
 
     def test_tls_min_gracefully_skipped_where_no_attributes_resource_exists(self):
         # HPE/Lenovo/Supermicro-Bäume haben (wie auf echter Hardware, laut Roadmap noch ungetestet) keine

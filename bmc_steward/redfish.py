@@ -624,6 +624,56 @@ class RedfishClient:
         walk(self.body)
         return [f"    {m}" for m in sorted(found)]
 
+    # Meldungs-Kennungen, die eine Einstellung als „vom Gerät nicht unterstützt“ ausweisen. Geprüft werden
+    # Meldungstext UND MessageId: iDRAC schickt beides, der Text enthält die Kennung aber meist nicht.
+    UNSUPPORTED = re.compile(r"PropertyUnknown|PropertyNotWritable|NotSupported|not supported|ActionNotSupported|"
+                             r"PropertyValueNotInList|ResourceNotFound|InsufficientPrivilege", re.I)
+
+    def err_ids(self):
+        """MessageIds aller Meldungen der letzten Antwort."""
+        found = set()
+
+        def walk(o):
+            if isinstance(o, dict):
+                m = o.get("MessageId")
+                if isinstance(m, str) and m:
+                    found.add(m)
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+        walk(self.body)
+        return sorted(found)
+
+    def unsupported(self):
+        """True, wenn die letzte Antwort eine nicht unterstützte Eigenschaft/Aktion meldet."""
+        return bool(self.UNSUPPORTED.search(" ".join(self.errmsg() + self.err_ids())))
+
+    def value_rejected(self):
+        """True, wenn die letzte Antwort einen nicht erlaubten Wert meldet (Attribut bekannt, Wert nicht)."""
+        return bool(re.search(r"ValueNotInList|acceptable values", " ".join(self.errmsg() + self.err_ids()), re.I))
+
+    # ---------- UEFI-Werte vormerken ----------
+    DELL_JOBS = "/redfish/v1/Managers/iDRAC.Embedded.1/Jobs"
+
+    def stage_bios(self, ip, user, pw, vendor, settings_path, attrs):
+        """Schreibt UEFI-Attribute in das Settings-Objekt. Gibt den HTTP-Code zurück (Antwort in self.body).
+        Dell übernimmt ausstehende Werte nur mit Konfigurationsauftrag: zuerst mit
+        @Redfish.SettingsApplyTime „OnReset“ (der iDRAC legt den Auftrag selbst an); kennt die Firmware das
+        nicht (400), PATCH ohne Angabe und Auftrag über Managers/iDRAC.Embedded.1/Jobs. Der Auftrag läuft beim
+        nächsten Neustart des Servers."""
+        if vendor != "dell":
+            return self.api(ip, user, pw, "PATCH", settings_path, {"Attributes": attrs})
+        code = self.api(ip, user, pw, "PATCH", settings_path,
+                        {"Attributes": attrs, "@Redfish.SettingsApplyTime": {"ApplyTime": "OnReset"}})
+        if self.ok(code) or code != 400:
+            return code
+        code = self.api(ip, user, pw, "PATCH", settings_path, {"Attributes": attrs})
+        if not self.ok(code):
+            return code
+        return self.api(ip, user, pw, "POST", self.DELL_JOBS, {"TargetSettingsURI": settings_path.rstrip("/")})
+
     def fail_lines(self, what, code):
         http = str(code) if code else T("keine Verbindung")
         return [T('  FEHLER: {0} (HTTP {1})').format(what, http)] + self.errmsg()
@@ -1479,7 +1529,7 @@ class BiosEngine(RedfishClient):
         if not wanted:
             self.log(T("  nichts zu ändern, kein Neustart"))
             return clean
-        code = self.api(ip, user, pw, "PATCH", settings_path, {"Attributes": wanted})
+        code = self.stage_bios(ip, user, pw, vendor, settings_path, wanted)
         if not self.ok(code):
             self.fail(T("BIOS-Attribute setzen"), code)
             return False
@@ -1562,9 +1612,6 @@ class ServicesEngine(RedfishClient):
     ROLES = ("Administrator", "Operator", "ReadOnly")
     LABEL = {"ntp": "NTP", "syslog": "Syslog", "ldap": "LDAP", "cert": "HTTPS-Zertifikat", "hard": "Härtung",
              "dns": "DNS", "vlan": "VLAN", "ipv6": "IPv6", "nicmode": "Netzwerkport"}
-    UNSUPPORTED = re.compile(r"PropertyUnknown|PropertyNotWritable|NotSupported|not supported|ActionNotSupported|"
-                             r"PropertyValueNotInList|ResourceNotFound|InsufficientPrivilege", re.I)
-
     def __init__(self, rows, cur_user, services, dry=True, log=print, stopped=lambda: False, vendor=None):
         super().__init__(dry, log, stopped)
         self.rows, self.cur_user_set, self.services = rows, cur_user, services
@@ -1665,7 +1712,7 @@ class ServicesEngine(RedfishClient):
         if self.ok(self.code):
             self.log(T("  {0}: gesetzt").format(label), "ok")
             return True
-        if self.code in (404, 405, 501) or (self.code == 400 and self.UNSUPPORTED.search(" ".join(self.errmsg()))):
+        if self.code in (404, 405, 501) or (self.code == 400 and self.unsupported()):
             self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(label))
             return None
         self.fail(label, self.code)
@@ -1683,9 +1730,50 @@ class ServicesEngine(RedfishClient):
         res = self.soft(T("DNS"), ip, pw, "PATCH", nic, {"StaticNameServers": servers}) if nic else None
         if res is not None or v != "dell":
             return res
-        return self.soft(T("DNS"), ip, pw, "PATCH", self.MGR_PATH["dell"] + "/Attributes",
-                         {"Attributes": {"NIC.1.DNSServer1": servers[0],
-                                         "NIC.1.DNSServer2": servers[1] if len(servers) > 1 else ""}})
+        # iDRAC9: IPv4.1.DNS1/DNS2 (gelten bei DNSFromDHCP aus), ältere Firmware: IPv4Static.1.DNS1/DNS2
+        attrs = self.mgr_attributes(ip, pw, v) or {}
+        group = next((g for g in ("IPv4.1", "IPv4Static.1") if f"{g}.DNS1" in attrs), None)
+        if not group:
+            self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(T("DNS")))
+            return None
+        body = {f"{group}.DNS1": servers[0], f"{group}.DNS2": servers[1] if len(servers) > 1 else "0.0.0.0"}
+        if "IPv4.1.DNSFromDHCP" in attrs:
+            body["IPv4.1.DNSFromDHCP"] = "Disabled"
+        return self.soft(T("DNS"), ip, pw, "PATCH", self.MGR_PATH["dell"] + "/Attributes", {"Attributes": body})
+
+    def mgr_attributes(self, ip, pw, v):
+        """Attribute des Managers (Dell: iDRAC-Attribute) oder None, wenn das Gerät keine solche Ressource hat."""
+        mgr = self.MGR_PATH.get(v, "/redfish/v1/Managers/1")
+        code = self.api(ip, self.cur_user, pw, "GET", mgr + "/Attributes")
+        attrs = self.body.get("Attributes") if self.ok(code) and isinstance(self.body, dict) else None
+        return attrs if isinstance(attrs, dict) else None
+
+    # TLS-Mindestversion: Attributname (iDRAC9: WebServer, ältere Bäume: Security) und mögliche Werte je Stufe,
+    # in dieser Reihenfolge versucht – die Schreibweise des TLS-1.3-Werts unterscheidet sich je Firmware.
+    TLS_ATTRS = ("WebServer.1.TLSProtocol", "Security.1.TLSProtocol")
+    TLS_VALUES = {"tls12": ("TLS 1.2 and Higher",), "tls13": ("TLS 1.3 Only", "TLS 1.3 only", "TLS 1.3 and Higher")}
+
+    def svc_tls(self, ip, pw, v, key):
+        """TLS-Mindestversion über die Manager-Attribute. True / None (nicht unterstützt) / False."""
+        label = T("Härtung: TLS-Mindestversion {0}").format("TLS 1.2" if key == "tls12" else "TLS 1.3")
+        attrs = self.mgr_attributes(ip, pw, v)
+        name = next((n for n in self.TLS_ATTRS if n in (attrs or {})), None)
+        if not name:
+            self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(label))
+            return None
+        path = self.MGR_PATH.get(v, "/redfish/v1/Managers/1") + "/Attributes"
+        for value in self.TLS_VALUES[key]:
+            self.code = self.api(ip, self.cur_user, pw, "PATCH", path, {"Attributes": {name: value}})
+            if self.ok(self.code):
+                self.log(T("  {0}: gesetzt").format(f"{label} ({value})"), "ok")
+                return True
+            if not (self.code == 400 and self.value_rejected()):
+                break
+        if self.code in (404, 405, 501) or (self.code == 400 and self.unsupported()):
+            self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(label))
+            return None
+        self.fail(label, self.code)
+        return False
 
     def svc_vlan(self, ip, pw, v, cfg):
         """VLAN-Tag am Management-Interface, über das Standard-Redfish-VLAN-Objekt. ID 0 = VLAN abschalten."""
@@ -1753,14 +1841,8 @@ class ServicesEngine(RedfishClient):
             results.append(self.soft(T("Härtung: Session-Zeitlimit {0} min").format(tmo), ip, pw, "PATCH",
                                      "/redfish/v1/SessionService", {"SessionTimeout": max(30, min(86400, tmo * 60))}))
         tls_key = cfg.get("tls_min") or ""
-        _TLS_LABEL = {"tls12": "TLS 1.2 and Higher", "tls13": "TLS 1.3 and Higher"}
-        if tls_key in _TLS_LABEL:
-            tls_val = _TLS_LABEL[tls_key]
-            # Dell iDRAC: Attribute-API; für andere Hersteller soft() – überspringt bei 404/405/501
-            mgr_attrs = mgr + "/Attributes"
-            results.append(self.soft(T("Härtung: TLS-Mindestversion {0}").format(tls_val),
-                                     ip, pw, "PATCH", mgr_attrs,
-                                     {"Attributes": {"Security.1.TLSProtocol": tls_val}}))
+        if tls_key in self.TLS_VALUES:
+            results.append(self.svc_tls(ip, pw, v, tls_key))
         if False in results:
             return False
         return True if True in results else None
@@ -1830,9 +1912,6 @@ class UsersEngine(RedfishClient):
     ROLES = ("Administrator", "Operator", "ReadOnly")
     PRIVS = "".join(f'<{p} value="Yes"/>' for p in ("ADMIN_PRIV", "REMOTE_CONS_PRIV", "RESET_SERVER_PRIV",
                                                      "VIRTUAL_MEDIA_PRIV", "CONFIG_ILO_PRIV"))
-    UNSUPPORTED = re.compile(r"PropertyUnknown|PropertyNotWritable|NotSupported|not supported|ActionNotSupported|"
-                             r"PropertyValueNotInList|ResourceNotFound|InsufficientPrivilege", re.I)
-
     def __init__(self, rows=None, cur_user="", dry=True, log=print, stopped=lambda: False, vendor=None):
         super().__init__(dry, log, stopped)
         self.rows, self.cur_user_set = rows or [], cur_user
@@ -1845,7 +1924,7 @@ class UsersEngine(RedfishClient):
         if self.ok(code):
             self.log(T("  {0}: gesetzt").format(label), "ok")
             return True
-        if code in (404, 405, 501) or (code == 400 and self.UNSUPPORTED.search(" ".join(self.errmsg()))):
+        if code in (404, 405, 501) or (code == 400 and self.unsupported()):
             self.log(T("  {0}: auf diesem Gerät nicht unterstützt, übersprungen").format(label))
             return None
         self.fail(label, code)

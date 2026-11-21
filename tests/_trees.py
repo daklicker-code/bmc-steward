@@ -73,7 +73,7 @@ TREES = {'dell': {'/redfish/v1': {'@odata.id': '/redfish/v1/',
                                                                '@odata.type': '#DellAttributes.v1_0_0.DellAttributes',
                                                                'AttributeRegistry': 'iDRACAttributeRegistry.v1_0_0',
                                                                'Attributes': {'NTPConfigGroup.1.NTPEnable': 'Disabled',
-                                                                              'Security.1.TLSProtocol': 'TLS '
+                                                                              'WebServer.1.TLSProtocol': 'TLS '
                                                                                                         '1.2 '
                                                                                                         'and '
                                                                                                         'Higher'},

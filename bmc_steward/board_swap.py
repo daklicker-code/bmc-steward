@@ -258,7 +258,9 @@ class BoardSwapEngine(RedfishClient):
         if not wanted:
             self.log(T("  UEFI: alle Attribute stimmen schon mit der Sicherung überein."), "ok")
             return True
-        if not self.attempt(T("BIOS-Attribute setzen"), ip, pw, "PATCH", settings, {"Attributes": wanted}):
+        self.code = self.stage_bios(ip, self.cur_user, pw, vendor, settings, wanted)
+        if not self.ok(self.code):
+            self.fail(T("BIOS-Attribute setzen"), self.code)
             return False
         self.log(T("  UEFI: {0} Attribute aus der Sicherung vorgemerkt (gelten nach dem nächsten Neustart): {1}").format(
             len(wanted), ", ".join(sorted(wanted))), "ok")

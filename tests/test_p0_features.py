@@ -95,76 +95,51 @@ class TestClearPassAfter(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestTlsMinVersion(unittest.TestCase):
-    """svc_hard() sendet TLS-Mindestversion-PATCH, wenn tls_min gesetzt."""
+    """svc_hard() setzt die TLS-Mindestversion über svc_tls(): Attributname und Wert kommen vom Gerät
+    (iDRAC9: WebServer.1.TLSProtocol). Ausführlich in test_dell_redfish_fixes.py."""
 
-    def _make_engine(self):
+    def _make_engine(self, attrs):
         e = ServicesEngine.__new__(ServicesEngine)
         e.dry = False
         e.stopped = lambda: False
         e.log = lambda *a, **kw: None
-        e.soft_calls = []
-
-        def fake_soft(label, ip, pw, method, path, body):
-            e.soft_calls.append({"label": label, "path": path, "body": body})
-            return True
-
-        e.soft = fake_soft
+        e.cur_user = "root"
+        e.patches = []
         e.MGR_PATH = {"dell": "/redfish/v1/Managers/iDRAC.Embedded.1"}
+        e.mgr_attributes = lambda ip, pw, v: attrs
+
+        def fake_api(ip, user, pw, method, path, data=None, timeout=None, _retry=True):
+            e.patches.append((path, data))
+            e.body = None
+            return 200
+        e.api = fake_api
         return e
 
     def test_tls12_patch_sent(self):
-        """tls_min='tls12' führt zu PATCH mit 'TLS 1.2 and Higher'."""
-        e = self._make_engine()
-        cfg = {"tls_min": "tls12"}
-        e.svc_hard("10.0.0.1", "pw", "dell", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertEqual(len(tls_calls), 1)
-        body = tls_calls[0]["body"]
-        self.assertEqual(body["Attributes"]["Security.1.TLSProtocol"], "TLS 1.2 and Higher")
+        e = self._make_engine({"WebServer.1.TLSProtocol": "TLS 1.1 and Higher"})
+        self.assertTrue(e.svc_hard("10.0.0.1", "pw", "dell", {"tls_min": "tls12"}))
+        self.assertEqual(e.patches, [("/redfish/v1/Managers/iDRAC.Embedded.1/Attributes",
+                                      {"Attributes": {"WebServer.1.TLSProtocol": "TLS 1.2 and Higher"}})])
 
-    def test_tls13_patch_sent(self):
-        """tls_min='tls13' führt zu PATCH mit 'TLS 1.3 and Higher'."""
-        e = self._make_engine()
-        cfg = {"tls_min": "tls13"}
-        e.svc_hard("10.0.0.1", "pw", "dell", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertEqual(len(tls_calls), 1)
-        body = tls_calls[0]["body"]
-        self.assertEqual(body["Attributes"]["Security.1.TLSProtocol"], "TLS 1.3 and Higher")
+    def test_tls13_first_candidate(self):
+        e = self._make_engine({"WebServer.1.TLSProtocol": "TLS 1.2 and Higher"})
+        e.svc_hard("10.0.0.1", "pw", "dell", {"tls_min": "tls13"})
+        self.assertEqual(e.patches[0][1], {"Attributes": {"WebServer.1.TLSProtocol": "TLS 1.3 Only"}})
 
     def test_no_tls_patch_when_empty(self):
-        """tls_min='' oder fehlend führt zu keinem TLS-PATCH."""
-        e = self._make_engine()
-        cfg = {"tls_min": ""}
-        e.svc_hard("10.0.0.1", "pw", "dell", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertEqual(len(tls_calls), 0)
+        e = self._make_engine({"WebServer.1.TLSProtocol": "x"})
+        e.svc_hard("10.0.0.1", "pw", "dell", {"tls_min": ""})
+        self.assertEqual(e.patches, [])
 
     def test_no_tls_patch_when_missing(self):
-        """Fehlendes tls_min-Feld führt zu keinem TLS-PATCH."""
-        e = self._make_engine()
-        cfg = {}
-        e.svc_hard("10.0.0.1", "pw", "dell", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertEqual(len(tls_calls), 0)
+        e = self._make_engine({"WebServer.1.TLSProtocol": "x"})
+        e.svc_hard("10.0.0.1", "pw", "dell", {})
+        self.assertEqual(e.patches, [])
 
-    def test_tls_path_uses_mgr_attributes(self):
-        """Der PATCH geht an mgr + '/Attributes', also iDRAC.Embedded.1/Attributes für Dell."""
-        e = self._make_engine()
-        cfg = {"tls_min": "tls12"}
-        e.svc_hard("10.0.0.1", "pw", "dell", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertIn("/Attributes", tls_calls[0]["path"])
-        self.assertIn("iDRAC.Embedded.1", tls_calls[0]["path"])
-
-    def test_other_vendor_uses_generic_mgr(self):
-        """Für unbekannten Hersteller wird /redfish/v1/Managers/1/Attributes versucht."""
-        e = self._make_engine()
-        cfg = {"tls_min": "tls12"}
-        e.svc_hard("10.0.0.1", "pw", "lenovo", cfg)
-        tls_calls = [c for c in e.soft_calls if "TLS" in c["label"]]
-        self.assertEqual(len(tls_calls), 1)
-        self.assertIn("/Managers/1/Attributes", tls_calls[0]["path"])
+    def test_other_vendor_without_attributes_is_skipped(self):
+        e = self._make_engine(None)
+        self.assertIsNone(e.svc_hard("10.0.0.1", "pw", "lenovo", {"tls_min": "tls12"}))
+        self.assertEqual(e.patches, [])
 
 
 # ---------------------------------------------------------------------------

@@ -63,11 +63,13 @@ class TestDns(unittest.TestCase):
             return next(calls)
 
         e.soft = fake_soft
+        e.mgr_attributes = lambda ip, pw, v: {"IPv4.1.DNS1": "0.0.0.0", "IPv4.1.DNS2": "0.0.0.0", "IPv4.1.DNSFromDHCP": "Enabled"}
         res = e.svc_dns("10.0.0.1", "pw", "dell", {"servers": ["10.20.0.1"]})
         self.assertTrue(res)
         self.assertEqual(len(e.soft_calls), 2)
         self.assertIn("/Attributes", e.soft_calls[1]["path"])
-        self.assertEqual(e.soft_calls[1]["body"]["Attributes"]["NIC.1.DNSServer1"], "10.20.0.1")
+        self.assertEqual(e.soft_calls[1]["body"]["Attributes"],
+                         {"IPv4.1.DNS1": "10.20.0.1", "IPv4.1.DNS2": "0.0.0.0", "IPv4.1.DNSFromDHCP": "Disabled"})
 
 
 class TestVlan(unittest.TestCase):
