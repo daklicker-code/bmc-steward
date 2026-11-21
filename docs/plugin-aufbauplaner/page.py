@@ -1,8 +1,13 @@
-"""BMC-Steward: Seite „Aufbauplaner“ – Racks zusammenstellen, Geräte einbauen, verkabeln, prüfen.
+"""Aufbauplaner-Plugin: die Seite – Racks zusammenstellen, Geräte einbauen, verkabeln, prüfen.
 
 Links die Bibliothek (Server aus der Serverliste, Switches, Infrastruktur, Platzhalter), in der Mitte die
 Racks als Zeichenfläche (RackCanvas), rechts Eigenschaften, Prüfung, Netze und Stückliste. Der Plan selbst
 (planner.Plan) kennt keine Oberfläche. Gespeichert wird nur auf Knopfdruck – wie überall im Tool.
+
+Mit BMC-Steward spricht die Seite nur über die Plugin-API: Serverliste lesen (api.servers), Hostnamen und
+Adressen nach „Neuware“ schreiben (api.put_servers), Server ins Testlabor legen (api.testlab_*), die Leuchte
+im Menü (api.set_lamp) und die Rückfrage beim Beenden (Ereignis close_request). Design, Einleitungszeile,
+Protokoll und Programmordner kommen aus dem Programm selbst.
 """
 import ipaddress
 import json
@@ -19,15 +24,21 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QDia
                              QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
                              QTableWidgetItem, QTabWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
-from . import i18n
-from .applog import LOG
-from .core import intro_label
-from . import theme
-from .i18n import HERE, T
+from bmc_steward import theme
+from bmc_steward.applog import LOG
+from bmc_steward.core import intro_label
+from bmc_steward.i18n import HERE
+
 from .planner import (CATALOG, DRIVE_MODELS, NIC_MODELS, PSU_BAYS, PSU_MODELS, compatible, MAX_COLS, MAX_DEV_U,
                       MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES, Plan, catalog_texts, col_name,
                       coord_name, demo_plan, drive_bays, drive_name, netapp_demo_plan, nic_name, parse_coord,
                       port_name, psu_name, rack_tiles, server_slots, vendor_of)
+from .texts import T, help_html
+
+PLAN_LAMP = "#3b8beb"        # Leuchte im Menü: Ausfall-Simulation läuft
+# Zustand über einen Sprachwechsel hinweg: BMC-Steward baut dann das Fenster samt Plugin-Seiten neu auf, das
+# Plugin-Modul bleibt geladen. Hier liegt der Plan, damit die neue Seite dort weitermacht.
+STATE = {}
 
 MIME = "application/x-bmc-steward-planner"
 # Farbschemata. Hell im Stil üblicher DCIM-Werkzeuge (Vorgabe unter Windows), dunkel wie der Rest von
@@ -1732,10 +1743,11 @@ class TraceDialog(QDialog):
 
 
 class PlannerTabMixin:
-    """Seite „Aufbauplaner“ des Hauptfensters."""
+    """Seite „Aufbauplaner“ (früher ein Teil des Hauptfensters, deshalb die Vorsilbe planner_)."""
 
     # ================================================================ Aufbau
     def build_planner(self):
+        restore = dict(STATE)
         self.plan_path = None
         self.plan_dirty = False
         self._pl_filling = False
@@ -1765,6 +1777,8 @@ class PlannerTabMixin:
         fm.addSeparator()
         fm.addAction(T("Beispielaufbau laden"), self.planner_demo)
         fm.addAction(T("Beispiel NetApp MetroCluster laden"), self.planner_demo_netapp)
+        fm.addSeparator()
+        fm.addAction(T("Hilfe zum Aufbauplaner"), self.planner_help)
         file_btn.setMenu(fm)
         tb.addWidget(file_btn)
         save_btn = QPushButton(T("Speichern"))
@@ -2032,9 +2046,14 @@ class PlannerTabMixin:
         self.planner_apply_theme()
         theme.on_change(self.planner_apply_theme)
         self.planner_set_view("floor")
-        plan = Plan()
-        plan.add_rack("R01", 42)
-        self.planner_set_plan(plan, dirty=False)
+        if restore.get("plan") is not None:                 # Sprachwechsel: dort weitermachen
+            self.planner_set_plan(restore["plan"], dirty=restore.get("dirty", False))
+            self.plan_path = restore.get("path")
+            self.planner_update_history()
+        else:
+            plan = Plan()
+            plan.add_rack("R01", 42)
+            self.planner_set_plan(plan, dirty=False)
         return page
 
     def _planner_props(self):
@@ -2335,6 +2354,7 @@ class PlannerTabMixin:
             self.pl_undo, self.pl_redo = [], []
         self.planner_sim_stop()
         self.pl_canvas.plan = plan
+        STATE["plan"] = plan
         self.pl_canvas.sel = None
         self.pl_canvas.pending = None
         plan.sync_inventory(self.planner_inventory())
@@ -2346,17 +2366,14 @@ class PlannerTabMixin:
     def planner_inventory(self):
         """Server der Serverliste („Neuware“) als Bestand: Schlüssel Seriennummer, sonst aktuelle IP, sonst Name."""
         out = []
-        table = getattr(self, "table", None)
-        if table is None:
-            return out
-        for r in range(table.rowCount()):
-            ip, host, serial = self.cell(r, 0), self.cell(r, 5), self.cell(r, 6)
+        for s in self.api.servers():
+            ip, host, serial = s.get("ip", ""), s.get("hostname", ""), s.get("serial", "")
             key = f"sn:{serial}" if serial else f"ip:{ip}" if ip else f"host:{host}" if host else ""
             if not key:
                 continue
-            vtext = self.cell(r, self.vendor_col)
+            vtext = s.get("vendor", "")
             out.append({"key": key, "name": host or ip or serial, "vendor": vendor_of(vtext), "model": vtext,
-                        "serial": serial, "row": r})
+                        "serial": serial, "row": s.get("row")})
         return out
 
     def planner_page_shown(self):
@@ -3695,32 +3712,15 @@ class PlannerTabMixin:
         if box.clickedButton() is not ok:
             return
         by_key = {e["key"]: e["row"] for e in self.planner_inventory()}
-        updated = added = 0
+        entries = []
         for n in rows:
             d = n["dev"]
-            vals = {2: n["ip"] or "", 3: self.plan.mask, 4: self.plan.gw, 5: n["host"]}
-            r = by_key.get(d.get("key")) if d.get("inv") else None
-            if r is None:
-                values = [""] * len(i18n.COLS)
-                values[1] = self.cur_pass.text()
-                for c, val in vals.items():
-                    values[c] = val
-                values[6] = d.get("serial") or ""
-                self.add_row(values)
-                added += 1
-            else:
-                for c, val in vals.items():
-                    item = self.table.item(r, c)
-                    if item is None:
-                        self.table.setItem(r, c, QTableWidgetItem(val))
-                    else:
-                        item.setText(val)
-                updated += 1
-        self.update_count()
-        self.touch()
+            entries.append({"row": by_key.get(d.get("key")) if d.get("inv") else None, "new_ip": n["ip"] or "",
+                            "mask": self.plan.mask, "gateway": self.plan.gw, "hostname": n["host"],
+                            "serial": d.get("serial") or ""})
+        updated, added = self.api.put_servers(entries)      # wechselt danach selbst zu „Neuware“
         self.planner_page_shown()
         LOG.debug(T("Aufbauplaner: {0} Zeilen in „Neuware“ aktualisiert, {1} neu angelegt.").format(updated, added))
-        self.tabs.setCurrentIndex(1)
 
     def planner_to_lab(self):
         servers = sorted(self.plan.placed("server"), key=lambda d: (self.plan.rack_index(d["rack"]), -d["pos"]))
@@ -3729,42 +3729,38 @@ class PlannerTabMixin:
             self.planner_say(T("Kein eingebauter Server mit bekanntem Hersteller – Platzhalter lassen sich nicht "
                                "virtuell nachbauen."), True)
             return
-        if self.vbmc_running():
+        lab = self.api.testlab_state()
+        if lab["running"]:
             QMessageBox.information(self, T("Ins Testlabor übernehmen"),
                                     T("Das Testlabor läuft gerade. Bitte erst stoppen."))
             return
-        if self.vbmc_fleet.rowCount():
+        if lab["servers"]:
             box = QMessageBox(QMessageBox.Icon.Question, T("Ins Testlabor übernehmen"),
                               T("Die {0} Serverzeilen im Testlabor werden durch {1} Server aus dem Plan "
-                                "ersetzt.").format(self.vbmc_fleet.rowCount(), len(known)), parent=self)
+                                "ersetzt.").format(lab["servers"], len(known)), parent=self)
             ok = box.addButton(T("Ersetzen"), QMessageBox.ButtonRole.AcceptRole)
             cancel = box.addButton(T("Abbrechen"), QMessageBox.ButtonRole.RejectRole)
             box.setDefaultButton(cancel)
             box.exec()
             if box.clickedButton() is not ok:
                 return
-        self.vbmc_fleet.setRowCount(0)
-        serials = set()
+        servers_out, serials = [], set()
         for d in known:
             serial = d.get("serial") or None
             if serial in serials:
                 serial = None
             serials.add(serial)
-            self.vbmc_add_server(d["vendor"], {"serial": serial, "model": d.get("model") or None})
-        self.vbmc_mode_changed()
+            servers_out.append({"vendor": d["vendor"], "serial": serial, "model": d.get("model") or None})
         skipped = len(servers) - len(known)
         msg = T("Aus dem Aufbauplan übernommen: {0} Server").format(len(known))
         if skipped:
             msg += " " + T("({0} Platzhalter ohne Hersteller übersprungen)").format(skipped)
-        self.vbmc_set_status(msg)
-        self.tabs.setCurrentIndex(self.tabs.indexOf(self.vbmc_page))
+        self.api.testlab_load(servers_out, msg)               # wechselt danach selbst zum Testlabor
 
     # ================================================================ Ausfall-Simulation
     def planner_sim_toggle(self, on):
         cv = self.pl_canvas
-        if getattr(self, "plan_tab", None) is not None:     # blaue Leuchte im Menü, solange die Simulation läuft
-            from .sidenav import PLAN_LAMP
-            self.tabs.setLamp(self.plan_tab, PLAN_LAMP if on else None)
+        self.api.set_lamp(PLAN_LAMP if on else None)       # blaue Leuchte im Menü, solange die Simulation läuft
         if on:
             if self.pl_cable_btn.isChecked():
                 self.pl_cable_btn.setChecked(False)
@@ -3923,3 +3919,49 @@ class PlannerTabMixin:
         self.plan_path = str(path)
         self.planner_set_plan(plan, dirty=False)
         self.planner_say(T("Plan geladen: {0}").format(path))
+
+    def planner_help(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(T("Hilfe zum Aufbauplaner"))
+        dlg.resize(760, 640)
+        lay = QVBoxLayout(dlg)
+        text = QTextBrowser()
+        text.setOpenExternalLinks(True)
+        text.setHtml(help_html())
+        lay.addWidget(text)
+        close = QPushButton(T("Schließen"))
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        dlg.exec()
+
+
+class PlannerPage(PlannerTabMixin, QWidget):
+    """Die Plugin-Seite. Pfad und Änderungsmerker liegen in STATE, damit ein Sprachwechsel sie nicht verliert."""
+
+    def __init__(self, api):
+        QWidget.__init__(self)
+        self.api = api
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.build_planner())
+
+    @property
+    def plan_path(self):
+        return STATE.get("path")
+
+    @plan_path.setter
+    def plan_path(self, value):
+        STATE["path"] = value
+
+    @property
+    def plan_dirty(self):
+        return STATE.get("dirty", False)
+
+    @plan_dirty.setter
+    def plan_dirty(self, value):
+        STATE["dirty"] = bool(value)
+
+    def showEvent(self, event):
+        """Beim Öffnen der Seite die Serverliste neu einlesen (sie kann sich in „Neuware“ geändert haben)."""
+        super().showEvent(event)
+        self.planner_page_shown()

@@ -1,15 +1,21 @@
-"""Aufbauplaner: Platzprüfung, Kabel, Prüfung, Netzplan, Stückliste, Ausfall-Simulation, Speichern/Laden
-und die Seite im Hauptfenster (Übernahme in die Serverliste, Bestand aus „Neuware“)."""
+"""Aufbauplaner-Plugin (docs/plugin-aufbauplaner): Platzprüfung, Kabel, Prüfung, Netzplan, Stückliste,
+Ausfall-Simulation, Speichern/Laden und die Plugin-Seite im Hauptfenster (Übernahme in die Serverliste, Bestand
+aus „Neuware“)."""
 import json
 import unittest
 from tests._support import qapp
 
 qapp()
-import bmc_steward.i18n as i18n
+import bmc_steward.i18n as i18n  # noqa: E402
 i18n.set_language("de")
 i18n.build_texts()
-from bmc_steward.planner import (Plan, compatible, through_port, col_index, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord,
-                                 port_label, port_name, vendor_of)
+from tests import _aufbauplaner  # noqa: E402
+
+_, planner, planner_tab, _texts = _aufbauplaner.package()
+(Plan, compatible, through_port, col_index, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord,
+ port_label, port_name, vendor_of) = (getattr(planner, n) for n in (
+    "Plan", "compatible", "through_port", "col_index", "col_name", "coord_name", "demo_plan", "netapp_demo_plan",
+    "parse_coord", "port_label", "port_name", "vendor_of"))
 
 INV = [{"key": "sn:A1", "name": "srv-a", "vendor": "dell", "model": "Dell iDRAC9", "serial": "A1"},
        {"key": "sn:B2", "name": "srv-b", "vendor": "hpe", "model": "HPE iLO 6", "serial": "B2"}]
@@ -376,16 +382,14 @@ class TestPathsAndPorts(unittest.TestCase):
 class TestPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from bmc_steward.main import Window
-        cls.w = Window()
+        cls.win, cls.w = _aufbauplaner.window()
 
     @classmethod
     def tearDownClass(cls):
-        cls.w.plan_dirty = cls.w.dirty = False
-        cls.w.close()
+        _aufbauplaner.close(cls.win, cls.w)
 
     def fill_list(self):
-        w = self.w
+        w = self.win
         w.table.setRowCount(0)
         for ip, host, sn, vendor in (("192.0.2.11", "srv-1", "SN1", "Dell iDRAC9"),
                                      ("192.0.2.12", "srv-2", "SN2", "HPE iLO 6")):
@@ -398,8 +402,9 @@ class TestPage(unittest.TestCase):
         from PyQt6.QtWidgets import QMessageBox
         w = self.w
         self.fill_list()
-        w.tabs.setCurrentIndex(w.tabs.indexOf(w.planner_page))
-        self.assertEqual(w.tabs.indexOf(w.planner_page), w.tabs.count() - 2)   # vor „Hilfe“
+        win = self.win
+        win.tabs.setCurrentIndex(win.tabs.indexOf(w))
+        self.assertEqual(win.tabs.indexOf(w), win.tabs.count() - 2)            # Plugin-Seite vor „Hilfe“
         self.assertEqual({d["name"] for d in w.plan.devs if d.get("inv")}, {"srv-1", "srv-2"})
         w.plan_dirty = False                                   # sonst fragt „Beispiel laden“ nach
         w.planner_demo()
@@ -410,15 +415,14 @@ class TestPage(unittest.TestCase):
         with mock.patch.object(QMessageBox, "exec", lambda box: box.setProperty("x", 1)), \
                 mock.patch.object(QMessageBox, "clickedButton", lambda box: box.buttons()[0]):
             w.planner_to_neuware()
-        self.assertEqual(w.tabs.currentIndex(), 1)
-        cells = {w.cell(r, 6): (w.cell(r, 2), w.cell(r, 5)) for r in range(w.table.rowCount())}
+        self.assertEqual(win.tabs.currentIndex(), 1)                         # zu „Neuware“ gewechselt
+        cells = {win.cell(r, 6): (win.cell(r, 2), win.cell(r, 5)) for r in range(win.table.rowCount())}
         self.assertEqual(cells["SN1"][0][:7], "10.9.0.")
         self.assertTrue(cells["SN1"][1].startswith("c04-u"))
-        self.assertEqual(w.table.rowCount(), 2)                # nichts doppelt angelegt
+        self.assertEqual(win.table.rowCount(), 2)              # nichts doppelt angelegt
 
     def test_library_double_click_and_delete(self):
         w = self.w
-        from bmc_steward.planner import Plan
         p = Plan()
         p.add_rack("X", 12)
         w.planner_set_plan(p, dirty=False)
@@ -508,7 +512,6 @@ class TestPage(unittest.TestCase):
     def test_floor_view_and_themes(self):
         from PyQt6.QtCore import Qt
         from PyQt6.QtTest import QTest
-        from bmc_steward import planner_tab
         w = self.w
         self.fill_list()
         w.planner_set_plan(demo_plan(w.planner_inventory()), dirty=False)
@@ -549,14 +552,14 @@ class TestPage(unittest.TestCase):
         # Design: folgt der Wahl des Programms (links unten), Zeichenflächen wechseln mit
         from bmc_steward import theme
         for choice in ("light", "dark"):
-            w.design.setCurrentIndex(w.design.findData(choice))
-            w.design_changed()
+            self.win.design.setCurrentIndex(self.win.design.findData(choice))
+            self.win.design_changed()
             self.assertEqual(w.planner_theme, choice)
             self.assertEqual(planner_tab.BG, planner_tab.THEMES[choice]["BG"])
             fc.grab()
             w.pl_canvas.grab()
-        w.design.setCurrentIndex(w.design.findData("auto"))
-        w.design_changed()
+        self.win.design.setCurrentIndex(self.win.design.findData("auto"))
+        self.win.design_changed()
         self.assertEqual(w.planner_theme, theme.system_scheme())
         w.plan_dirty = False
 
@@ -648,7 +651,6 @@ class TestPage(unittest.TestCase):
 
     def test_port_panel_connect_dialog_trace_and_participants(self):
         from unittest import mock
-        from bmc_steward import planner_tab
         w = self.w
         self.fill_list()
         p = Plan()
@@ -710,9 +712,8 @@ class TestPage(unittest.TestCase):
     def test_catalog_categories(self):
         """Katalog nach Kategorien gegliedert, beim Start alle eingeklappt; die Suche klappt nur vorübergehend
         auf, selbst Aufgeklapptes bleibt nach Änderungen am Plan offen."""
-        from bmc_steward.main import Window
-        from bmc_steward.planner import CATALOG
-        w = Window()
+        CATALOG = planner.CATALOG
+        win, w = _aufbauplaner.window()
         try:
             lib = w.pl_lib
             keys = [c.data(0, lib.CAT_KEY) for c in lib.categories()]
@@ -745,8 +746,7 @@ class TestPage(unittest.TestCase):
             leaf = next(it for it in lib.leaves() if it.data(0, 0x0100) == "cat:leaf")
             self.assertEqual(bytes(lib.mimeData([leaf]).data(lib.mimeTypes()[0])), b"cat:leaf")
         finally:
-            w.plan_dirty = w.dirty = False
-            w.close()
+            _aufbauplaner.close(win, w)
 
     def test_drop_device_on_floor_rack_and_save(self):
         """Ein Gerät lässt sich im Grundriss direkt auf ein Rack ziehen; „Speichern“ schreibt danach ohne
@@ -788,6 +788,135 @@ class TestPage(unittest.TestCase):
         w.pl_sim_btn.setChecked(False)
         self.assertIsNone(w.pl_canvas.sim)
         self.assertFalse(w.plan_dirty)                          # Simulation ändert den Plan nicht
+
+
+class TestPluginIntegration(unittest.TestCase):
+    """Das Plugin spricht nur über die Plugin-API mit dem Programm: Menüpunkt, Leuchte, Rückfrage beim Beenden,
+    Testlabor, Sprachwechsel; ohne Plugin hat BMC-Steward keinen Aufbauplaner mehr."""
+
+    def test_not_built_in_anymore(self):
+        import importlib.util
+        self.assertIsNone(importlib.util.find_spec("bmc_steward.planner"))
+        self.assertIsNone(importlib.util.find_spec("bmc_steward.planner_tab"))
+        self.assertNotIn("Aufbauplaner", i18n.TR)                  # Texte liegen im Plugin
+
+    def test_menu_lamp_and_close_request(self):
+        from unittest import mock
+        from PyQt6.QtWidgets import QMessageBox
+        from bmc_steward.sidenav import LAMP_ROLE, SECTION_ROLE
+        win, w = _aufbauplaner.window()
+        try:
+            i = win.tabs.indexOf(w)
+            item = win.tabs.menu.item(i)
+            self.assertEqual(item.text(), "Aufbauplaner")
+            self.assertEqual(item.data(SECTION_ROLE), "Plugins")
+            # Ausfall-Simulation: blaue Leuchte am Menüpunkt des Plugins
+            w.pl_sim_btn.setChecked(True)
+            self.assertEqual(item.data(LAMP_ROLE), planner_tab.PLAN_LAMP)
+            w.pl_sim_btn.setChecked(False)
+            self.assertIsNone(item.data(LAMP_ROLE))
+            # ungespeicherter Plan: „Abbrechen“ hält das Fenster offen
+            w.planner_set_plan(demo_plan([]), dirty=True)
+            cancel = lambda box: next(b for b in box.buttons() if b.text() == "Abbrechen")
+            with mock.patch.object(QMessageBox, "exec", lambda box: None), \
+                    mock.patch.object(QMessageBox, "clickedButton", cancel):
+                self.assertFalse(win.plugin_host.allow_close())
+                self.assertFalse(win.close())                       # Fenster bleibt offen
+            self.assertTrue(w.plan_dirty)
+            with mock.patch.object(QMessageBox, "exec", lambda box: None), \
+                    mock.patch.object(QMessageBox, "clickedButton",
+                                      lambda box: next(b for b in box.buttons() if b.text() == "Verwerfen")):
+                self.assertTrue(win.plugin_host.allow_close())
+        finally:
+            _aufbauplaner.close(win, w)
+
+    def test_broken_close_request_never_blocks(self):
+        from bmc_steward import plugins
+        host = plugins.Host()
+        host.hooks["close_request"].append((plugins.Plugin(_aufbauplaner.SRC), lambda: 1 / 0))
+        self.assertTrue(host.allow_close())
+
+    def test_to_testlab(self):
+        from unittest import mock
+        from PyQt6.QtWidgets import QMessageBox
+        win, w = _aufbauplaner.window()
+        try:
+            for ip, host, sn, vendor in (("192.0.2.21", "a", "SNA", "Dell iDRAC9"), ("192.0.2.22", "b", "SNB", "HPE iLO 6")):
+                vals = [""] * len(i18n.COLS)
+                vals[0], vals[5], vals[6] = ip, host, sn
+                win.add_row(vals, vendor)
+            w.planner_set_plan(demo_plan(w.planner_inventory()), dirty=False)
+            win.vbmc_fleet.setRowCount(0)
+            with mock.patch.object(QMessageBox, "exec", lambda box: None):
+                w.planner_to_lab()
+            self.assertEqual(win.tabs.currentIndex(), win.tabs.indexOf(win.vbmc_page))
+            self.assertEqual(win.vbmc_fleet.rowCount(), 2)
+            # läuft das Labor, bleibt es unangetastet
+            with mock.patch.object(type(win), "vbmc_running", lambda self: True), \
+                    mock.patch.object(QMessageBox, "information") as info:
+                w.planner_to_lab()
+            info.assert_called_once()
+            self.assertEqual(win.vbmc_fleet.rowCount(), 2)
+        finally:
+            _aufbauplaner.close(win, w)
+
+    def test_language_switch_keeps_plan(self):
+        from bmc_steward import main
+        win, w = _aufbauplaner.window()
+        try:
+            p = Plan()
+            p.add_rack("SW1", 24)
+            w.planner_set_plan(p, dirty=True)
+            w.plan_path = "/tmp/plan-sprachwechsel.json"
+            win.lang.setCurrentIndex(win.lang.findData("en"))
+            win.switch_language()
+            new = main.MAIN
+            self.assertIsNot(new, win)
+            pg = next(widget for plugin, widget in new.plugin_host.page_widgets if plugin.id == "aufbauplaner")
+            self.assertEqual(new.tabs.menu.item(new.tabs.indexOf(pg)).text(), "Rack planner")
+            self.assertEqual([r["name"] for r in pg.plan.racks], ["SW1"])
+            self.assertTrue(pg.plan_dirty)
+            self.assertEqual(pg.plan_path, "/tmp/plan-sprachwechsel.json")
+            self.assertEqual(pg.pl_bom.horizontalHeaderItem(0).text(), _texts.TR["Gruppe"][0])
+            new.lang.setCurrentIndex(new.lang.findData("de"))
+            new.switch_language()
+            _aufbauplaner.close(main.MAIN, next(widget for plugin, widget in main.MAIN.plugin_host.page_widgets
+                                                if plugin.id == "aufbauplaner"))
+        finally:
+            i18n.set_language("de")
+            _texts.set_lang("de")
+
+    def test_old_program_is_refused(self):
+        from unittest import mock
+        from bmc_steward import plugins
+        mod = _aufbauplaner.package()[0]
+        host = plugins.Host()
+        api = plugins.PluginAPI(plugins.Plugin(_aufbauplaner.install()), host)
+        with mock.patch.object(api, "app_version", "3.13.1"), self.assertRaises(RuntimeError):
+            mod.register(api)
+        self.assertEqual(host.pages, [])
+
+    def test_every_text_translated(self):
+        """Jeder T("…") des Plugins hat Englisch, Französisch und Schweizerdeutsch – im Plugin selbst oder (für
+        gemeinsame Wörter wie „Abbrechen“) im Programm; Platzhalter stimmen überein."""
+        import ast
+        import re
+        missing, bad = [], []
+        for f in sorted(_aufbauplaner.SRC.glob("*.py")):
+            for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+                if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "T" and node.args
+                        and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+                    t = node.args[0].value
+                    tr = _texts.TR.get(t) or i18n.TR.get(t)
+                    if not tr:
+                        missing.append(f"{f.name}: {t[:60]!r}")
+                        continue
+                    want = sorted(re.findall(r"\{[^}]*\}", t))
+                    bad += [f"{t[:40]!r} -> {x[:40]!r}" for x in tr if sorted(re.findall(r"\{[^}]*\}", x)) != want]
+        self.assertEqual(missing, [])
+        self.assertEqual(bad, [])
+        self.assertFalse([k for k, v in _texts.TR.items() if len(v) != 3 or not all(v)])
+        self.assertEqual(set(_texts.HELP), {"de", "en", "fr", "gsw"})
 
 
 if __name__ == "__main__":

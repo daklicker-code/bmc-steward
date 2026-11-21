@@ -32,7 +32,7 @@ Gerät erkannt.
 | ![UEFI-Einstellungen](docs/screenshot-3-uefi.png) | ![Dienste](docs/screenshot-4-services.png) |
 | **Mainboard-Tausch** | **UEFI-Konsole** |
 | ![Mainboard-Tausch](docs/screenshot-8-board.png) | ![UEFI-Konsole](docs/screenshot-5-console.png) |
-| **Aufbauplaner** | **Hilfe** |
+| **Aufbauplaner** (Plugin) | **Hilfe** |
 | ![Aufbauplaner](docs/screenshot-7-planner.png) | ![Hilfe](docs/screenshot-6-help.png) |
 
 </details>
@@ -74,7 +74,6 @@ der grüne Knopf.
 |---|---|
 | **Aufnahme** | Liest den Redfish-Baum eines echten Geräts streng lesend und speichert ihn geschwärzt (keine Seriennummern, Adressen, Zertifikate oder Schlüssel). Zwei Aufnahmen lassen sich vergleichen, z. B. vor und nach einem Firmware-Update. |
 | **Testlabor** | Virtuelle Dell-, HPE-, Lenovo- und Supermicro-BMCs (`tools/vbmc/`) zum Üben ohne Hardware: Loopback, virtueller Staging-Switch oder echtes LAN. |
-| **Aufbauplaner** | Plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt Hostnamen und BMC-Adressen an „Neuware“. Server lassen sich mit Netzteilen, Netzwerkkarten, Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken – per Rechtsklick auf Server oder Port; die Streckenansicht zeigt Karte und Transceiver an jedem Ende. Der Katalog ist nach Kategorien gegliedert (Racks, Server, Switches, Firewalls, Speicher, Patchpanels, Stromversorgung, Zubehör) und beim Start eingeklappt; Geräte lassen sich auch im Grundriss direkt auf ein Rack ziehen. Ziehen mit links auf freier Fläche verschiebt die Ansicht. |
 | **Hilfe** | Jeder Schritt und die Besonderheiten je Hersteller, mit Suche und Inhaltsverzeichnis. |
 
 ### Rund um die Seiten
@@ -93,6 +92,12 @@ der grüne Knopf.
   Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
   BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
   Nur Verbindungsaufbau, keine Anmeldung.
+  Fertiges Plugin **Aufbauplaner** ([`docs/plugin-aufbauplaner/`](docs/plugin-aufbauplaner/), bis 3.13 fest eingebaut,
+  seit 3.14 nur noch als Plugin): plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine
+  Stückliste und übergibt Hostnamen und BMC-Adressen an „Neuware“ oder die Server ans Testlabor. Server lassen sich mit
+  Netzteilen, Netzwerkkarten, Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken; Grundriss mit
+  Bodenplatten-Koordinaten, Ausfall-Simulation, Rückgängig. Ordner nach `<Datenordner>/plugins/aufbauplaner/`
+  kopieren, freigeben, neu starten; die Hilfe steht im Menü „Plan“ der Seite.
 
 ## Schutz vor Fehlbedienung
 

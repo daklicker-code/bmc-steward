@@ -5,7 +5,7 @@ wechselt mit, wenn das System umschaltet. Meldet das System nichts, gilt: Window
 Die Wahl steht in <Datenordner>/bmc-design.json (nur das Design, keine Zugangsdaten).
 
 Gezeichnet wird mit dem Qt-Stil „Fusion“, weil nur er Farbpalette und Stylesheet auf allen Systemen gleich
-umsetzt. Seiten mit eigener Zeichenfläche (Aufbauplaner, Konsole) fragen mit current() nach dem Design und
+umsetzt. Seiten mit eigener Zeichenfläche (Konsole, Plugins wie der Aufbauplaner) fragen mit current() nach dem Design und
 hängen sich mit on_change() an Wechsel.
 """
 import json

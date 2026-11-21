@@ -31,7 +31,6 @@ from .firmware_tab import FirmwareTabMixin
 from .users_tab import UsersTabMixin
 from .capture_tab import CaptureTabMixin
 from .vbmc_tab import VbmcTabMixin
-from .planner_tab import PlannerTabMixin
 from .bios_tab import BiosTabMixin
 from .dhcp_tab import DhcpTabMixin
 from .existing_tab import ExistingTabMixin
@@ -199,7 +198,7 @@ class RestoreDialog(QDialog):
 
 
 class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, VbmcTabMixin, BiosTabMixin, DhcpTabMixin,
-            ExistingTabMixin, ServicesTabMixin, PlannerTabMixin, QWidget):
+            ExistingTabMixin, ServicesTabMixin, QWidget):
     DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
 
     plugin_host = plugins.Host()                   # leer, bis __init__ die freigegebenen Plugins lädt
@@ -562,7 +561,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.vbmc_page = vbmc_page
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
         self.lab_tab = self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
-        self.plan_tab = self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
         self.plugin_host = plugins.Host(self)          # freigegebene Plugins: eigene Seiten im Bereich „Plugins“
         self.plugin_host.load()
         for n, (title, mark, widget) in enumerate(self.plugin_host.build_pages()):
@@ -699,8 +697,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs.currentChanged.connect(self.page_logged)
         self.tabs.currentChanged.connect(self.audit_page_shown)
         self.tabs.currentChanged.connect(
-            lambda i: self.planner_page_shown() if i == self.tabs.indexOf(self.planner_page) else None)
-        self.tabs.currentChanged.connect(
             lambda i: self.services_update_caps() if i == self.tabs.indexOf(self.services_page) else None)
         applog.watch(self)
         self.plugin_host.emit("window_ready")
@@ -709,7 +705,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
 
     def add_page_headers(self):
         """Kopf jeder Arbeitsseite: Bereich › Schritt als Pfad, darunter der Titel (wie im Entwurf). Konsole,
-        Aufbauplaner und Hilfe brauchen den Platz selbst und bekommen keinen."""
+        Plugin-Seiten und Hilfe brauchen den Platz selbst und bekommen keinen."""
         titles = {T("DHCP-Server"): T("DHCP-Server für das Staging-Netz"), T("Neuware"): T("Neuware einrichten"),
                   T("Bestandsserver"): T("Bestandsserver prüfen"), T("UEFI-Einstellungen"): T("UEFI-Einstellungen setzen"),
                   T("Dienste"): T("Dienste einrichten"), T("Benutzerkonten"): T("Benutzerkonten verwalten"),
@@ -1811,7 +1807,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             elif box.clickedButton() is not b_drop:
                 event.ignore()
                 return
-        if not self.planner_confirm_discard():
+        if not self.plugin_host.allow_close():  # z. B. ungespeicherter Plan im Aufbauplaner-Plugin
             event.ignore()
             return
         self.stop_scanner()
@@ -2219,7 +2215,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "bios_ref": self.bios_ref.currentText(), "bios_live": dict(self.bios_live),
             "bios_new": self.bios_wanted(), "bios_pending": dict(self.bios_pending),
             "services": self.export_services(),
-            "planner": self.plan.to_dict(), "planner_path": self.plan_path, "planner_dirty": self.plan_dirty,
         }
 
     def import_state(self, s):
@@ -2255,10 +2250,6 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.bios_refresh_ips()
         self.bios_ref.setEditText(s["bios_ref"])
         self.import_services(s["services"])
-        if s.get("planner"):
-            from .planner import Plan
-            self.planner_set_plan(Plan.from_dict(s["planner"]), dirty=s.get("planner_dirty", False))
-            self.plan_path = s.get("planner_path")
         self.validate_defaults()
         self.validate_range()
         self.update_count()

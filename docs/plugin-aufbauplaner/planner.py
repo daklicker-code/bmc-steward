@@ -1,4 +1,4 @@
-"""BMC-Steward: Aufbauplaner – Datenmodell ohne Oberfläche.
+"""Aufbauplaner-Plugin: Datenmodell ohne Oberfläche.
 
 Ein Plan besteht aus Racks (Name, Höhe in Höheneinheiten), Geräten (Server, Switches, Firewall, Patchpanel,
 PDU, Blindblende) und Kabeln zwischen zwei Ports. Ein Gerät steht in einem Rack ab Höheneinheit `pos`
@@ -12,12 +12,12 @@ Modell mit eigenen Ports) und Laufwerke (`drives`). Die Ports eines Servers sind
 seiner Netzwerkkarten; in die Käfige der Karten (SFP+, SFP28, QSFP28, FC) steckt man Transceiver (Feld `sfp`).
 
 Hier steht nur Logik (Platz prüfen, Kabel, Prüfung, Netzplan, Stückliste, Ausfall-Simulation, Speichern),
-damit sie sich ohne Fenster testen lässt. Die Seite selbst baut planner_tab.py.
+damit sie sich ohne Fenster testen lässt. Die Seite selbst baut page.py.
 """
 import ipaddress
 import re
 
-from .i18n import T
+from .texts import T
 
 FORMAT = "bmc-steward-plan"
 VERSION = 2                          # 2: Server mit Netzteilen, Netzwerkkarten und Laufwerken

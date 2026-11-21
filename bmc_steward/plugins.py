@@ -6,9 +6,11 @@ Ein Plugin ist ein Ordner unter <Datenordner>/plugins/<kennung>/ mit zwei Dateie
     plugin.py     def register(api): …
 
 `register(api)` bekommt ein PluginAPI-Objekt: eigene Seiten im Menü (Bereich „Plugins“), Ereignisse
-(Fenster fertig, Server fertig umgestellt, Lauf beendet, Programmende), das gemeinsame Protokoll, die
-Serverliste ohne Passwörter, einen eigenen, nur für den Benutzer lesbaren Datenordner und Konsolen-Sitzungen,
-die als Reiter im Monitor links oben erscheinen (api.add_console, Terminal-Widget über api.terminal).
+(Fenster fertig, Server fertig umgestellt, Lauf beendet, Rückfrage vor dem Beenden, Programmende), das
+gemeinsame Protokoll, die Serverliste ohne Passwörter (lesen und Hostname/Adressen eintragen), einen eigenen,
+nur für den Benutzer lesbaren Datenordner, Konsolen-Sitzungen, die als Reiter im Monitor links oben erscheinen
+(api.add_console, Terminal-Widget über api.terminal), die Leuchte am eigenen Menüpunkt und Server fürs
+Testlabor (ab 3.14.0: put_servers, set_lamp, testlab_state, testlab_load, Ereignis close_request).
 
 Sicherheit: Ein Plugin ist Python-Code und läuft mit allen Rechten des Programms. Deshalb lädt BMC-Steward
 nichts von selbst:
@@ -33,7 +35,7 @@ from . import i18n
 from .i18n import T
 
 API_VERSION = 1
-EVENTS = ("window_ready", "server_done", "run_finished", "closing")
+EVENTS = ("window_ready", "server_done", "run_finished", "close_request", "closing")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
 MAX_BYTES = 20 * 1024 * 1024        # größere Plugin-Ordner werden nicht gelesen
 WINDOWS = sys.platform.startswith("win")
@@ -249,7 +251,9 @@ class PluginAPI:
         LOG.debug(f"[{self.name}] {text}")
 
     def on(self, event, fn):
-        """Ruft fn bei einem Ereignis auf: window_ready(), server_done(ip), run_finished(code), closing()."""
+        """Ruft fn bei einem Ereignis auf: window_ready(), server_done(ip), run_finished(code), closing().
+        close_request() kommt, bevor das Fenster geschlossen wird; gibt fn False zurück, bleibt es offen
+        (z. B. nach „Abbrechen“ in einer eigenen Rückfrage zu ungespeicherten Daten)."""
         if event not in EVENTS:
             raise ValueError(T("unbekanntes Ereignis {0}, möglich: {1}").format(event, ", ".join(EVENTS)))
         if not callable(fn):
@@ -283,17 +287,95 @@ class PluginAPI:
 
     def servers(self):
         """Serverliste von „Neuware“ ohne Passwörter: Liste von dicts mit ip, new_ip, mask, gateway, hostname,
-        serial und done."""
+        serial, done, vendor (erkannter Hersteller/Modell als Text, sonst "") und row (Zeile, für put_servers)."""
         w = self._host.window
         if w is None or not hasattr(w, "table"):
             return []
         out = []
+        vcol = getattr(w, "vendor_col", None)
         for r in range(w.table.rowCount()):
             vals = [w.cell(r, c) for c in range(len(i18n.COLS))]
-            if vals[0] or vals[2] or vals[5]:
+            if vals[0] or vals[2] or vals[5] or vals[6]:
                 out.append({"ip": vals[0], "new_ip": vals[2], "mask": vals[3], "gateway": vals[4],
-                            "hostname": vals[5], "serial": vals[6], "done": w.is_done(r)})
+                            "hostname": vals[5], "serial": vals[6], "done": w.is_done(r),
+                            "vendor": w.cell(r, vcol) if vcol is not None else "", "row": r})
         return out
+
+    def put_servers(self, entries, show=True):
+        """Trägt Hostname und Adressen in die Serverliste von „Neuware“ ein. `entries`: dicts mit row (Zeile aus
+        servers(), None = neue Zeile), new_ip, mask, gateway, hostname, serial (nur für neue Zeilen). Fehlende
+        Schlüssel lassen die Spalte unverändert. Geändert wird am Server erst beim Lauf in „Neuware“.
+        Wechselt danach zu „Neuware“ (show=False: nicht). Gibt (aktualisiert, neu) zurück."""
+        from PyQt6.QtWidgets import QTableWidgetItem
+        w = self._host.window
+        if w is None or not hasattr(w, "table"):
+            return 0, 0
+        cols = {"new_ip": 2, "mask": 3, "gateway": 4, "hostname": 5}
+        updated = added = 0
+        for e in entries:
+            vals = {c: str(e[k]) for k, c in cols.items() if e.get(k) is not None}
+            r = e.get("row")
+            if not isinstance(r, int) or not 0 <= r < w.table.rowCount():
+                values = [""] * len(i18n.COLS)
+                values[1] = w.cur_pass.text()
+                for c, val in vals.items():
+                    values[c] = val
+                values[6] = str(e.get("serial") or "")
+                w.add_row(values)
+                added += 1
+                continue
+            for c, val in vals.items():
+                item = w.table.item(r, c)
+                if item is None:
+                    w.table.setItem(r, c, QTableWidgetItem(val))
+                else:
+                    item.setText(val)
+            updated += 1
+        w.update_count()
+        w.touch()
+        if show and hasattr(w, "new_page"):
+            w.tabs.setCurrentIndex(w.tabs.indexOf(w.new_page))
+        return updated, added
+
+    def testlab_state(self):
+        """{"running": Testlabor läuft, "servers": Zahl der Serverzeilen im Testlabor}."""
+        w = self._host.window
+        if w is None or not hasattr(w, "vbmc_fleet"):
+            return {"running": False, "servers": 0}
+        return {"running": bool(w.vbmc_running()), "servers": w.vbmc_fleet.rowCount()}
+
+    def testlab_load(self, servers, status="", show=True):
+        """Ersetzt die Serverzeilen des Testlabors. `servers`: dicts mit vendor (dell, hpe, lenovo oder smc),
+        optional serial und model; andere Hersteller werden übersprungen. Nicht, solange das Labor läuft
+        (dann False). Wechselt danach zum Testlabor (show=False: nicht)."""
+        w = self._host.window
+        if w is None or not hasattr(w, "vbmc_fleet") or w.vbmc_running():
+            return False
+        w.vbmc_fleet.setRowCount(0)
+        for s in servers:
+            if s.get("vendor") in ("dell", "hpe", "lenovo", "smc"):
+                w.vbmc_add_server(s["vendor"], {"serial": s.get("serial") or None, "model": s.get("model") or None})
+        w.vbmc_mode_changed()
+        if status:
+            w.vbmc_set_status(str(status))
+        if show:
+            w.tabs.setCurrentIndex(w.tabs.indexOf(w.vbmc_page))
+        return True
+
+    def set_lamp(self, color=None):
+        """Leuchte am Menüpunkt der eigenen Seite(n) ein- (Farbe, z. B. "#3b8beb") oder ausschalten (None)."""
+        w = self._host.window
+        tabs = getattr(w, "tabs", None)
+        if tabs is None:
+            return
+        for plugin, widget in self._host.page_widgets:
+            if plugin is self._plugin:
+                try:
+                    i = tabs.indexOf(widget)
+                except RuntimeError:                # Seite schon abgebaut
+                    continue
+                if i >= 0:
+                    tabs.setLamp(i, color)
 
 
 class Host:
@@ -305,6 +387,7 @@ class Host:
         self.pages = []
         self.plugins = []
         self.consoles = []           # ConsoleHandle der Plugins, Reihenfolge = Reihenfolge im Monitor
+        self.page_widgets = []       # (Plugin, QWidget) der gebauten Seiten, für set_lamp
 
     def load(self):
         """Freigegebene Plugins laden und register(api) aufrufen. Gibt die Liste aller gefundenen zurück."""
@@ -352,6 +435,7 @@ class Host:
                 LOG.debug(traceback.format_exc())
                 continue
             out.append((title, mark, widget))
+            self.page_widgets.append((plugin, widget))
         return out
 
     def console_sessions(self):
@@ -393,6 +477,19 @@ class Host:
             except RuntimeError:
                 pass
         return done
+
+    def allow_close(self):
+        """Fragt alle Plugins (Ereignis close_request), ob das Fenster schließen darf. Ein Fehler zählt als Ja,
+        damit ein kaputtes Plugin das Beenden nie verhindert."""
+        from .applog import LOG
+        for plugin, fn in list(self.hooks.get("close_request", ())):
+            try:
+                if fn() is False:
+                    return False
+            except Exception as e:          # noqa: BLE001
+                LOG.info(T("Plugin {0}: Fehler bei {1}: {2}").format(plugin.name, "close_request", _short(e)))
+                LOG.debug(traceback.format_exc())
+        return True
 
     def emit(self, event, *args):
         """Ereignis an alle Plugins; ein Fehler betrifft nur das eine Plugin."""

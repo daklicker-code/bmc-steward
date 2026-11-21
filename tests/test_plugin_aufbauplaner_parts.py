@@ -1,4 +1,4 @@
-"""Aufbauplaner: Server-Komponenten (Netzteile, Netzwerkkarten mit Transceivern, Laufwerke), ihre Anzeige in der
+"""Aufbauplaner-Plugin: Server-Komponenten (Netzteile, Netzwerkkarten mit Transceivern, Laufwerke), ihre Anzeige in der
 Streckenansicht, das Bearbeitungsmenü per Rechtsklick und das Verschieben der Ansicht mit der linken Maustaste."""
 import json
 import unittest
@@ -10,7 +10,10 @@ qapp()
 import bmc_steward.i18n as i18n  # noqa: E402
 i18n.set_language("de")
 i18n.build_texts()
-from bmc_steward.planner import Plan, drive_bays, sfp_fits  # noqa: E402
+from tests import _aufbauplaner  # noqa: E402
+
+_, planner, planner_tab, _texts = _aufbauplaner.package()
+Plan, drive_bays, sfp_fits = planner.Plan, planner.drive_bays, planner.sfp_fits
 
 
 def rig():
@@ -172,13 +175,11 @@ class TestComponents(unittest.TestCase):
 class TestPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from bmc_steward.main import Window
-        cls.w = Window()
+        cls.win, cls.w = _aufbauplaner.window()
 
     @classmethod
     def tearDownClass(cls):
-        cls.w.plan_dirty = cls.w.dirty = False
-        cls.w.close()
+        _aufbauplaner.close(cls.win, cls.w)
 
     def setUp(self):
         self.p, self.r, self.srv, self.leaf, self.oob = rig()
@@ -235,7 +236,6 @@ class TestPage(unittest.TestCase):
         self.assertNotIn("sfp", w.plan.port(w.plan.dev(sid), "n2"))
 
     def test_trace_shows_nic_and_sfp(self):
-        from bmc_steward import planner_tab
         w = self.w
         sid, lid = self.srv["id"], self.leaf["id"]
         w.plan.connect(sid, "n1", lid, "p3")
@@ -248,7 +248,6 @@ class TestPage(unittest.TestCase):
         self.assertIn("Transceiver: –", seen["t"])                    # Leaf-Port ohne Modul
 
     def test_components_dialog(self):
-        from bmc_steward import planner_tab
         w = self.w
         sid = self.srv["id"]
         dlg = planner_tab.ComponentsDialog(w, w.plan, sid, w.planner_changed)
@@ -286,7 +285,7 @@ class TestPage(unittest.TestCase):
         from PyQt6.QtCore import QPoint, Qt
         from PyQt6.QtTest import QTest
         w = self.w
-        w.tabs.setCurrentIndex(w.tabs.indexOf(w.planner_page))
+        self.win.tabs.setCurrentIndex(self.win.tabs.indexOf(w))
         for _ in range(4):
             w.plan.add_rack()
         w.planner_refresh()

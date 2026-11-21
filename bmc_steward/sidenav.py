@@ -20,7 +20,6 @@ SECTION_ROLE = Qt.ItemDataRole.UserRole + 3     # Überschrift über dem Punkt (
 LAMP_ROLE = Qt.ItemDataRole.UserRole + 4        # Farbe der Leuchte rechts („hier läuft gerade etwas“), sonst leer
 HEAD_H, ROW_H = 22, 31
 LAB_LAMP = "#f2c200"         # Leuchte „Testlabor“: virtuelle Server laufen
-PLAN_LAMP = "#3b8beb"        # Leuchte „Aufbauplaner“: Ausfall-Simulation läuft
 
 
 class AccentDelegate(QStyledItemDelegate):

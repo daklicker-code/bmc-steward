@@ -29,7 +29,7 @@ iLO 3/4 via RIBCL), **Supermicro** and **Lenovo XCC** – mixed lists are fine, 
 | ![UEFI settings](docs/screenshot-3-uefi.png) | ![Services](docs/screenshot-4-services.png) |
 | **Board replacement** | **UEFI console** |
 | ![Board replacement](docs/screenshot-8-board.png) | ![UEFI console](docs/screenshot-5-console.png) |
-| **Rack planner** | **Help** |
+| **Rack planner** (plugin) | **Help** |
 | ![Rack planner](docs/screenshot-7-planner.png) | ![Help](docs/screenshot-6-help.png) |
 
 </details>
@@ -71,7 +71,6 @@ the green button.
 |---|---|
 | **Capture** | Reads the Redfish tree of a real device strictly read-only and saves it redacted (no serial numbers, addresses, certificates or keys). Two captures can be compared, e.g. before and after a firmware update. |
 | **Test lab** | Virtual Dell, HPE, Lenovo and Supermicro BMCs (`tools/vbmc/`) for practising without hardware: loopback, a virtual staging switch or the real LAN. |
-| **Rack planner** | Plans racks, cabling and addresses, checks redundancy and PDU load, produces a bill of materials and hands hostnames and BMC addresses to “New hardware”. Servers can be fitted with power supplies, network cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives – by right-clicking a server or port; the path view shows card and transceiver at each end. The catalogue is grouped into categories (racks, server, switches, firewalls, storage, patch panels, power, accessories), collapsed at start; devices can also be dropped straight onto a rack on the floor plan. Dragging with the left button on free space pans the view. |
 | **Help** | Every step and the vendor specifics, with search and table of contents. |
 
 ### Around the pages
@@ -90,6 +89,12 @@ the green button.
   Ready-made plugin **Port scan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): checks open TCP ports (presets for
   BMC and server services, optionally IPMI via UDP 623 and banners) on addresses, networks or the server list, with CSV export.
   Connection attempts only, no login.
+  Ready-made plugin **Rack planner** ([`docs/plugin-aufbauplaner/`](docs/plugin-aufbauplaner/), built in up to 3.13,
+  only available as a plugin since 3.14): plans racks, cabling and addresses, checks redundancy and PDU load, produces
+  a bill of materials and hands hostnames and BMC addresses to “New hardware” or the servers to the test lab. Servers
+  can be fitted with power supplies, network cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives; floor plan with
+  tile coordinates, failure simulation, undo. Copy the folder to `<data folder>/plugins/aufbauplaner/`, approve it,
+  restart; its help is in the page's “Plan” menu.
 
 ## Built to forgive mistakes
 
@@ -219,7 +224,7 @@ python3 bmc-steward.py
 
 The built-in help (menu entry “Help”) explains every step and the differences between the vendors.
 
-The **log** below the server list is the same for the whole program, test lab included. It fills as soon as the program starts and records the messages of the runs – never passwords, not even at “Debug” (a test drives real runs against virtual BMCs of every vendor and checks this). “Info” (default) shows what was done and the results; the UI chatter (buttons, ticks, selections, tabs, page changes) and the rack planner's room messages appear only at “Debug”, together with technical details. The **Log** button opens it as a text file in your default editor.
+The **log** below the server list is the same for the whole program, test lab included. It fills as soon as the program starts and records the messages of the runs – never passwords, not even at “Debug” (a test drives real runs against virtual BMCs of every vendor and checks this). “Info” (default) shows what was done and the results; the UI chatter (buttons, ticks, selections, tabs, page changes) appears only at “Debug”, together with technical details. The **Log** button opens it as a text file in your default editor.
 
 ## CSV format
 

@@ -54,6 +54,16 @@ def main():
         fleet.start(b)
         bmcs[idx] = (v, f"127.0.0.1:{b._redfish[0].socket.getsockname()[1]}", b)
 
+    # Aufbauplaner-Plugin aus docs/ installieren und freigeben (Bild 7 zeigt seine Seite)
+    import shutil
+    from bmc_steward import plugins
+    dst = plugins.plugin_dir() / "aufbauplaner"
+    shutil.copytree(Path(__file__).resolve().parent.parent / "docs" / "plugin-aufbauplaner", dst,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    for q in [dst.parent, dst, *dst.rglob("*")]:
+        q.chmod(0o700 if q.is_dir() else 0o600)
+    plugins.save_state({"aufbauplaner": plugins.digest(dst)})
+
     from bmc_steward.main import Window
     w = Window()
     w.resize(*SIZE)
@@ -225,13 +235,15 @@ def main():
     page("Hilfe")
     shot("screenshot-6-help.png")
 
-    page("Aufbauplaner")
-    w.planner_demo()
+    planner = next(widget for plugin, widget in w.plugin_host.page_widgets if plugin.id == "aufbauplaner")
+    w.tabs.setCurrentIndex(w.tabs.indexOf(planner))
+    pump(0.4)
+    planner.planner_demo()
     pump(1.0)
     shot("screenshot-7-planner.png")
 
     w.dirty = False
-    w.plan_dirty = False
+    planner.plan_dirty = False
     os._exit(0)                                     # virtuelle BMCs nicht einzeln herunterfahren
 
 
