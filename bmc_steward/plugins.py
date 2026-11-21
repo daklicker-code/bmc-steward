@@ -448,6 +448,7 @@ class Host:
             LOG.info(T("Plugins abgeschaltet (BMC_STEWARD_NO_PLUGINS)"))
             return []
         enabled, off = load_state(), load_off()
+        self.enabled, self.off = enabled, off
         self.plugins = discover()
         for p in self.plugins:
             text, ok = p.status(enabled, off)
@@ -470,6 +471,11 @@ class Host:
             p.loaded = True
             LOG.info(T("Plugin {0} {1} geladen").format(p.name, p.version))
         return self.plugins
+
+    def changed(self):
+        """Freigegebene Plugins, die seit der Freigabe geändert wurden und deshalb nicht geladen sind."""
+        enabled = getattr(self, "enabled", {})
+        return [p for p in self.plugins if not p.problem and not p.builtin and p.id in enabled and enabled[p.id] != p.digest]
 
     def build_pages(self):
         """[(Titel, Symbol, QWidget)] der Plugin-Seiten; fehlerhafte Seiten fallen weg."""

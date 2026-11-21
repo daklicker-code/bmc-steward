@@ -302,7 +302,7 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
   nach dem Rollout löschen.
 - Plugins sind Python-Code mit allen Rechten des Programms. Nichts wird von selbst geladen: Jedes Plugin muss
   einzeln freigegeben werden, das Tool merkt sich dabei einen SHA-256-Fingerabdruck aller Dateien und lädt das
-  Plugin nach jeder Änderung erst nach erneuter Freigabe. Unter Linux bleiben Plugins in Ordnern, die andere
+  Plugin nach jeder Änderung erst nach erneuter Freigabe (beim Start nennt ein Hinweis, mit OK zu bestätigen, solche geänderten und deaktivierten Plugins). Unter Linux bleiben Plugins in Ordnern, die andere
   Benutzer beschreiben dürfen, gesperrt. `BMC_STEWARD_NO_PLUGINS=1` startet ohne Plugins.
 
 ## Version prüfen

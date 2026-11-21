@@ -297,7 +297,7 @@ for such devices automatically and notes it in the log.
   the rollout.
 - Plugins are Python code with all the rights of the program. Nothing is loaded by itself: each plugin must be
   approved individually; the tool remembers a SHA-256 fingerprint of all its files and loads the plugin after any
-  change only once it has been approved again. On Linux, plugins in folders that other users may write to stay
+  change only once it has been approved again (at start a notice, confirmed with OK, names such changed and disabled plugins). On Linux, plugins in folders that other users may write to stay
   blocked. `BMC_STEWARD_NO_PLUGINS=1` starts without plugins.
 
 ## Verify a release

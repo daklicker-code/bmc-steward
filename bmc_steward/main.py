@@ -703,6 +703,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             lambda i: self.services_update_caps() if i == self.tabs.indexOf(self.services_page) else None)
         applog.watch(self)
         self.plugin_host.emit("window_ready")
+        if self.plugin_host.changed():                  # Hinweis erst, wenn das Fenster steht
+            QTimer.singleShot(0, self.warn_changed_plugins)
         w, h = self.width(), self.height()
         LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
 
@@ -746,6 +748,19 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.design.setCurrentIndex(max(0, self.design.findData(theme.load_choice())))
         if dlg.plugins_changed:                 # Plugins werden nur beim Start geladen
             self.ask_restart()
+
+    def warn_changed_plugins(self):
+        """Hinweis (nur OK): freigegebene Plugins wurden geändert und sind deshalb deaktiviert. Gibt die Namen zurück."""
+        names = [p.name for p in self.plugin_host.changed()]
+        if names:
+            LOG.info(T("Geänderte Plugins deaktiviert: {0}").format(", ".join(names)))
+            QMessageBox.warning(
+                self, T("Plugin geändert"),
+                T("Diese Plugins wurden nach ihrer Freigabe geändert und sind deshalb deaktiviert:\n\n{0}\n\n"
+                  "Wenn die Änderung von dir stammt oder du der Quelle vertraust, gib das Plugin unter ⚙ → „Plugins“ "
+                  "erneut frei.").format("\n".join("• " + n for n in names)),
+                QMessageBox.StandardButton.Ok)
+        return names
 
     def ask_restart(self):
         """Nach geänderten Plugin-Freigaben fragen, ob BMC-Steward gleich neu starten soll. True = Neustart läuft."""

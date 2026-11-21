@@ -355,6 +355,43 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestChangedPluginNotice(Base):
+    """Ein nach der Freigabe geändertes Plugin wird nicht geladen – darauf weist ein Hinweis mit OK hin."""
+
+    def test_host_reports_changed(self):
+        d = self.make("eins")
+        self.make("zwei")
+        self.approve("eins", "zwei")
+        (d / "plugin.py").write_text(GOOD + "\n# geändert\n")
+        host = plugins.Host()
+        host.load()
+        self.assertEqual([p.id for p in host.changed()], ["eins"])
+
+    def test_window_shows_notice_with_ok(self):
+        from bmc_steward.main import Window
+        d = self.make("eins")
+        self.approve("eins")
+        (d / "plugin.py").write_text(GOOD + "\n# geändert\n")
+        with patch.object(QMessageBox, "warning", return_value=QMessageBox.StandardButton.Ok) as warn:
+            w = Window()
+            self.addCleanup(lambda: (setattr(w, "dirty", False), w.close()))
+            self.assertEqual(w.warn_changed_plugins(), ["Eins"])
+        args = warn.call_args[0]
+        self.assertIn("Eins", args[2])
+        self.assertEqual(warn.call_args[0][3] if len(args) > 3 else QMessageBox.StandardButton.Ok,
+                         QMessageBox.StandardButton.Ok)
+
+    def test_no_notice_without_changes(self):
+        from bmc_steward.main import Window
+        self.make("eins")
+        self.approve("eins")
+        with patch.object(QMessageBox, "warning") as warn:
+            w = Window()
+            self.addCleanup(lambda: (setattr(w, "dirty", False), w.close()))
+            self.assertEqual(w.warn_changed_plugins(), [])
+        warn.assert_not_called()
+
+
 class TestRestartAfterApproval(Base):
     """Nach einer geänderten Freigabe fragt das Programm, ob es neu starten soll."""
 
