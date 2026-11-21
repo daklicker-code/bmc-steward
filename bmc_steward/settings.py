@@ -4,7 +4,7 @@ Alle Vorlieben an einem Ort, gespeichert in <Datenordner>/bmc-einstellungen.json
 Benutzer lesbar, ohne Passwörter): Darstellung (Schriftart, Schriftgröße, Design), Protokoll (Stufe beim
 Start, fortlaufende Protokolldatei, Aufbewahrung, Zeilen im Speicher), Systemaudit (Auslesen bei Auswahl,
 Ablageordner, Vorlagen für Betreff und Text der E-Mail), E-Mail-Versand (SMTP) und Experteneinstellungen
-(Kontroll-Wartezeit nach dem Umstellen, Zeitlimit für BMC-Anfragen). Das SMTP-Passwort liegt nie in der Datei,
+(Kontroll-Wartezeit nach dem Umstellen, Zeitlimit für BMC-Anfragen) und die Freigabe von Plugins. Das SMTP-Passwort liegt nie in der Datei,
 höchstens im System-Schlüsselbund.
 """
 import json
@@ -301,6 +301,11 @@ class SettingsDialog(QDialog):
         f.addRow(T("Zeitlimit für BMC-Anfragen"), to)
         self.widgets["http_timeout"] = to
 
+        # Plugins: Freigaben je Plugin (eigene Datei bmc-plugins.json, siehe plugins.py)
+        from . import plugins
+        self.plugin_page = plugins.settings_page()
+        tabs.addTab(self.plugin_page, T("Plugins"))
+
         lay = QVBoxLayout(self)
         lay.addWidget(tabs, 1)
         info = QLabel(T("Gespeichert in {0}").format(settings_file()))
@@ -344,6 +349,7 @@ class SettingsDialog(QDialog):
 
     def save(self):
         s = save(self.values())
+        self.plugin_page.apply(self)
         theme.save_choice(self.design.currentData() or "auto")
         if self.app is not None:
             theme.apply(self.app, self.design.currentData() or "auto")

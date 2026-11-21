@@ -62,7 +62,7 @@ the green button.
 |---|---|
 | **Board replacement** | Restores one server after a parts replacement, in five steps. Scenarios: system board with BMC · BMC only (replaced or reset to factory defaults) · processor board only · whole server replaced by a spare. “Check” shows what the board reports (serial number, type); enter label values only if they differ. **HPE iLO 5/6:** serial number and product ID from the chassis label and the iLO licence are set again. Network services and UEFI settings come from the backup of the old board, hostname and address go to “New hardware”. A spare keeps its own serial number. Advice per vendor (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **System audit** | A server's audit sheet as a PDF (A4 landscape): reads, read only, manufacturer, model, serial number plus memory, processors, power supplies and drives with part and serial numbers. Adds a checklist, a remark and a signature field; everything can be edited by hand. Several servers at once as one PDF (one sheet per server); store staff members once (optionally e-mail, phone, address, note) and then just choose them. Sending by e-mail (SMTP or your own mail program). Open as PDF, print, inventory as Excel/CSV, audit as JSON, automatic filing of every PDF, QR code with the serial number on the sheet. |
-| **Settings (⚙)** | Font and size, theme, log (level, continuous log file, retention), system audit (read on selection, PDF folder, mail templates), e-mail sending (SMTP) and expert settings (check wait time, time limit for BMC requests). Servers from “New hardware” and “Existing servers” in a selection list, also directly via “System audit …” from “New hardware”, “Existing servers” and “UEFI console”. |
+| **Settings (⚙)** | Font and size, theme, log (level, continuous log file, retention), system audit (read on selection, PDF folder, mail templates), e-mail sending (SMTP), expert settings (check wait time, time limit for BMC requests) and plugin approval. Servers from “New hardware” and “Existing servers” in a selection list, also directly via “System audit …” from “New hardware”, “Existing servers” and “UEFI console”. |
 | **UEFI console** | A server's UEFI/BIOS through the BMC: embedded HTML5 console, text console (SOL/SSH) or default browser. On-screen keyboard with vendor setup keys, “type text”, screenshots, full screen and automatic reconnect. “Boot into UEFI setup” restarts the server straight into the setup, after the self-protection check. |
 
 ### Tools
@@ -83,6 +83,8 @@ the green button.
   server list, also straight from Excel.
 - **Tooltips** on every field explain what it does and what to watch out for.
 - If an optional package is missing, the page concerned shows the matching install command.
+- **Plugins** extend the tool with your own pages and workflows: a folder with `plugin.json` and `plugin.py` under
+  `<data folder>/plugins/`, approved one by one under ⚙ → “Plugins”. Example: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
 
 ## Built to forgive mistakes
 
@@ -279,6 +281,10 @@ for such devices automatically and notes it in the log.
   e.g. an encrypted drive.
 - A saved list contains passwords only if you choose so, and then in plain text. Delete such a file after
   the rollout.
+- Plugins are Python code with all the rights of the program. Nothing is loaded by itself: each plugin must be
+  approved individually; the tool remembers a SHA-256 fingerprint of all its files and loads the plugin after any
+  change only once it has been approved again. On Linux, plugins in folders that other users may write to stay
+  blocked. `BMC_STEWARD_NO_PLUGINS=1` starts without plugins.
 
 ## Verify a release
 

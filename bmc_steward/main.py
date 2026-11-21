@@ -37,7 +37,7 @@ from .dhcp_tab import DhcpTabMixin
 from .existing_tab import ExistingTabMixin
 from .services_tab import ServicesTabMixin
 from .scanner import ScannerDialog
-from . import applog, selfguard, settings, theme, trust, vault
+from . import applog, plugins, selfguard, settings, theme, trust, vault
 from .applog import LOG, LevelCombo, LogLabel, LogView
 
 
@@ -201,6 +201,8 @@ class RestoreDialog(QDialog):
 class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, VbmcTabMixin, BiosTabMixin, DhcpTabMixin,
             ExistingTabMixin, ServicesTabMixin, PlannerTabMixin, QWidget):
     DEFAULT_SIZE = (1680, 980)           # Standardgröße des Fensters
+
+    plugin_host = plugins.Host()                   # leer, bis __init__ die freigegebenen Plugins lädt
 
     @classmethod
     def default_size(cls):
@@ -561,6 +563,10 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.deps_footers.append(deps.attach(vbmc_page, "vbmc"))
         self.lab_tab = self.tabs.addTab(vbmc_page, T("Testlabor"), mark="⚗", scroll=True)
         self.plan_tab = self.tabs.addTab(self.build_planner(), T("Aufbauplaner"), mark="▦")
+        self.plugin_host = plugins.Host(self)          # freigegebene Plugins: eigene Seiten im Bereich „Plugins“
+        self.plugin_host.load()
+        for n, (title, mark, widget) in enumerate(self.plugin_host.build_pages()):
+            self.tabs.addTab(widget, title, mark=mark, section=T("Plugins") if n == 0 else None)
         help_page = QWidget()                      # Suche, Inhaltsverzeichnis und Text, darunter das animierte Logo
         hl = QVBoxLayout(help_page)
         hl.setContentsMargins(0, 0, 0, 0)
@@ -632,7 +638,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         settings_btn.setFixedWidth(34)
         settings_btn.setAccessibleName(T("Einstellungen"))
         settings_btn.setToolTip(T("Einstellungen") + ": " + T("Schriftart und -größe, Design, Protokoll, "
-                                                             "Systemaudit, E-Mail-Versand und Experteneinstellungen."))
+                                                             "Systemaudit, E-Mail-Versand, Experteneinstellungen und Plugins."))
         settings_btn.clicked.connect(self.open_settings)
         self.settings_btn = settings_btn
         tools = QGridLayout()                      # 2 x 2 statt vier abgeschnittener Knöpfe in einer Reihe
@@ -697,6 +703,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.tabs.currentChanged.connect(
             lambda i: self.services_update_caps() if i == self.tabs.indexOf(self.services_page) else None)
         applog.watch(self)
+        self.plugin_host.emit("window_ready")
         w, h = self.width(), self.height()
         LOG.debug(T("Fenster aufgebaut ({0} × {1}), Sprache {2}").format(w, h, i18n.LANG))
 
@@ -1239,6 +1246,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                 self.table.blockSignals(False)
                 break
         self.update_count()
+        self.plugin_host.emit("server_done", ip)
         if hasattr(self, "con_pws"):                    # UEFI-Konsole: neue Adresse samt neuem Administrator anbieten
             self.console_refresh_ips()
 
@@ -1920,6 +1928,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.stop.setEnabled(False)
         self.table.setEnabled(True)
         self.status.setText(T("Fertig ohne Fehler") if code == 0 else T('Beendet mit Fehlern (Code {0})').format(code))
+        self.plugin_host.emit("run_finished", code)
         if code == 0 and not self.dry.isChecked() and self.clear_pass_after.isChecked():
             self.cur_pass.clear()
             self.new_pass.clear()
@@ -2386,6 +2395,7 @@ def run():
     applog.install(app)
     app.aboutToQuit.connect(lambda: MAIN.stop_scanner())
     code = app.exec()
+    MAIN.plugin_host.emit("closing")
     MAIN.stop_scanner()
     LOG.info(T("BMC-Steward beendet"))
     return code

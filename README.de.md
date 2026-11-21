@@ -65,7 +65,7 @@ der grüne Knopf.
 |---|---|
 | **Mainboard-Tausch** | Bringt einen Server nach einem Teiletausch in fünf Schritten wieder auf den alten Stand. Szenarien: Systemplatine mit BMC · nur BMC (getauscht oder auf Werkseinstellungen) · nur Prozessorplatine · ganzer Server durch Ersatzgerät. „Prüfen“ zeigt, was das Board meldet (Seriennummer, Typ); Werte vom Aufkleber nur bei Abweichung eintragen. **HPE iLO 5/6:** Seriennummer und Produkt-ID vom Gehäuse-Aufkleber und die iLO-Lizenz werden neu gesetzt. Netzwerkdienste und UEFI-Einstellungen kommen aus der Sicherung des alten Boards, Hostname und Adresse gehen an „Neuware“. Ein Ersatzgerät behält seine Seriennummer. Hinweise je Hersteller (Dell Easy Restore, Lenovo OneCLI/FoD, Supermicro SUM, HPE RBSU). |
 | **Systemaudit** | Audit-Blatt eines Servers als PDF (A4 quer): liest nur lesend Hersteller, Modell, Seriennummer sowie Arbeitsspeicher, Prozessoren, Netzteile und Datenträger mit Part- und Seriennummern. Dazu Checkliste, Bemerkung und Unterschriftsfeld; alles von Hand änderbar. Mehrere Server auf einmal als ein PDF (je Server ein Blatt); Mitarbeiter einmal anlegen (optional E-Mail, Telefon, Adresse, Zusatz) und dann nur noch auswählen. Versand per E-Mail (SMTP oder eigenes Mailprogramm). Als PDF öffnen, drucken, Inventar als Excel/CSV, Audit als JSON, automatische Ablage jedes PDFs, QR-Code mit der Seriennummer auf dem Blatt. |
-| **Einstellungen (⚙)** | Schriftart und -größe, Design, Protokoll (Stufe, fortlaufende Protokolldatei, Aufbewahrung), Systemaudit (Auslesen bei Auswahl, PDF-Ordner, Mail-Vorlagen), E-Mail-Versand (SMTP) und Experteneinstellungen (Kontroll-Wartezeit, Zeitlimit für BMC-Anfragen). Server aus „Neuware“ und „Bestandsserver“ in einer Auswahlliste, auch direkt per „Systemaudit …“ aus „Neuware“, „Bestandsserver“ und „UEFI-Konsole“. |
+| **Einstellungen (⚙)** | Schriftart und -größe, Design, Protokoll (Stufe, fortlaufende Protokolldatei, Aufbewahrung), Systemaudit (Auslesen bei Auswahl, PDF-Ordner, Mail-Vorlagen), E-Mail-Versand (SMTP), Experteneinstellungen (Kontroll-Wartezeit, Zeitlimit für BMC-Anfragen) und Freigabe der Plugins. Server aus „Neuware“ und „Bestandsserver“ in einer Auswahlliste, auch direkt per „Systemaudit …“ aus „Neuware“, „Bestandsserver“ und „UEFI-Konsole“. |
 | **UEFI-Konsole** | UEFI/BIOS eines Servers über den BMC: eingebettete HTML5-Konsole, Textkonsole (SOL/SSH) oder Standardbrowser. Bildschirmtastatur mit Setup-Tasten je Hersteller, „Text tippen“, Bildschirmfoto, Vollbild und automatisches Neuverbinden. „Ins UEFI-Setup starten“ startet den Server nach der Eigenschutz-Prüfung direkt ins Setup. |
 
 ### Werkzeuge
@@ -86,6 +86,8 @@ der grüne Knopf.
   der Serverliste, auch direkt aus Excel.
 - **Tooltips** an jedem Feld erklären, was es tut und worauf zu achten ist.
 - Fehlt ein optionales Paket, zeigt die betroffene Seite den passenden Installationsbefehl.
+- **Plugins** erweitern das Tool um eigene Seiten und Abläufe: ein Ordner mit `plugin.json` und `plugin.py` unter
+  `<Datenordner>/plugins/`, einzeln freizugeben unter ⚙ → „Plugins“. Beispiel: [`docs/plugin-beispiel/`](docs/plugin-beispiel/).
 
 ## Schutz vor Fehlbedienung
 
@@ -284,6 +286,10 @@ selbst auf die alte Verschlüsselung um und vermerkt es im Protokoll.
   Ordner wählen, z. B. ein verschlüsseltes Laufwerk.
 - Eine gespeicherte Liste enthält Passwörter nur auf ausdrücklichen Wunsch, dann im Klartext. So eine Datei
   nach dem Rollout löschen.
+- Plugins sind Python-Code mit allen Rechten des Programms. Nichts wird von selbst geladen: Jedes Plugin muss
+  einzeln freigegeben werden, das Tool merkt sich dabei einen SHA-256-Fingerabdruck aller Dateien und lädt das
+  Plugin nach jeder Änderung erst nach erneuter Freigabe. Unter Linux bleiben Plugins in Ordnern, die andere
+  Benutzer beschreiben dürfen, gesperrt. `BMC_STEWARD_NO_PLUGINS=1` startet ohne Plugins.
 
 ## Version prüfen
 

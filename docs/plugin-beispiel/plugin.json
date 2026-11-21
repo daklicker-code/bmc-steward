@@ -1,0 +1,7 @@
+{
+ "name": "Beispiel: Fertig-Liste",
+ "version": "1.0",
+ "api": 1,
+ "description": "Zeigt eine Seite mit den Servern der Liste und schreibt jeden fertig umgestellten Server mit Uhrzeit in eine CSV-Datei im eigenen Datenordner.",
+ "author": "BMC-Steward"
+}
