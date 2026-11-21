@@ -24,9 +24,10 @@ from .applog import LOG
 from .core import intro_label
 from . import theme
 from .i18n import HERE, T
-from .planner import (CATALOG, SFP_PRESETS, compatible, MAX_COLS, MAX_DEV_U, MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES,
-                      Plan, catalog_texts, col_name, coord_name, demo_plan, netapp_demo_plan, parse_coord, port_name,
-                      rack_tiles, vendor_of)
+from .planner import (CATALOG, DRIVE_MODELS, NIC_MODELS, PSU_BAYS, PSU_MODELS, compatible, MAX_COLS, MAX_DEV_U,
+                      MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES, Plan, catalog_texts, col_name,
+                      coord_name, demo_plan, drive_bays, drive_name, netapp_demo_plan, nic_name, parse_coord,
+                      port_name, psu_name, rack_tiles, server_slots, vendor_of)
 
 MIME = "application/x-bmc-steward-planner"
 # Farbschemata. Hell im Stil üblicher DCIM-Werkzeuge (Vorgabe unter Windows), dunkel wie der Rest von
@@ -181,14 +182,16 @@ class PlannerLibrary(QListWidget):
 
 class ZoomPan:
     """Gemeinsames für Grundriss und Rack-Ansicht: das Mausrad vergrößert oder verkleinert um den Mauszeiger,
-    die mittlere Maustaste verschiebt die Ansicht, ein Rechtsklick fragt nach dem Kontextmenü. Gezeichnet und
-    gerechnet wird in Modellkoordinaten; `zoom` skaliert nur die Darstellung."""
+    Ziehen mit der linken Maustaste auf freier Fläche (oder mit der mittleren überall) verschiebt die Ansicht,
+    ein Rechtsklick öffnet das Bearbeitungsmenü. Gezeichnet und gerechnet wird in Modellkoordinaten; `zoom`
+    skaliert nur die Darstellung."""
     ZMIN, ZMAX, ZSTEP = 0.3, 3.0, 1.15
 
     def zp_init(self):
         self.zoom = 1.0
         self.scroll = None               # die umgebende QScrollArea (setzt die Seite)
         self._pan = None
+        self._lpan = None                # Linksklick ins Leere: [Start, h0, v0, bewegt?, Klick-Aktion]
 
     def _pt(self, e):
         return QPointF(e.position()) / self.zoom
@@ -243,7 +246,41 @@ class ZoomPan:
             return True
         return False
 
+    def zp_left(self, e, click=None):
+        """Linke Maustaste auf freier Fläche: Ziehen verschiebt die Ansicht. Wird ohne Bewegung losgelassen,
+        läuft `click` (z. B. Auswahl), wie bei einem normalen Klick."""
+        sa = self.scroll
+        self._lpan = [e.globalPosition(), sa.horizontalScrollBar().value() if sa else 0,
+                      sa.verticalScrollBar().value() if sa else 0, False, click]
+
+    def zp_left_move(self, e):
+        if not self._lpan:
+            return False
+        start, h0, v0, moved, _ = self._lpan
+        d = e.globalPosition() - start
+        if not moved and d.manhattanLength() < 5:
+            return True
+        self._lpan[3] = True
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        if self.scroll:
+            self.scroll.horizontalScrollBar().setValue(int(h0 - d.x()))
+            self.scroll.verticalScrollBar().setValue(int(v0 - d.y()))
+        return True
+
+    def zp_left_release(self, e):
+        """True, wenn ein Linksklick ins Leere zu Ende ist (verschoben oder Klick ausgeführt)."""
+        if not self._lpan or e.button() != Qt.MouseButton.LeftButton:
+            return False
+        _, _, _, moved, click = self._lpan
+        self._lpan = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        if not moved and click:
+            click()
+        return True
+
     def zp_move(self, e):
+        if self.zp_left_move(e):
+            return True
         if not self._pan:
             return False
         start, h0, v0 = self._pan
@@ -353,8 +390,12 @@ class RackCanvas(ZoomPan, QWidget):
         size, step = (6, 7) if two else (8, 10)
         items, col, row, extra, prev = [], -1, 1, 0, None
         for p in ports:
-            if two and prev is not None and p["k"] != prev:
-                row, extra = 1, extra + 3
+            key = (p["k"], p.get("nic"))             # neue Gruppe je Portart und je Netzwerkkarte
+            if prev is not None and key != prev:
+                if two:
+                    row, extra = 1, extra + 3
+                else:
+                    extra += 4
             if two:
                 if row == 1:
                     col, row = col + 1, 0
@@ -363,7 +404,7 @@ class RackCanvas(ZoomPan, QWidget):
             else:
                 col += 1
             items.append((p["id"], col, row, extra))
-            prev = p["k"]
+            prev = key
         total = (col + 1) * step - (step - size) + extra
         x0 = rect.right() - 6 - total
         cy = rect.center().y()
@@ -558,6 +599,27 @@ class RackCanvas(ZoomPan, QWidget):
             x += 9
         ports = self.port_rects(d, rect) if self.view == "rear" else []
         right = (ports[0][1].x() - 6) if ports else rect.right() - 8
+        if d["kind"] == "server" and self.view == "rear":          # Netzteile links an der Rückseite
+            for i in range(PSU_BAYS):
+                pr = QRectF(x, rect.y() + 3, 8, rect.height() - 6)
+                if i < len(d.get("psus") or []):
+                    p.setPen(QPen(QColor(edge), 0.8))
+                    p.setBrush(QColor("#9a7b2f"))
+                else:
+                    p.setPen(QPen(QColor(edge), 0.8, Qt.PenStyle.DotLine))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRect(pr)
+                x += 10
+            x += 2
+            for nic in d.get("nics") or []:                         # Netzwerkkarte als Rahmen um ihre Ports
+                rs = [rc for pid, rc in ports if pid in nic["ports"]]
+                if rs:
+                    box = rs[0]
+                    for rc in rs[1:]:
+                        box = box.united(rc)
+                    p.setPen(QPen(DIM, 0.8))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRoundedRect(box.adjusted(-2, -2, 2, 2), 1.5, 1.5)
         if self.view == "front" and d["kind"] != "blank":   # Herstellerkennung rechts an der Front
             badge = {"dell": "DELL", "hpe": "HPE", "lenovo": "LENOVO", "smc": "SMC", "netapp": "NETAPP",
                      "atto": "ATTO", "brocade": "BROCADE"}.get(d.get("vendor") or "")
@@ -575,6 +637,19 @@ class RackCanvas(ZoomPan, QWidget):
                 p.setPen(QColor("#ffffff"))
                 p.drawText(br, Qt.AlignmentFlag.AlignCenter, badge)
                 right = br.x() - 6
+        if self.view == "front" and d["kind"] == "server":         # Laufwerksschächte an der Front
+            bays, used = drive_bays(d["u"]), len(d.get("drives") or [])
+            per_row = 10 if d["u"] <= 1 else 12
+            rows = (bays + per_row - 1) // per_row
+            ch = max(3.0, min(9.0, (rect.height() - 6 - (rows - 1)) / rows))
+            x0 = right - per_row * 5
+            for b in range(bays):
+                r_, c_ = divmod(b, per_row)
+                cell = QRectF(x0 + c_ * 5, rect.y() + 3 + r_ * (ch + 1), 4, ch)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(ACCENT if b < used else QColor(edge).lighter(130))
+                p.drawRect(cell)
+            right = x0 - 6
         f = QFont(self.font())
         f.setPointSizeF(7.5)
         f.setBold(True)
@@ -596,6 +671,10 @@ class RackCanvas(ZoomPan, QWidget):
             p.setPen(QPen(PORT_EDGE.get(kind, RACK_LINE), 1))
             p.setBrush(NET_COLOR[c["net"]] if c else PORT_FILL)
             p.drawRect(rc)
+            if self.plan.port(d, pid).get("sfp"):                  # Transceiver steckt: heller Punkt
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#ffffff"))
+                p.drawEllipse(rc.center(), 1.4, 1.4)
             if self.sel == ("port", (d["id"], pid)):
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QPen(ACCENT, 2))
@@ -654,6 +733,8 @@ class RackCanvas(ZoomPan, QWidget):
                 self.simClicked.emit("cable", cid)
             elif d and d["kind"] in ("server", "switch", "fw", "patch", "storage", "shelf", "bridge"):
                 self.simClicked.emit("dev", d["id"])
+            else:
+                self.zp_left(e)
             return
         hit = self.port_at(pt)
         if hit and self.cable_mode:
@@ -666,6 +747,8 @@ class RackCanvas(ZoomPan, QWidget):
             cid = self.cable_hit(pt)
             if cid:
                 self.select(("cable", cid))
+            else:
+                self.zp_left(e)
             return
         d = self.dev_at(pt)
         if d:
@@ -677,8 +760,8 @@ class RackCanvas(ZoomPan, QWidget):
         if cid:
             self.select(("cable", cid))
             return
-        rid = self.rack_at(pt)
-        self.select(("rack", rid) if rid else None)
+        rid = self.rack_at(pt)                       # freie Fläche: ziehen verschiebt, Klick wählt das Rack
+        self.zp_left(e, lambda: self.select(("rack", rid) if rid else None))
 
     def mouseMoveEvent(self, e):
         if self.zp_move(e):
@@ -711,6 +794,10 @@ class RackCanvas(ZoomPan, QWidget):
                 text += f"  →  {plan.dev(od)['name']} · {port_name(plan.dev(od), op)}  ({net_names()[c['net']]})"
             else:
                 text += "  –  " + T("frei")
+            nic = plan.nic_of(d, port[1])
+            if nic:
+                text += "\n" + T("Netzwerkkarte: {0} · {1}").format(nic["slot"], nic_name(nic["m"]))
+            text += "\n" + part_sfp_text(plan, d, port[1])
             return text
         cid = self.cable_hit(pt)
         if cid:
@@ -723,13 +810,15 @@ class RackCanvas(ZoomPan, QWidget):
             used = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
             span = f"{d['pos']}–{d['pos'] + d['u'] - 1}" if d["u"] > 1 else str(d["pos"])
             lines = [f"<b>{d['name']}</b>", d.get("model") or "", f"{T('HE')} {span} · {d.get('w') or 0} W"]
+            if d["kind"] == "server":
+                lines.append(parts_summary(d))
             if d["ports"]:
                 lines.append(T("{0} von {1} Anschlüssen belegt").format(used, len(d["ports"])))
             return "<br>".join(x for x in lines if x)
         return ""
 
     def mouseReleaseEvent(self, e):
-        if self.zp_release(e):
+        if self.zp_release(e) or self.zp_left_release(e):
             return
         drag, ghost = self.drag, self.ghost
         self.drag, self.ghost = None, None
@@ -1020,10 +1109,13 @@ class FloorCanvas(ZoomPan, QWidget):
             self.update()
             return
         t = self.tile_at(pt)
-        self.tile_sel = t
-        if t:
-            self.tileClicked.emit(*t)
-        self.update()
+
+        def click():
+            self.tile_sel = t
+            if t:
+                self.tileClicked.emit(*t)
+            self.update()
+        self.zp_left(e, click)                       # freie Fläche: ziehen verschiebt den Grundriss
 
     def mouseMoveEvent(self, e):
         if self.zp_move(e):
@@ -1051,7 +1143,7 @@ class FloorCanvas(ZoomPan, QWidget):
         self.update()
 
     def mouseReleaseEvent(self, e):
-        if self.zp_release(e):
+        if self.zp_release(e) or self.zp_left_release(e):
             return
         drag, ghost = self.drag, self.ghost
         self.drag = self.ghost = None
@@ -1104,6 +1196,261 @@ class FloorCanvas(ZoomPan, QWidget):
         if h and t:
             e.acceptProposedAction()
             self.rackDropped.emit(h, t[0], t[1])
+
+
+def part_sfp_text(plan, d, pid):
+    """Transceiver eines Ports als Text: Modul, feste Buchse oder leerer Käfig."""
+    p = plan.port(d, pid) or {}
+    cage = plan.port_cage(d, pid)
+    if p.get("sfp"):
+        return T("Transceiver: {0}").format(p["sfp"])
+    if cage == "RJ45":
+        return T("Transceiver: – (feste RJ45-Buchse)")
+    if cage:
+        return T("Transceiver: – ({0}-Käfig leer)").format(cage)
+    return T("Transceiver: –")
+
+
+def parts_summary(d):
+    """Kurzfassung der Komponenten eines Servers für Tooltip und Eigenschaften."""
+    return T("{0} von {1} Netzteilen · {2} Netzwerkkarten · {3} von {4} Laufwerken").format(
+        len(d.get("psus") or []), PSU_BAYS, len(d.get("nics") or []), len(d.get("drives") or []), drive_bays(d["u"]))
+
+
+class ComponentsDialog(QDialog):
+    """Komponenten eines Servers bearbeiten: Netzteile, Netzwerkkarten mit Transceiver je Port, Laufwerke.
+    Jede Änderung wirkt sofort im Plan (`changed` meldet sie der Seite, die sie für Rückgängig merkt)."""
+
+    def __init__(self, parent, plan, did, changed=None):
+        super().__init__(parent)
+        self.plan, self.did, self.notify = plan, did, changed or (lambda: None)
+        d = plan.dev(did)
+        self.setWindowTitle(T("Komponenten: {0}").format(d["name"]))
+        self.resize(720, 520)
+        v = QVBoxLayout(self)
+        self.head = QLabel()
+        v.addWidget(self.head)
+        self.tabs = QTabWidget()
+        v.addWidget(self.tabs, 1)
+        # Netzteile
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        self.psu_list = QListWidget()
+        lay.addWidget(self.psu_list, 1)
+        row = QHBoxLayout()
+        self.psu_model = QComboBox()
+        for k in PSU_MODELS:
+            self.psu_model.addItem(psu_name(k), k)
+        self.psu_add = QPushButton(T("Stecken"))
+        self.psu_add.clicked.connect(self.add_psu)
+        self.psu_del = QPushButton(T("Ziehen"))
+        self.psu_del.clicked.connect(self.remove_psu)
+        row.addWidget(self.psu_model, 1)
+        row.addWidget(self.psu_add)
+        row.addWidget(self.psu_del)
+        lay.addLayout(row)
+        self.tabs.addTab(w, T("Netzteile"))
+        # Netzwerkkarten mit Ports und Transceivern
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        self.nic_tree = QTreeWidget()
+        self.nic_tree.setHeaderLabels([T("Steckplatz / Port"), T("Karte / Transceiver"), T("Verbunden mit")])
+        for col in (0, 1):
+            self.nic_tree.header().setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        self.nic_tree.currentItemChanged.connect(self.nic_selected)
+        lay.addWidget(self.nic_tree, 1)
+        row = QHBoxLayout()
+        self.nic_slot = QComboBox()
+        self.nic_model = QComboBox()
+        for k in NIC_MODELS:
+            self.nic_model.addItem(nic_name(k), k)
+        self.nic_model.currentIndexChanged.connect(self.fill_slots)
+        self.nic_add = QPushButton(T("Karte stecken"))
+        self.nic_add.clicked.connect(self.add_nic)
+        self.nic_del = QPushButton(T("Karte ziehen"))
+        self.nic_del.clicked.connect(self.remove_nic)
+        row.addWidget(self.nic_model, 2)
+        row.addWidget(self.nic_slot, 1)
+        row.addWidget(self.nic_add)
+        row.addWidget(self.nic_del)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        self.sfp_label = QLabel(T("Transceiver"))
+        self.sfp_model = QComboBox()
+        self.sfp_model.setEditable(True)
+        self.sfp_add = QPushButton(T("Stecken"))
+        self.sfp_add.clicked.connect(self.set_sfp)
+        self.sfp_del = QPushButton(T("Ziehen"))
+        self.sfp_del.clicked.connect(lambda: self.set_sfp(""))
+        self.sfp_all = QPushButton(T("In alle Ports der Karte"))
+        self.sfp_all.setToolTip(T("Steckt den gewählten Transceiver in alle Ports dieser Netzwerkkarte."))
+        self.sfp_all.clicked.connect(self.set_sfp_all)
+        row.addWidget(self.sfp_label)
+        row.addWidget(self.sfp_model, 1)
+        for b in (self.sfp_add, self.sfp_del, self.sfp_all):
+            row.addWidget(b)
+        lay.addLayout(row)
+        self.tabs.addTab(w, T("Netzwerkkarten"))
+        # Laufwerke
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        self.drv_list = QListWidget()
+        self.drv_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        lay.addWidget(self.drv_list, 1)
+        row = QHBoxLayout()
+        self.drv_model = QComboBox()
+        for k in DRIVE_MODELS:
+            self.drv_model.addItem(drive_name(k), k)
+        self.drv_count = QSpinBox()
+        self.drv_count.setRange(1, 60)
+        self.drv_count.setSuffix(" ×")
+        self.drv_add = QPushButton(T("Stecken"))
+        self.drv_add.clicked.connect(self.add_drives)
+        self.drv_del = QPushButton(T("Ziehen"))
+        self.drv_del.clicked.connect(self.remove_drives)
+        row.addWidget(self.drv_model, 1)
+        row.addWidget(self.drv_count)
+        row.addWidget(self.drv_add)
+        row.addWidget(self.drv_del)
+        lay.addLayout(row)
+        self.tabs.addTab(w, T("Laufwerke"))
+        self.msg = QLabel()
+        self.msg.setWordWrap(True)
+        v.addWidget(self.msg)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close = QPushButton(T("Schließen"))
+        close.clicked.connect(self.accept)
+        row.addWidget(close)
+        v.addLayout(row)
+        self.refresh()
+
+    @property
+    def d(self):
+        return self.plan.dev(self.did)
+
+    def done_edit(self, err=None):
+        self.msg.setText(f"<span style='color:{LEVEL_COLOR['err']}'>{html_escape(err)}</span>" if err else "")
+        if not err:
+            self.notify()
+        self.refresh()
+
+    def refresh(self):
+        d = self.d
+        self.head.setText(f"<b>{html_escape(d['name'])}</b> · {d['u']} {T('HE')} · {html_escape(parts_summary(d))}")
+        self.psu_list.clear()
+        for i, k in enumerate(d.get("psus") or []):
+            self.psu_list.addItem(f"PSU {i + 1}: {psu_name(k)}")
+        self.psu_add.setEnabled(len(d.get("psus") or []) < PSU_BAYS)
+        self.psu_del.setEnabled(bool(d.get("psus")))
+        cur = self.nic_tree.currentItem()
+        keep = cur.data(0, Qt.ItemDataRole.UserRole) if cur else None
+        self.nic_tree.clear()
+        select = None
+        for n in d.get("nics") or []:
+            top = QTreeWidgetItem([n["slot"], nic_name(n["m"]), ""])
+            top.setData(0, Qt.ItemDataRole.UserRole, ("nic", n["id"]))
+            self.nic_tree.addTopLevelItem(top)
+            for pid in n["ports"]:
+                c = self.plan.cable_at(d["id"], pid)
+                peer = ""
+                if c:
+                    od, op = self.plan.other_end(c, d["id"], pid)
+                    peer = f"{self.plan.dev(od)['name']} · {port_name(self.plan.dev(od), op)}"
+                ch = QTreeWidgetItem([port_name(d, pid), part_sfp_text(self.plan, d, pid), peer])
+                ch.setData(0, Qt.ItemDataRole.UserRole, ("port", pid))
+                top.addChild(ch)
+                if keep == ("port", pid):
+                    select = ch
+            if keep == ("nic", n["id"]):
+                select = top
+            top.setExpanded(True)
+        if select is not None:
+            self.nic_tree.setCurrentItem(select)
+        self.fill_slots()
+        self.nic_selected()
+        self.drv_list.clear()
+        for i, k in enumerate(d.get("drives") or []):
+            self.drv_list.addItem(T("Schacht {0}: {1}").format(i + 1, drive_name(k)))
+        free = drive_bays(d["u"]) - len(d.get("drives") or [])
+        self.drv_count.setMaximum(max(1, free))
+        self.drv_add.setEnabled(free > 0)
+        self.drv_del.setEnabled(bool(d.get("drives")))
+
+    def fill_slots(self, *_):
+        self.nic_slot.clear()
+        free = self.plan.free_slots(self.d, self.nic_model.currentData())
+        for slot in free:
+            self.nic_slot.addItem(slot, slot)
+        self.nic_add.setEnabled(bool(free))
+
+    def selected_nic(self):
+        it = self.nic_tree.currentItem()
+        if it is None:
+            return None, None
+        kind, ident = it.data(0, Qt.ItemDataRole.UserRole)
+        if kind == "nic":
+            return self.plan.nic(self.d, ident), None
+        return self.plan.nic_of(self.d, ident), ident
+
+    def nic_selected(self, *_):
+        nic, pid = self.selected_nic()
+        self.nic_del.setEnabled(nic is not None)
+        cage = NIC_MODELS[nic["m"]]["cage"] if nic else None
+        ok = nic is not None and cage != "RJ45"
+        for w in (self.sfp_model, self.sfp_add, self.sfp_all):
+            w.setEnabled(ok)
+        self.sfp_del.setEnabled(bool(pid and (self.plan.port(self.d, pid) or {}).get("sfp")))
+        self.sfp_add.setEnabled(ok and pid is not None)
+        text = self.sfp_model.currentText()
+        self.sfp_model.clear()
+        if nic:
+            self.sfp_model.addItems(self.plan.sfp_choices(self.d, nic["ports"][0]))
+            cur = (self.plan.port(self.d, pid) or {}).get("sfp") if pid else ""
+            self.sfp_model.setEditText(cur or (text if self.sfp_model.findText(text) >= 0 else
+                                               self.sfp_model.itemText(0)))
+        self.sfp_label.setText(T("Transceiver ({0}-Käfig)").format(cage) if cage and cage != "RJ45" else
+                               T("Feste RJ45-Buchsen") if cage else T("Transceiver"))
+
+    def add_psu(self):
+        self.done_edit(self.plan.add_psu(self.d, self.psu_model.currentData()))
+
+    def remove_psu(self):
+        i = self.psu_list.currentRow()
+        self.plan.remove_psu(self.d, i if i >= 0 else len(self.d.get("psus") or []) - 1)
+        self.done_edit()
+
+    def add_nic(self):
+        _, err = self.plan.add_nic(self.d, self.nic_model.currentData(), self.nic_slot.currentData())
+        self.done_edit(err)
+
+    def remove_nic(self):
+        nic, _ = self.selected_nic()
+        if nic:
+            self.plan.remove_nic(self.d, nic["id"])
+            self.done_edit()
+
+    def set_sfp(self, name=None):
+        _, pid = self.selected_nic()
+        if pid:
+            self.done_edit(self.plan.set_sfp(self.d, pid, self.sfp_model.currentText() if name is None else name))
+
+    def set_sfp_all(self):
+        nic, _ = self.selected_nic()
+        if nic:
+            name = self.sfp_model.currentText()
+            err = next((e for e in (self.plan.set_sfp(self.d, pid, name) for pid in nic["ports"]) if e), None)
+            self.done_edit(err)
+
+    def add_drives(self):
+        n = self.plan.add_drives(self.d, self.drv_model.currentData(), self.drv_count.value())
+        self.done_edit(None if n else T("Alle Laufwerksschächte sind belegt."))
+
+    def remove_drives(self):
+        rows = sorted({i.row() for i in self.drv_list.selectedIndexes()}, reverse=True)
+        for i in rows or [len(self.d.get("drives") or []) - 1]:
+            self.plan.remove_drive(self.d, i)
+        self.done_edit()
 
 
 class ConnectDialog(QDialog):
@@ -1244,13 +1591,22 @@ class TraceDialog(QDialog):
         for n, (d, pid, c) in enumerate(hops):
             r = plan.rack(d["rack"])
             p = plan.port(d, pid) or {}
-            extra = " · ".join(x for x in (p.get("sfp"), p.get("speed"), p.get("ip"), p.get("vlan") and
-                                            "VLAN " + p["vlan"]) if x)
+            extra = " · ".join(x for x in (p.get("speed"), p.get("ip"), p.get("vlan") and "VLAN " + p["vlan"]) if x)
+            nic = plan.nic_of(d, pid)
+            parts = []
+            if nic:                                   # Netzwerkkarte und Transceiver der Strecke sichtbar
+                parts.append(T("Netzwerkkarte: {0} · {1}").format(nic["slot"], nic_name(nic["m"])))
+            if d["kind"] != "patch":
+                missing = not p.get("sfp") and plan.port_cage(d, pid) not in (None, "RJ45")
+                sfp = part_sfp_text(plan, d, pid)
+                parts.append(f"<span style='color:{LEVEL_COLOR['warn']}'>{html_escape(sfp)}</span>" if missing
+                             else html_escape(sfp))
             out.append(
                 f"<tr><td style='background:{t['accent_soft']}; border:1px solid {t['line2']}'>"
                 f"<b>{html_escape(d['name'])}</b> · {html_escape(port_name(d, pid))}<br>"
                 f"<span style='color:{t['muted']}'>{html_escape(rack_label(plan, r))} · {T('HE')} {d['pos']}"
                 f"{' · ' + html_escape(d.get('model') or '') if d.get('model') else ''}</span>"
+                + "".join(f"<br>{x if x.startswith('<span') else html_escape(x)}" for x in parts)
                 + (f"<br><span style='color:{t['muted']}'>{html_escape(extra)}</span>" if extra else "")
                 + "</td></tr>")
             if c:
@@ -1612,6 +1968,17 @@ class PlannerTabMixin:
         lay.addWidget(box)
         box, f = _group(T("Strom"))
         f.addRow(self.pl_d_w_label, self.pl_d_w)
+        lay.addWidget(box)
+        box, f = _group(T("Komponenten"))
+        self.pl_d_parts = QLabel()
+        self.pl_d_parts.setWordWrap(True)
+        self.pl_d_parts_btn = QPushButton(T("Komponenten …"))
+        self.pl_d_parts_btn.setToolTip(T("Netzteile, Netzwerkkarten mit Transceivern und Laufwerke stecken oder "
+                                         "ziehen (auch per Rechtsklick auf den Server)."))
+        self.pl_d_parts_btn.clicked.connect(lambda: self.planner_components(self.pl_canvas.sel[1]))
+        f.addRow(self.pl_d_parts)
+        f.addRow(self.pl_d_parts_btn)
+        self.pl_d_parts_box = box
         lay.addWidget(box)
         box, f = _group(T("Anschlüsse"))
         f.addRow(self.pl_d_ports)
@@ -2311,8 +2678,10 @@ class PlannerTabMixin:
                     "3. „Verkabeln“ (Taste K): Port anklicken, dann den Gegenport.<br>"
                     "4. „Prüfung“ zeigt Lücken, „Netze“ vergibt Hostnamen und Adressen.<br>"
                     "5. „Ausfall simulieren“ zeigt, welche Server ein gezogenes Kabel trifft.<br>"
-                    "6. Mausrad zoomt, mittlere Maustaste verschiebt, Rechtsklick öffnet ein Menü, "
-                    "Strg+Z macht rückgängig.</p>").format(
+                    "6. Rechtsklick auf einen Server: Netzteile, Netzwerkkarten, Transceiver und Laufwerke "
+                    "stecken.<br>"
+                    "7. Mausrad zoomt, Ziehen mit links auf freier Fläche verschiebt die Ansicht, Rechtsklick öffnet "
+                    "das Bearbeitungsmenü, Strg+Z macht rückgängig.</p>").format(
                     len(plan.racks), len(devs), len(plan.cables), warn))
                 self.pl_props.setCurrentIndex(0)
         finally:
@@ -2336,6 +2705,15 @@ class PlannerTabMixin:
             T("Platzhalter: Seriennummer und Hersteller kommen später mit der Lieferung.") if d["kind"] == "server"
             else "")
         self.pl_d_unplace.setText(T("Ausbauen") if d.get("inv") else T("Entfernen"))
+        self.pl_d_parts_box.setVisible(d["kind"] == "server")
+        if d["kind"] == "server":
+            lines = [", ".join(psu_name(k) for k in d.get("psus") or []) or T("kein Netzteil")]
+            lines += [f"{n['slot']}: {nic_name(n['m'])}" for n in d.get("nics") or []]
+            drives = {}
+            for k in d.get("drives") or []:
+                drives[k] = drives.get(k, 0) + 1
+            lines.append(", ".join(f"{n} × {drive_name(k)}" for k, n in drives.items()) or T("keine Laufwerke"))
+            self.pl_d_parts.setText(html_escape(parts_summary(d)) + "<br>" + "<br>".join(html_escape(x) for x in lines))
         ports = d["ports"]
         self.pl_d_ports.setRowCount(len(ports))
         for i, p in enumerate(ports):
@@ -2384,8 +2762,8 @@ class PlannerTabMixin:
                 if self.plan.set_height(d, u):
                     self.planner_changed()
                 else:
-                    self.planner_say(T("{0} HE passen hier nicht – darüber ist belegt. Erst umsetzen.").format(u),
-                                     True)
+                    self.planner_say(self.plan.height_problem(d, u) or
+                                     T("{0} HE passen hier nicht – darüber ist belegt. Erst umsetzen.").format(u), True)
                     self._pl_filling = True
                     self.pl_d_u.setValue(d["u"])
                     self._pl_filling = False
@@ -2466,8 +2844,11 @@ class PlannerTabMixin:
         d = plan.dev(did)
         p = plan.port(d, pid)
         r = plan.rack(d["rack"])
+        nic = plan.nic_of(d, pid)
         self.pl_p_where.setText(f"<b>{html_escape(d['name'])} · {html_escape(port_name(d, pid))}</b><br>"
-                                + T("Rack {0} · HE {1}").format(rack_label(plan, r), d["pos"]))
+                                + T("Rack {0} · HE {1}").format(rack_label(plan, r), d["pos"])
+                                + ("<br>" + html_escape(T("Netzwerkkarte: {0} · {1}").format(nic["slot"], nic_name(nic["m"])))
+                                   if nic else ""))
         c = plan.cable_at(did, pid)
         if c:
             end_d, end_p, _ = plan.trace(did, pid)[-1]
@@ -2482,8 +2863,10 @@ class PlannerTabMixin:
         self.pl_p_trace.setEnabled(bool(c))
         self.pl_p_unplug.setEnabled(bool(c))
         self.pl_p_sfp.clear()
-        self.pl_p_sfp.addItems([""] + SFP_PRESETS.get(p["k"], []))
+        self.pl_p_sfp.addItems([""] + plan.sfp_choices(d, pid))
         self.pl_p_sfp.setEditText(p.get("sfp", ""))
+        self.pl_p_sfp.setEnabled(plan.port_cage(d, pid) != "RJ45")
+        self.pl_p_sfp.setToolTip(part_sfp_text(plan, d, pid))
         self.pl_p_sfp.lineEdit().setCursorPosition(0)          # Anfang zeigen, nicht das Ende eines langen Namens
         self.pl_p_speed.setEditText(p.get("speed", ""))
         self.pl_p_mac.setText(p.get("mac", ""))
@@ -2517,10 +2900,17 @@ class PlannerTabMixin:
                 return
         if (p.get(key) or "") == value:
             return
-        if value:
+        if key == "sfp":
+            err = self.plan.set_sfp(d, sel[1][1], value)
+            if err:
+                self.planner_say(err, True)
+                self.planner_fill_props()
+                return
+        elif value:
             p[key] = value
         else:
             p.pop(key, None)
+        self.pl_canvas.update()
         self.plan_dirty = True
         self.planner_record()
         self.planner_fill_participants()
@@ -2719,6 +3109,8 @@ class PlannerTabMixin:
                 a.setCheckable(True)
                 a.setChecked(u == d["u"])
                 a.setEnabled(u == d["u"] or plan.fits(d["rack"], d["pos"], u, d["id"]))
+            if d["kind"] == "server":
+                self._planner_parts_menu(menu.addMenu(T("Komponenten")), d)
             if not d.get("inv") and d.get("cat"):
                 menu.addAction(T("Duplizieren"), lambda: self.planner_duplicate(ident))
             n = sum(1 for p in d["ports"] if plan.cable_at(d["id"], p["id"]))
@@ -2733,6 +3125,20 @@ class PlannerTabMixin:
             c = plan.cable_at(did, pid)
             menu.addSection(f"{d['name']} · {port_name(d, pid)}")
             menu.addAction(T("Port-Eigenschaften (SFP, IP, MAC, VLAN)"), lambda: self.planner_select_port(did, pid))
+            if plan.port_cage(d, pid) != "RJ45" and d["kind"] != "patch":
+                cur = (plan.port(d, pid) or {}).get("sfp")
+                sm = menu.addMenu(T("Transceiver stecken"))
+                for name in plan.sfp_choices(d, pid):
+                    a = sm.addAction(name, lambda n=name: self.planner_part(did, "sfp", (pid, n)))
+                    a.setCheckable(True)
+                    a.setChecked(name == cur)
+                if cur:
+                    menu.addAction(T("Transceiver ziehen ({0})").format(cur),
+                                   lambda: self.planner_part(did, "sfp", (pid, "")))
+            nic = plan.nic_of(d, pid)
+            if nic:
+                menu.addAction(T("Netzwerkkarte {0} ziehen").format(nic["slot"]),
+                               lambda: self.planner_part(did, "nic-", nic["id"]))
             if c:
                 menu.addAction(T("Strecke anzeigen …"), lambda: self.planner_show_trace(did, pid))
                 od, op = plan.other_end(c, did, pid)
@@ -2759,6 +3165,78 @@ class PlannerTabMixin:
             menu.addAction(T("＋ Rack"), lambda: self.planner_add_rack())
             menu.addAction(T("Alles einpassen"), self.planner_zoom_fit)
         return menu
+
+    def _planner_parts_menu(self, cm, d):
+        """Untermenü „Komponenten“ eines Servers: Netzteile, Netzwerkkarten, Laufwerke stecken und ziehen."""
+        did, plan = d["id"], self.plan
+        cm.addAction(T("Komponenten bearbeiten …"), lambda: self.planner_components(did))
+        cm.addSeparator()
+        psus = d.get("psus") or []
+        pm = cm.addMenu(T("Netzteil stecken"))
+        pm.setEnabled(len(psus) < PSU_BAYS)
+        for k in PSU_MODELS:
+            pm.addAction(psu_name(k), lambda k=k: self.planner_part(did, "psu+", k))
+        if psus:
+            rm = cm.addMenu(T("Netzteil ziehen"))
+            for i, k in enumerate(psus):
+                rm.addAction(f"PSU {i + 1}: {psu_name(k)}", lambda i=i: self.planner_part(did, "psu-", i))
+        cm.addSeparator()
+        nm = cm.addMenu(T("Netzwerkkarte stecken"))
+        used = {n["slot"] for n in d.get("nics") or []}
+        for slot in server_slots(d["u"]):
+            sm = nm.addMenu(slot)
+            sm.setEnabled(slot not in used)
+            for k, spec in NIC_MODELS.items():
+                if spec["ocp"] == (slot == "OCP"):
+                    sm.addAction(nic_name(k), lambda k=k, s=slot: self.planner_part(did, "nic+", (k, s)))
+        if d.get("nics"):
+            xm = cm.addMenu(T("Netzwerkkarte ziehen"))
+            for n in d["nics"]:
+                xm.addAction(f"{n['slot']}: {nic_name(n['m'])}", lambda c=n["id"]: self.planner_part(did, "nic-", c))
+        cm.addSeparator()
+        free = drive_bays(d["u"]) - len(d.get("drives") or [])
+        dm = cm.addMenu(T("Laufwerke stecken ({0} Schächte frei)").format(free))
+        dm.setEnabled(free > 0)
+        for k in DRIVE_MODELS:
+            km = dm.addMenu(drive_name(k))
+            for n in sorted({x for x in (1, 2, 4, 8) if x <= free} | {free}):
+                km.addAction(T("{0} ×").format(n) if n != free else T("alle freien ({0} ×)").format(n),
+                             lambda k=k, n=n: self.planner_part(did, "drv+", (k, n)))
+        if d.get("drives"):
+            cm.addAction(T("Alle Laufwerke ziehen ({0})").format(len(d["drives"])),
+                         lambda: self.planner_part(did, "drv-", None))
+
+    def planner_part(self, did, op, arg):
+        """Eine Komponente eines Servers stecken oder ziehen (aus dem Rechtsklick-Menü)."""
+        d, plan, err = self.plan.dev(did), self.plan, None
+        if d is None:
+            return
+        if op == "psu+":
+            err = plan.add_psu(d, arg)
+        elif op == "psu-":
+            plan.remove_psu(d, arg)
+        elif op == "nic+":
+            err = plan.add_nic(d, arg[0], arg[1])[1]
+        elif op == "nic-":
+            plan.remove_nic(d, arg)
+        elif op == "drv+":
+            if not plan.add_drives(d, *arg):
+                err = T("Alle Laufwerksschächte sind belegt.")
+        elif op == "drv-":
+            d["drives"] = []
+        elif op == "sfp":
+            err = plan.set_sfp(d, *arg)
+        if err:
+            self.planner_say(err, True)
+            return
+        self.planner_changed()
+
+    def planner_components(self, did):
+        """Komponenten-Dialog eines Servers; jede Änderung kommt sofort in Plan, Zeichnung und Rückgängig."""
+        if not self.plan.dev(did) or self.plan.dev(did)["kind"] != "server":
+            return
+        dlg = ComponentsDialog(self, self.plan, did, self.planner_changed)
+        dlg.exec()
 
     def _planner_slot_for(self, rid, he, u):
         """Unterste HE für ein Gerät mit `u` HE, das an HE `he` sitzen soll (oben bündig, sonst unten bündig)."""
@@ -2847,7 +3325,8 @@ class PlannerTabMixin:
     def planner_dev_height(self, did, u):
         d = self.plan.dev(did)
         if u != d["u"] and not self.plan.set_height(d, u):
-            self.planner_say(T("{0} HE passen hier nicht – darüber ist belegt. Erst umsetzen.").format(u), True)
+            self.planner_say(self.plan.height_problem(d, u) or
+                             T("{0} HE passen hier nicht – darüber ist belegt. Erst umsetzen.").format(u), True)
             return
         self.planner_changed()
 
@@ -2857,6 +3336,8 @@ class PlannerTabMixin:
         new.update(model=d["model"], w=d["w"], cap=d.get("cap", 0))
         if new["u"] != d["u"]:
             self.plan.set_height(new, d["u"])
+        if d["kind"] == "server":
+            self.plan.copy_parts(d, new)
         pos = next((p for p in range(d["pos"] - new["u"], 0, -1) if self.plan.fits(d["rack"], p, new["u"])), None)
         pos = pos or self.plan.free_pos(d["rack"], new["u"])
         if pos is None:

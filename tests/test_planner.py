@@ -135,7 +135,7 @@ class TestChecksAndNets(unittest.TestCase):
         p = demo_plan(INV)
         rows = p.bom()
         groups = {g for g, *_ in rows}
-        self.assertEqual(groups, {"Geräte", "Kabel", "Montage"})
+        self.assertEqual(groups, {"Geräte", "Komponenten", "Kabel", "Optiken", "Montage"})
         self.assertIn(("Kabel", "Transceiver QSFP28", "", 6), rows)   # drei Uplink-Kabel
 
 

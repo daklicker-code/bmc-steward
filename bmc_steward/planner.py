@@ -7,6 +7,10 @@ PDU, Blindblende) und Kabeln zwischen zwei Ports. Ein Gerät steht in einem Rack
 Server aus der Serverliste („Neuware“) erscheinen als Bestand (`inv`); sie bleiben beim Ausbauen im Plan
 und lassen sich wieder einbauen. Alles andere stammt aus dem Katalog und verschwindet beim Ausbauen.
 
+Server haben Komponenten: Netzteile (`psus`, Modell-Schlüssel), Netzwerkkarten (`nics`, je Steckplatz ein
+Modell mit eigenen Ports) und Laufwerke (`drives`). Die Ports eines Servers sind der BMC-Port und die Ports
+seiner Netzwerkkarten; in die Käfige der Karten (SFP+, SFP28, QSFP28, FC) steckt man Transceiver (Feld `sfp`).
+
 Hier steht nur Logik (Platz prüfen, Kabel, Prüfung, Netzplan, Stückliste, Ausfall-Simulation, Speichern),
 damit sie sich ohne Fenster testen lässt. Die Seite selbst baut planner_tab.py.
 """
@@ -16,7 +20,7 @@ import re
 from .i18n import T
 
 FORMAT = "bmc-steward-plan"
-VERSION = 1
+VERSION = 2                          # 2: Server mit Netzteilen, Netzwerkkarten und Laufwerken
 MIN_RACK_U, MAX_RACK_U, MAX_DEV_U = 4, 60, 10
 HE_M = 0.04445                       # eine Höheneinheit in Metern
 RACK_PITCH_M = 0.6                   # Abstand zweier Racks in einer Reihe (Rackbreite)
@@ -104,11 +108,6 @@ def catalog_texts():
     ]
 
 
-def server_ports(u):
-    """BMC-Port plus zwei Netzwerkkarten (1 HE) bzw. vier (ab 2 HE)."""
-    return [{"id": "bmc", "k": "bmc"}] + [{"id": f"n{i}", "k": "data"} for i in range(1, (4 if u > 1 else 2) + 1)]
-
-
 def build_ports(spec):
     return [{"id": f"{pre}{i}", "k": kind} for n, kind, pre in spec for i in range(1, n + 1)]
 
@@ -129,6 +128,108 @@ SFP_PRESETS = {"bmc": ["RJ45 1G (fest)"], "mgmt": ["RJ45 1G (fest)"],
                "cl": ["QSFP28 100G DAC", "QSFP28 100G SR4 (MMF, 850 nm)"],
                "fc": ["SFP+ FC 32G SW (MMF, 850 nm)", "SFP+ FC 16G SW (MMF, 850 nm)", "SFP+ FC 32G LW (SMF)"],
                "sas": ["Mini-SAS HD (SFF-8644)"], "patch": ["RJ45 Cat6a", "LC Duplex OM4", "LC Duplex OS2"]}
+
+
+# ---------------------------------------------------------------- Server-Komponenten
+# Käfigarten der Netzwerkkarten: RJ45 ist fest (kein Transceiver), die übrigen nehmen passende Module auf.
+CAGES = ("RJ45", "SFP+", "SFP28", "QSFP28", "FC")
+PSU_BAYS = 2
+PSU_MODELS = {"psu800": 800, "psu1100": 1100, "psu1400": 1400, "psu2400": 2400}     # Schlüssel -> Watt
+NIC_MODELS = {
+    "ocp_25g2": dict(name="OCP 3.0 2×25G SFP28", n=2, cage="SFP28", k="data", ocp=True),
+    "ocp_10g2": dict(name="OCP 3.0 2×10G SFP+", n=2, cage="SFP+", k="data", ocp=True),
+    "ocp_1g4": dict(name="OCP 3.0 4×1G RJ45", n=4, cage="RJ45", k="data", ocp=True),
+    "pcie_25g2": dict(name="PCIe 2×25G SFP28", n=2, cage="SFP28", k="data", ocp=False),
+    "pcie_10g2": dict(name="PCIe 2×10G SFP+", n=2, cage="SFP+", k="data", ocp=False),
+    "pcie_10gt2": dict(name="PCIe 2×10GBASE-T RJ45", n=2, cage="RJ45", k="data", ocp=False),
+    "pcie_100g2": dict(name="PCIe 2×100G QSFP28", n=2, cage="QSFP28", k="data", ocp=False),
+    "pcie_fc32": dict(name="PCIe FC-HBA 2×32G", n=2, cage="FC", k="fc", ocp=False),
+}
+DRIVE_MODELS = {"ssd960": "SSD SATA 960 GB", "ssd1920": "SSD SATA 1,92 TB", "nvme3840": "SSD NVMe 3,84 TB",
+                "nvme7680": "SSD NVMe 7,68 TB", "hdd2400": "HDD SAS 2,4 TB 10k", "hdd12t": "HDD NL-SAS 12 TB"}
+# Transceiver und Direktkabel: Name -> Käfige, in die das Modul passt
+SFP_MODELS = {
+    "SFP28 25G SR (MMF, 850 nm)": ("SFP28",), "SFP28 25G LR (SMF, 1310 nm)": ("SFP28",), "SFP28 25G DAC": ("SFP28",),
+    "SFP+ 10G SR (MMF, 850 nm)": ("SFP+", "SFP28"), "SFP+ 10G LR (SMF, 1310 nm)": ("SFP+", "SFP28"),
+    "SFP+ 10G DAC": ("SFP+", "SFP28"), "SFP 1G RJ45": ("SFP+", "SFP28"),
+    "QSFP28 100G SR4 (MMF, 850 nm)": ("QSFP28",), "QSFP28 100G LR4 (SMF, 1310 nm)": ("QSFP28",),
+    "QSFP28 100G DAC": ("QSFP28",),
+    "SFP+ FC 32G SW (MMF, 850 nm)": ("FC",), "SFP+ FC 16G SW (MMF, 850 nm)": ("FC",), "SFP+ FC 32G LW (SMF)": ("FC",),
+}
+
+DEFAULT_SFP = {"SFP28": "SFP28 25G DAC", "SFP+": "SFP+ 10G DAC", "QSFP28": "QSFP28 100G DAC",
+               "FC": "SFP+ FC 32G SW (MMF, 850 nm)"}
+
+
+def psu_name(key):
+    return T("Netzteil {0} W").format(PSU_MODELS[key]) if key in PSU_MODELS else str(key)
+
+
+def nic_name(key):
+    return NIC_MODELS[key]["name"] if key in NIC_MODELS else str(key)
+
+
+def drive_name(key):
+    return DRIVE_MODELS.get(key, str(key))
+
+
+def server_slots(u):
+    """Steckplätze für Netzwerkkarten: ein OCP-Platz und PCIe-Plätze (1 HE: 2, 2 HE: 5, größer: 7)."""
+    return ["OCP"] + [f"PCIe {i}" for i in range(1, (2 if u <= 1 else 5 if u == 2 else 7) + 1)]
+
+
+def drive_bays(u):
+    """Laufwerksschächte an der Front: 1 HE 10, 2 HE 24, größer 12 je weitere HE."""
+    return 10 if u <= 1 else 24 if u == 2 else min(60, 12 * (u - 1))
+
+
+def default_nics(u):
+    return [("OCP", "ocp_25g2")] + ([("PCIe 1", "pcie_25g2")] if u > 1 else [])
+
+
+def default_psus(u):
+    return ["psu800" if u <= 1 else "psu1100"] * PSU_BAYS
+
+
+def sfp_family(name):
+    """Übertragungsart eines Moduls: DAC, RJ45, SMF, MMF oder None (unbekannt)."""
+    t = " " + (name or "").upper()
+    if "DAC" in t:
+        return "DAC"
+    if "RJ45" in t or "BASE-T" in t:
+        return "RJ45"
+    if any(k in t for k in ("SMF", " LR", " LW", "OS2")):
+        return "SMF"
+    if any(k in t for k in ("MMF", " SR", " SW", "OM4", "OM3")):
+        return "MMF"
+    return None
+
+
+def sfp_speed(name):
+    m = re.search(r"(\d+)\s*G", name or "", re.I)
+    return int(m.group(1)) if m else None
+
+
+def sfp_fits(cage, name):
+    """Passt das Modul in den Käfig? Unbekannte Namen (eigene Eingabe) nach ihrer Bauform beurteilt."""
+    if not name:
+        return True
+    if cage is None:
+        return True
+    if cage == "RJ45":
+        return False
+    if name in SFP_MODELS:
+        return cage in SFP_MODELS[name]
+    t = name.upper()
+    if cage == "FC":
+        return "FC" in t
+    if t.startswith("QSFP"):
+        return cage == "QSFP28"
+    if t.startswith("SFP28"):
+        return cage == "SFP28"
+    if t.startswith("SFP"):
+        return cage in ("SFP+", "SFP28") and "FC" not in t
+    return True
 
 
 def compatible(ka, kb):
@@ -361,10 +462,177 @@ class Plan:
         d = {"id": self._id("d"), "cat": key, "prefix": c["prefix"], "kind": c["kind"], "role": c["role"],
              "name": f"{c['prefix']}-{n:02d}", "model": c["model"], "u": c["u"], "w": c["w"], "cap": c.get("cap", 0),
              "vendor": c.get("vendor") or ("gen" if c["kind"] == "server" else ""), "serial": "", "inv": False,
-             "ports": server_ports(c["u"]) if c["ports"] is None else
+             "ports": [] if c["ports"] is None else
              [{"id": i, "k": k, "l": lab} for i, k, lab in c.get("plist", [])] + build_ports(c["ports"]),
              "rack": None, "pos": None}
+        if c["kind"] == "server":
+            self.init_server(d)
         return d
+
+    # ------------------------------------------------------------ Server-Komponenten
+    def init_server(self, d, nics=None, psus=None, drives=None):
+        """Setzt die Komponenten eines Servers neu: Netzteile, Netzwerkkarten [(Steckplatz, Modell)] und
+        Laufwerke; ohne Angaben die Vorgabe für seine Höhe. Ports werden daraus neu gebildet."""
+        u = d["u"]
+        d["psus"] = [k for k in (default_psus(u) if psus is None else psus) if k in PSU_MODELS][:PSU_BAYS]
+        d["drives"] = [k for k in (drives or []) if k in DRIVE_MODELS][:drive_bays(u)]
+        d["nics"] = []
+        d["ports"] = [{"id": "bmc", "k": "bmc"}]
+        for slot, model in (default_nics(u) if nics is None else nics):
+            self.add_nic(d, model, slot)
+
+    @staticmethod
+    def nic(d, cid):
+        return next((n for n in d.get("nics") or [] if n["id"] == cid), None)
+
+    @staticmethod
+    def nic_of(d, pid):
+        """Netzwerkkarte, zu der ein Port gehört, oder None."""
+        return next((n for n in (d or {}).get("nics") or [] if pid in n["ports"]), None)
+
+    def free_slots(self, d, model=None):
+        """Freie Steckplätze eines Servers, auf Wunsch nur die für dieses Modell (OCP oder PCIe)."""
+        used = {n["slot"] for n in d.get("nics") or []}
+        ocp = NIC_MODELS[model]["ocp"] if model in NIC_MODELS else None
+        return [s for s in server_slots(d["u"]) if s not in used and (ocp is None or (s == "OCP") == ocp)]
+
+    @staticmethod
+    def _sync_ports(d):
+        """Ports eines Servers aus BMC und Netzwerkkarten (in Reihenfolge der Steckplätze) bilden; Angaben
+        wie SFP, MAC und IP vorhandener Ports bleiben erhalten."""
+        old = {p["id"]: p for p in d.get("ports") or []}
+        order = server_slots(max(d["u"], 3))
+        d["nics"].sort(key=lambda n: order.index(n["slot"]) if n["slot"] in order else 99)
+        ports = [old.get("bmc") or {"id": "bmc", "k": "bmc"}]
+        for n in d["nics"]:
+            spec = NIC_MODELS[n["m"]]
+            for i, pid in enumerate(n["ports"], 1):
+                p = dict(old.get(pid) or {"id": pid})
+                p.update(k=spec["k"], l=f"{n['slot']} P{i}", nic=n["id"])
+                if p.get("sfp") and not sfp_fits(spec["cage"], p["sfp"]):
+                    p.pop("sfp")
+                ports.append(p)
+        d["ports"] = ports
+
+    def add_nic(self, d, model, slot=None):
+        """Netzwerkkarte stecken. Gibt (Karte, None) oder (None, Fehlertext) zurück."""
+        if d.get("kind") != "server":
+            return None, T("Netzwerkkarten gibt es nur in Servern.")
+        if model not in NIC_MODELS:
+            return None, T("Unbekannte Netzwerkkarte.")
+        free = self.free_slots(d, model)
+        if slot is None:
+            slot = free[0] if free else None
+        if slot not in free:
+            return None, T("{0}: kein passender Steckplatz frei.").format(d["name"]) if slot is None else \
+                T("{0}: Steckplatz {1} ist belegt oder passt nicht.").format(d["name"], slot)
+        d.setdefault("nics", [])
+        nums = [int(x["id"][1:]) for x in d.get("ports") or [] if re.fullmatch(r"n\d+", x["id"])]
+        start = max(nums + [0]) + 1
+        cards = [int(n["id"][1:]) for n in d["nics"] if re.fullmatch(r"c\d+", n["id"])]
+        n = {"id": f"c{max(cards + [0]) + 1}", "slot": slot, "m": model,
+             "ports": [f"n{start + i}" for i in range(NIC_MODELS[model]["n"])]}
+        d["nics"].append(n)
+        self._sync_ports(d)
+        return n, None
+
+    def remove_nic(self, d, cid):
+        """Netzwerkkarte ziehen; ihre Kabel fallen weg."""
+        n = self.nic(d, cid)
+        if n is None:
+            return False
+        ids = set(n["ports"])
+        self.cables = [c for c in self.cables if not ((c["a"][0] == d["id"] and c["a"][1] in ids)
+                                                      or (c["b"][0] == d["id"] and c["b"][1] in ids))]
+        d["nics"].remove(n)
+        self._sync_ports(d)
+        return True
+
+    def port_cage(self, d, pid):
+        """Käfig eines Ports: bei Servern aus der Netzwerkkarte (BMC: RJ45), sonst None (frei eintragbar)."""
+        if not d or d.get("kind") != "server":
+            return None
+        if pid == "bmc":
+            return "RJ45"
+        n = self.nic_of(d, pid)
+        return NIC_MODELS[n["m"]]["cage"] if n else None
+
+    def sfp_choices(self, d, pid):
+        """Passende Transceiver für einen Port (Vorschläge für die Auswahl)."""
+        cage = self.port_cage(d, pid)
+        if cage is not None:
+            return [name for name, cages in SFP_MODELS.items() if cage in cages]
+        p = self.port(d, pid) or {}
+        return list(SFP_PRESETS.get(p.get("k"), []))
+
+    def set_sfp(self, d, pid, name):
+        """Transceiver stecken (name) oder ziehen (""). Gibt einen Fehlertext oder None zurück."""
+        p = self.port(d, pid) if d else None
+        if p is None:
+            return T("Unbekannter Port.")
+        name = (name or "").strip()[:60]
+        cage = self.port_cage(d, pid)
+        if name and cage == "RJ45":
+            return T("{0} hat eine feste RJ45-Buchse – dort steckt kein Transceiver.").format(port_name(d, pid))
+        if name and not sfp_fits(cage, name):
+            return T("„{0}“ passt nicht in den {1}-Käfig von {2}.").format(name, cage, port_name(d, pid))
+        if name:
+            p["sfp"] = name
+        else:
+            p.pop("sfp", None)
+        return None
+
+    def add_psu(self, d, key):
+        if d.get("kind") != "server" or key not in PSU_MODELS:
+            return T("Unbekanntes Netzteil.")
+        if len(d.setdefault("psus", [])) >= PSU_BAYS:
+            return T("{0}: beide Netzteilschächte sind belegt.").format(d["name"])
+        d["psus"].append(key)
+        return None
+
+    @staticmethod
+    def remove_psu(d, i):
+        if 0 <= i < len(d.get("psus") or []):
+            del d["psus"][i]
+            return True
+        return False
+
+    def add_drives(self, d, key, n=1):
+        """Laufwerke in freie Schächte stecken; gibt die Zahl der gesteckten zurück."""
+        if d.get("kind") != "server" or key not in DRIVE_MODELS:
+            return 0
+        d.setdefault("drives", [])
+        n = max(0, min(int(n), drive_bays(d["u"]) - len(d["drives"])))
+        d["drives"] += [key] * n
+        return n
+
+    @staticmethod
+    def remove_drive(d, i):
+        if 0 <= i < len(d.get("drives") or []):
+            del d["drives"][i]
+            return True
+        return False
+
+    def copy_parts(self, src, dst):
+        """Komponenten (samt Transceivern) eines Servers auf einen anderen gleicher Höhe übertragen."""
+        self.init_server(dst, nics=[(n["slot"], n["m"]) for n in src.get("nics") or []], psus=src.get("psus"),
+                         drives=src.get("drives"))
+        for a, b in zip(src["ports"], dst["ports"]):
+            if a.get("sfp"):
+                b["sfp"] = a["sfp"]
+
+    def height_problem(self, d, u):
+        """Warum ein Server nicht auf `u` HE geändert werden kann (Steckplätze, Schächte), sonst ""."""
+        if d.get("kind") != "server":
+            return ""
+        if [(n["slot"], n["m"]) for n in d.get("nics") or []] == default_nics(d["u"]):
+            return ""                                   # Vorgabe-Karten wachsen bzw. schrumpfen mit
+        gone = [n["slot"] for n in d.get("nics") or [] if n["slot"] not in server_slots(u)]
+        if gone:
+            return T("{0} HE haben keinen Steckplatz {1} – erst die Netzwerkkarte ziehen.").format(u, ", ".join(gone))
+        if len(d.get("drives") or []) > drive_bays(u):
+            return T("{0} HE haben nur {1} Laufwerksschächte – erst Laufwerke ziehen.").format(u, drive_bays(u))
+        return ""
 
     def sync_inventory(self, entries):
         """Gleicht den Bestand mit der Serverliste ab. entries: [{key, name, vendor, model, serial}].
@@ -379,7 +647,8 @@ class Plan:
             d = next((x for x in self.devs if x.get("inv") and x.get("key") == key), None)
             if d is None:
                 d = {"id": self._id("i"), "inv": True, "key": key, "kind": "server", "role": "server", "cat": None, "prefix": "",
-                     "u": 1, "w": 500, "cap": 0, "ports": server_ports(1), "rack": None, "pos": None}
+                     "u": 1, "w": 500, "cap": 0, "ports": [], "rack": None, "pos": None, "name": key}
+                self.init_server(d)
                 self.devs.append(d)
             d["name"] = str(e.get("name") or key)[:40]
             d["vendor"] = e.get("vendor") if e.get("vendor") in VENDORS else "gen"
@@ -430,13 +699,21 @@ class Plan:
         u = max(1, min(MAX_DEV_U, int(u)))
         if d.get("rack") and not self.fits(d["rack"], d["pos"], u, d["id"]):
             return False
-        d["u"] = u
         if d["kind"] == "server":
-            want = server_ports(u)
-            ids = {p["id"] for p in want}
-            self.cables = [c for c in self.cables if not ((c["a"][0] == d["id"] and c["a"][1] not in ids)
-                                                         or (c["b"][0] == d["id"] and c["b"][1] not in ids))]
-            d["ports"] = want
+            if self.height_problem(d, u):
+                return False
+            if [(n["slot"], n["m"]) for n in d.get("nics") or []] == default_nics(d["u"]):
+                want = default_nics(u)
+                for n in list(d["nics"]):
+                    if (n["slot"], n["m"]) not in want:
+                        self.remove_nic(d, n["id"])
+                d["u"] = u
+                have = {(n["slot"], n["m"]) for n in d["nics"]}
+                for slot, model in want:
+                    if (slot, model) not in have:
+                        self.add_nic(d, model, slot)
+            d["drives"] = (d.get("drives") or [])[:drive_bays(u)]
+        d["u"] = u
         return True
 
     # ------------------------------------------------------------ Kabel
@@ -573,8 +850,9 @@ class Plan:
         return self.medium(c["net"])
 
     def auto_cable(self):
-        """Verkabelt offene Server: BMC an den ersten OOB-Switch, NIC 1/2 abwechselnd an Leaf/Access-Switches
-        (NIC 1 an den ersten, NIC 2 an den zweiten). Gibt die Zahl neuer Kabel zurück."""
+        """Verkabelt offene Server: BMC an den ersten OOB-Switch, die ersten beiden Datenports abwechselnd an
+        Leaf/Access-Switches (den ersten an den ersten, den zweiten an den zweiten) und steckt in leere Käfige ein
+        Direktkabel (DAC). Gibt die Zahl neuer Kabel zurück."""
         oob = next((d for d in self.placed("switch") if d["role"] == "oob"), None)
         fabric = [d for d in self.placed("switch") if d["role"] in ("leaf", "access")]
 
@@ -596,13 +874,16 @@ class Plan:
                 p = free(oob, "mgmt")
                 if p and self.connect(s["id"], "bmc", oob["id"], p)[0]:
                     n += 1
-            for i, nic in enumerate(("n1", "n2")):
+            for i, nic in enumerate([p["id"] for p in s["ports"] if p["k"] == "data"][:2]):
                 if not fabric or self.cable_at(s["id"], nic):
                     continue
                 sw = fabric[i % len(fabric)]
                 p = free(sw, "data")
                 if p and self.connect(s["id"], nic, sw["id"], p)[0]:
                     n += 1
+                    cage = self.port_cage(s, nic)
+                    if cage in DEFAULT_SFP and not self.port(s, nic).get("sfp"):    # Direktkabel zum Switch
+                        self.port(s, nic)["sfp"] = DEFAULT_SFP[cage]
         return n
 
     def apply_template(self, key, rid):
@@ -706,6 +987,7 @@ class Plan:
                          for c in nics}
                 if len(peers) == 1:
                     out.append(("info", T("{0}: beide Datenleitungen am selben Switch").format(d["name"]), d["id"]))
+        out += self._part_checks()
         out += self._storage_checks()
         switches = self.placed("switch")
         if len(switches) > 1:
@@ -720,6 +1002,43 @@ class Plan:
             out.append(("err", T("Erste BMC-IP „{0}“ ist keine gültige Adresse").format(self.ip_start), None))
         order = {"err": 0, "warn": 1, "info": 2}
         return sorted(out, key=lambda x: order[x[0]])
+
+    def _part_checks(self):
+        """Netzteile (Anzahl, Leistung) und Transceiver (fehlend, unpassend) der eingebauten Server."""
+        out = []
+        for d in self.placed("server"):
+            name, did, psus = d["name"], d["id"], d.get("psus") or []
+            w = d.get("w") or 0
+            if not psus:
+                out.append(("err", T("{0}: kein Netzteil gesteckt").format(name), did))
+            else:
+                weakest = min(PSU_MODELS[k] for k in psus)
+                if len(psus) == 1:
+                    out.append(("info", T("{0}: nur ein Netzteil – keine Redundanz").format(name), did))
+                if w > sum(PSU_MODELS[k] for k in psus):
+                    out.append(("err", T("{0}: Netzteile zu schwach ({1} W Last, {2} W verfügbar)").format(
+                        name, w, sum(PSU_MODELS[k] for k in psus)), did))
+                elif len(psus) > 1 and w > weakest:
+                    out.append(("warn", T("{0}: {1} W Last, ein Netzteil liefert nur {2} W – fällt eines aus, "
+                                          "reicht das andere nicht").format(name, w, weakest), did))
+            if not d.get("nics"):
+                out.append(("warn", T("{0}: keine Netzwerkkarte gesteckt").format(name), did))
+            for p in d["ports"]:
+                c = self.cable_at(did, p["id"])
+                cage = self.port_cage(d, p["id"])
+                if not c or cage in (None, "RJ45"):
+                    continue
+                if not p.get("sfp"):
+                    out.append(("warn", T("{0} · {1}: Kabel gesteckt, aber kein Transceiver").format(
+                        name, port_name(d, p["id"])), did))
+                    continue
+                end_d, end_p, _ = self.trace(did, p["id"])[-1]
+                other = (self.port(end_d, end_p) or {}).get("sfp")
+                if other and ((sfp_family(other) and sfp_family(p["sfp"]) and sfp_family(other) != sfp_family(p["sfp"]))
+                              or (sfp_speed(other) and sfp_speed(p["sfp"]) and sfp_speed(other) != sfp_speed(p["sfp"]))):
+                    out.append(("warn", T("{0} · {1}: Transceiver passen nicht zusammen ({2} ↔ {3})").format(
+                        name, port_name(d, p["id"]), p["sfp"], other), did))
+        return out
 
     def _links(self, d, kind):
         """Kabel an den Ports einer Portart eines Geräts."""
@@ -806,6 +1125,12 @@ class Plan:
             key = T("Server aus der Serverliste") if d.get("inv") else (d["model"] or d["name"])
             devs[key] = devs.get(key, 0) + 1
         rows += [(T("Geräte"), k, "", n) for k, n in sorted(devs.items())]
+        parts = {}
+        for d in self.placed("server"):
+            for name in ([psu_name(k) for k in d.get("psus") or []] + [nic_name(n["m"]) for n in d.get("nics") or []]
+                         + [drive_name(k) for k in d.get("drives") or []]):
+                parts[name] = parts.get(name, 0) + 1
+        rows += [(T("Komponenten"), k, "", n) for k, n in sorted(parts.items())]
         cab = {}
         trx = 0
         for c in self.cables:
@@ -821,12 +1146,11 @@ class Plan:
             for p in d["ports"]:
                 if p.get("sfp") and not p["sfp"].startswith("RJ45") and d["kind"] != "patch":
                     given[p["sfp"]] = given.get(p["sfp"], 0) + 1
-        if given:                                   # im Plan eingetragene Optiken zählen genau
-            rows += [(T("Optiken"), k, "", n) for k, n in sorted(given.items())]
-        else:
-            sfp = 2 * sum(1 for c in self.cables if c["net"] == "fc")
-            if sfp:
-                rows.append((T("Kabel"), T("SFP-Optik FC 32G"), "", sfp))
+        rows += [(T("Optiken"), k, "", n) for k, n in sorted(given.items())]   # eingetragene zählen genau
+        sfp = sum(1 for c in self.cables if c["net"] == "fc" for did, pid in (c["a"], c["b"])
+                  if self.dev(did)["kind"] != "patch" and not (self.port(self.dev(did), pid) or {}).get("sfp"))
+        if sfp:                                     # FC-Ports ohne eingetragene Optik: geschätzt
+            rows.append((T("Kabel"), T("SFP-Optik FC 32G"), "", sfp))
         hu = sum(d["u"] for d in self.placed() if d["kind"] != "blank")
         if hu:
             rows.append((T("Montage"), T("Käfigmuttern und Schrauben"), "", hu * 4))
@@ -946,10 +1270,6 @@ class Plan:
                       **{k: x[k][:60] for k in PORT_FIELDS if isinstance(x.get(k), str) and x[k]}}
                      for x in (d.get("ports") or []) if isinstance(x, dict) and isinstance(x.get("id"), str)
                      and x.get("k") in PORT_KINDS]
-            if kind == "server":
-                kept = {p["id"]: p for p in ports}
-                ports = [{**p, **{k: v for k, v in kept.get(p["id"], {}).items() if k in PORT_FIELDS}}
-                         for p in server_ports(u)]
             dev = {"id": did, "kind": kind, "u": u, "ports": ports,
                    "role": str(d.get("role") or kind), "cat": d.get("cat") if d.get("cat") in CATALOG else None,
                    "prefix": str(d.get("prefix") or ""), "name": str(d.get("name") or did)[:40],
@@ -960,6 +1280,8 @@ class Plan:
                    "rack": None, "pos": None}
             if dev["inv"]:
                 dev["key"] = str(d.get("key") or did)
+            if kind == "server":
+                p._load_parts(dev, d, ports)
             ids.add(did)
             p.devs.append(dev)
             rid, pos = d.get("rack"), d.get("pos")
@@ -979,6 +1301,45 @@ class Plan:
         nums = [int(m.group(1)) for x in ids for m in [re.search(r"(\d+)$", x)] if m]
         p.seq = max([p.seq, int(data.get("seq") or 0) if str(data.get("seq") or 0).isdigit() else 0] + nums)
         return p
+
+    def _load_parts(self, dev, raw, ports):
+        """Komponenten eines gespeicherten Servers prüfen und übernehmen. Pläne ohne Komponenten (Version 1)
+        bekommen die Vorgabe-Karten; deren Ports heißen wie früher n1 … n4, Kabel bleiben also erhalten."""
+        u = dev["u"]
+        psus = raw.get("psus")
+        drives = raw.get("drives")
+        dev["psus"] = ([k for k in psus if k in PSU_MODELS][:PSU_BAYS] if isinstance(psus, list) else default_psus(u))
+        dev["drives"] = [k for k in drives if k in DRIVE_MODELS][:drive_bays(u)] if isinstance(drives, list) else []
+        dev["nics"], dev["ports"] = [], [{"id": "bmc", "k": "bmc"}]
+        raw_nics = raw.get("nics")
+        if not isinstance(raw_nics, list):
+            for slot, model in default_nics(u):
+                self.add_nic(dev, model, slot)
+        else:
+            used = {"bmc"}
+            for n in raw_nics:
+                if not isinstance(n, dict) or n.get("m") not in NIC_MODELS or n.get("slot") not in self.free_slots(
+                        dev, n.get("m")):
+                    continue
+                pids = n.get("ports")
+                if (not isinstance(pids, list) or len(pids) != NIC_MODELS[n["m"]]["n"]
+                        or not all(isinstance(x, str) and re.fullmatch(r"n\d{1,4}", x) and x not in used for x in pids)
+                        or len(set(pids)) != len(pids)):
+                    continue
+                cid = n.get("id") if isinstance(n.get("id"), str) and re.fullmatch(r"c\d{1,4}", n["id"]) and \
+                    not self.nic(dev, n["id"]) else f"c{len(dev['nics']) + 1}"
+                while self.nic(dev, cid):
+                    cid = "c" + str(int(cid[1:]) + 1)
+                dev["nics"].append({"id": cid, "slot": n["slot"], "m": n["m"], "ports": list(pids)})
+                used |= set(pids)
+            self._sync_ports(dev)
+        kept = {x["id"]: x for x in ports}
+        for x in dev["ports"]:
+            for k, v in kept.get(x["id"], {}).items():
+                if k in PORT_FIELDS:
+                    x[k] = v
+            if x.get("sfp") and not sfp_fits(self.port_cage(dev, x["id"]), x["sfp"]):
+                x.pop("sfp")
 
 
 def demo_plan(inventory):
