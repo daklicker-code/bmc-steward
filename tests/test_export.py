@@ -232,3 +232,24 @@ class TestOpenPdfAndHandoverMail(_WebBase):
         self.assertTrue(att[0].get_filename().endswith(".pdf"))
         self.assertTrue(att[0].get_payload(decode=True).startswith(b"%PDF"))
         self.assertNotIn(b"geheimes-werkpw", _SMTP.box[0]["data"])
+
+
+class TestManualSheet(_WebBase):
+    """Auch ohne Auslesen: leeres oder von Hand ausgefülltes Blatt lässt sich öffnen, exportieren, speichern."""
+
+    def test_empty_page_exports(self):
+        qapp()
+        self._isolate_data()
+        from unittest.mock import patch
+        from PyQt6.QtGui import QDesktopServices
+        from bmc_steward.sysaudit import AuditPage
+        page = AuditPage(None)
+        self.addCleanup(page.close)
+        page.checks[0].setChecked(True)
+        with patch.object(QDesktopServices, "openUrl", lambda url: True):
+            self.assertTrue(page.open_pdf())
+        d = tmpdir()
+        for kind in ("csv", "xlsx", "json"):
+            self.assertTrue(page.export_to(kind, d / f"leer.{kind}"), kind)
+        self.assertTrue(page.save_pdf(d / "leer.pdf"))
+        self.assertNotIn("erst auslesen", page.out.toPlainText())

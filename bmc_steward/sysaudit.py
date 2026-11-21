@@ -833,8 +833,8 @@ class AuditPage(_Exports, QWidget):
                 "serial": self.serial.text().strip()}
 
     def sheets(self):
-        h, rows = self.head(), self.rows()
-        return [(h, rows)] if rows or any(h.values()) else []
+        """Immer ein Blatt – auch leer oder von Hand ausgefüllt, ohne vorher auszulesen."""
+        return [(self.head(), self.rows())]
 
     def common_values(self):
         return self.common()
