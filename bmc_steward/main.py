@@ -1,6 +1,6 @@
 """BMC-Steward: Hauptfenster (alle Reiter) und Programmstart."""
 from pathlib import Path
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QFontMetrics, QImage, QPainter, QPixmap)
 from PyQt6.QtCore import (QT_VERSION_STR, QBuffer, QByteArray, QEvent, QIODevice, QLocale, QObject, QRect, QSocketNotifier, QThread, QTimer, QUrl, Qt, pyqtSignal)
@@ -407,7 +407,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         handover.setToolTip(T("Übergabeprotokoll der Serverliste als PDF, Excel- oder CSV-Datei: Adressen, Hostname, "
                               "Seriennummer, Hersteller und Status – ohne Passwörter. Das PDF hat Felder für Übergabe "
                               "und Übernahme mit Unterschrift."))
-        handover.clicked.connect(self.ask_handover)
+        hmenu = QMenu(handover)
+        hmenu.addAction(T("Speichern …"), self.ask_handover)
+        hmenu.addAction(T("Als PDF öffnen"), self.open_handover)
+        hmenu.addAction(T("Per E-Mail …"), lambda: self.handover_mail_dialog().exec())
+        handover.setMenu(hmenu)
         btns.addWidget(handover)
         btns.addStretch()
         btns.addWidget(self.count)
@@ -809,6 +813,34 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             return False
         self.status.setText(T("Übergabeprotokoll gespeichert: {0}").format(path))
         return True
+
+    def handover_pdf(self):
+        """Übergabeprotokoll als PDF in einen privaten Zwischenordner: (Pfad, Platzhalterwerte) oder None."""
+        import tempfile
+        from . import export
+        rows = self.handover_rows()
+        if not rows:
+            self.status.setText(T("Die Serverliste ist leer."))
+            return None
+        staff = self.audit.current_staff()
+        path = Path(tempfile.mkdtemp(prefix="bmc-steward-mail-")) / ("Uebergabe-" + time.strftime("%Y-%m-%d") + ".pdf")
+        export.render_handover(path, rows, staff, time.strftime("%d.%m.%Y"))
+        return path, {"datum": time.strftime("%d.%m.%Y"), "anzahl": len(rows),
+                      "mitarbeiter": staff.get("name", "") if isinstance(staff, dict) else staff}
+
+    def open_handover(self):
+        made = self.handover_pdf()
+        if made and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(made[0]))):
+            self.status.setText(T("Kein Programm zum Anzeigen von PDFs gefunden. Datei liegt unter {0}").format(made[0]))
+
+    def handover_mail_dialog(self):
+        """Übergabeprotokoll (PDF) per E-Mail; vorgeschlagen an den auf der Seite „Systemaudit“ gewählten
+        Mitarbeiter."""
+        from .sysaudit import MailDialog
+        return MailDialog(self, self.handover_pdf, staff=self.audit.current_staff(), title=T("Übergabe per E-Mail"),
+                          texts=(T("Übergabeprotokoll vom {datum}"),
+                                 T("Hallo,\n\nim Anhang das Übergabeprotokoll vom {datum} ({anzahl} Server).\n\n"
+                                   "Viele Grüße\n{mitarbeiter}")))
 
     def ask_handover(self):
         from .sysaudit import pdf_dir

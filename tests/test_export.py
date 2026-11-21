@@ -183,3 +183,52 @@ class TestHandover(_WebBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOpenPdfAndHandoverMail(_WebBase):
+    def test_open_pdf_from_page(self):
+        qapp()
+        self._isolate_data()
+        from unittest.mock import patch
+        from PyQt6.QtGui import QDesktopServices
+        from bmc_steward.sysaudit import AuditPage
+        page = AuditPage(None)
+        self.addCleanup(page.close)
+        page.serial.setText("CZJ025045P")
+        page.add_row(["501533-001", "DIMM 2GB", "2", "A / B"])
+        opened = []
+        with patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()) or True):
+            self.assertTrue(page.open_pdf())
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(pathlib.Path(opened[0]).read_bytes().startswith(b"%PDF"))
+        self.assertIn("CZJ025045P", opened[0])
+
+    def test_handover_by_mail(self):
+        qapp()
+        self._isolate_data()
+        import email
+        from tests.test_settings_mail import _SMTP, smtp_server
+        from bmc_steward import i18n, settings
+        from bmc_steward.sysaudit import save_staff
+        i18n.set_language("de")
+        from bmc_steward.main import Window
+        port = smtp_server(self)
+        settings.save({"smtp_host": "127.0.0.1", "smtp_port": port, "smtp_security": "none",
+                       "smtp_from": "audit@example.org"})
+        save_staff([{"name": "Erika", "email": "erika@example.org"}])
+        w = Window()
+        self.addCleanup(w.deleteLater)
+        w.audit.reload_staff()
+        w.audit.staff.setCurrentIndex(w.audit.staff.findText("Erika"))
+        w.table.setRowCount(0)
+        w.add_row(["10.0.0.5", "geheimes-werkpw", "10.0.1.5", "255.255.255.0", "10.0.1.1", "srv-a", "CZJ1"])
+        dlg = w.handover_mail_dialog()
+        self.addCleanup(dlg.close)
+        self.assertEqual(dlg.to.currentText(), "erika@example.org")
+        self.assertIn("Übergabeprotokoll", dlg.subject.text())
+        self.assertTrue(dlg.send(wait=True), dlg.status.text())
+        msg = email.message_from_bytes(_SMTP.box[0]["data"])
+        att = [p for p in msg.walk() if p.get_filename()]
+        self.assertTrue(att[0].get_filename().endswith(".pdf"))
+        self.assertTrue(att[0].get_payload(decode=True).startswith(b"%PDF"))
+        self.assertNotIn(b"geheimes-werkpw", _SMTP.box[0]["data"])

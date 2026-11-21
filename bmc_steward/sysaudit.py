@@ -455,6 +455,7 @@ class _Exports:
         btn.setToolTip(T("Drucken, Inventar als Excel- oder CSV-Datei, Audit als JSON (z. B. für ein Asset- oder "
                          "Ticket-System)."))
         menu = QMenu(btn)
+        menu.addAction(T("Als PDF öffnen"), self.open_pdf)
         menu.addAction(T("Drucken …"), self.print_sheets)
         menu.addSeparator()
         menu.addAction(T("Inventar als Excel-Datei …"), lambda: self.ask_export("xlsx"))
@@ -493,6 +494,28 @@ class _Exports:
             self.say(T("  FEHLER: {0}").format(e), "err")
             return False
         self.say(T("Exportiert: {0}").format(path), "ok")
+        return True
+
+    def open_pdf(self):
+        """PDF in einen privaten Zwischenordner schreiben und im Standardbetrachter öffnen (nicht abgelegt)."""
+        import tempfile
+        from pathlib import Path
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        if not self.sheets():
+            self.say(T("Noch nichts zum Exportieren – erst auslesen."), "err")
+            return False
+        name = self.export_name("json")[:-5].replace(self.KINDS["json"][1], "Systemaudit", 1) + ".pdf"
+        path = Path(tempfile.mkdtemp(prefix="bmc-steward-pdf-")) / name
+        try:
+            render_sheets(path, self.sheets(), *self.common_values())
+        except OSError as e:
+            self.say(T("  FEHLER: {0}").format(e), "err")
+            return False
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            self.say(T("Kein Programm zum Anzeigen von PDFs gefunden. Datei liegt unter {0}").format(path), "warn")
+            return False
+        self.say(T("PDF geöffnet: {0}").format(path), "ok")
         return True
 
     def print_sheets(self):
@@ -1076,13 +1099,15 @@ class MailThread(QThread):
 class MailDialog(QDialog):
     """Audit-PDF per E-Mail: an den Mitarbeiter (vorgeschlagen) oder an beliebige Empfänger."""
 
-    def __init__(self, parent, maker):
+    def __init__(self, parent, maker, staff=None, texts=None, title=None):
+        """`maker` liefert (PDF-Pfad, Platzhalterwerte) oder None; `staff` (vorgeschlagener Empfänger) und
+        `texts` (Betreff, Text) sind ohne Angabe die des Systemaudits."""
         from . import settings, vault
         super().__init__(parent)
-        self.maker = maker              # liefert (PDF-Pfad, Platzhalterwerte) oder None
+        self.maker = maker
         self.thread = None
         self.cfg = settings.load()
-        self.setWindowTitle(T("Audit per E-Mail"))
+        self.setWindowTitle(title or T("Audit per E-Mail"))
         self.resize(560, 460)
         made = maker()
         self.pdf, values = made if made else (None, {})
@@ -1091,17 +1116,19 @@ class MailDialog(QDialog):
         f.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.to = QComboBox()
         self.to.setEditable(True)
-        staff = load_staff()
-        for e in staff:
+        for e in load_staff():
             if e["email"]:
                 self.to.addItem(e["email"])
-        cur = parent.page.current_staff() if hasattr(parent, "page") else parent.current_staff()
+        if staff is not None:
+            cur = staff
+        else:
+            cur = parent.page.current_staff() if hasattr(parent, "page") else parent.current_staff()
         mine = cur.get("email", "") if isinstance(cur, dict) else ""
         self.to.setEditText(mine)
         self.to.setToolTip(T("Mehrere Empfänger mit Komma oder Semikolon trennen."))
         self.cc = QLineEdit()
         self.cc.setPlaceholderText(T("optional"))
-        subj, body = settings.mail_texts(self.cfg)
+        subj, body = texts or settings.mail_texts(self.cfg)
         self.subject = QLineEdit(mailer_fill(subj, values))
         self.body = QPlainTextEdit(mailer_fill(body, values))
         f.addRow(T("An"), self.to)
