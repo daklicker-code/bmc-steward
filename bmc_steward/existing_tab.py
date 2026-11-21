@@ -164,6 +164,7 @@ class ExistingTabMixin:
         split.setSizes([620, 130])
         split.setChildrenCollapsible(False)
         pl.addWidget(split, 1)
+        self.ex_table.itemChanged.connect(self.ex_update_lamp)
         self.ex_add_row()
         return page
 
@@ -177,10 +178,26 @@ class ExistingTabMixin:
         st.setFlags(st.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.ex_table.setItem(r, 4, st)
         self.ex_table.setCurrentCell(r, 0)
+        self.ex_update_lamp()
 
     def ex_remove_rows(self):
         for r in sorted({i.row() for i in self.ex_table.selectedIndexes()}, reverse=True):
             self.ex_table.removeRow(r)
+        self.ex_update_lamp()
+
+    def ex_update_lamp(self, *_):
+        """Leuchte am Menüpunkt „Bestandsserver“: rot, solange keine Zeile erfolgreich getestet ist, grün, wenn alle
+        es sind, gelb während des Tests oder wenn danach neue Server dazugekommen sind."""
+        if self.__dict__.get("ex_tab") is None:
+            return                                      # Seite ist noch im Aufbau (oder Testattrappe)
+        total = ok = 0
+        for r in range(self.ex_table.rowCount()):
+            if not self.ex_cell(r, 0) or self.ex_table.item(r, 3) is None:
+                continue
+            total += 1
+            ok += self.ex_key(r) in self.ex_ok
+        from .sidenav import list_lamp
+        self.tabs.setLamp(self.ex_tab, *list_lamp(total, ok, self.__dict__.get("ex_lamp_running", False)))
 
     def ex_audit(self):
         """Markierte (sonst erste ausgefüllte) Zeile an „Systemaudit“."""
@@ -288,6 +305,8 @@ class ExistingTabMixin:
         self.ex_stop.setEnabled(True)
         self.ex_table.setEnabled(False)
         self.ex_status.setText(T("Läuft …"))
+        self.ex_lamp_running = True
+        self.ex_update_lamp()
         self.ex_worker.start()
 
     def ex_row_result(self, ip, res):
@@ -303,6 +322,7 @@ class ExistingTabMixin:
         else:
             item.setText(T("Fehler") + ": " + res.get("text", ""))
             item.setBackground(QBrush(QColor("#d9534f")))
+        self.ex_update_lamp()
 
     @staticmethod
     def NAME_OF(res):
@@ -315,6 +335,8 @@ class ExistingTabMixin:
             self.ex_status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
 
     def ex_done(self, code, *_):
+        self.ex_lamp_running = False
+        self.ex_update_lamp()
         self.ex_test.setEnabled(True)
         self.ex_stop.setEnabled(False)
         self.ex_table.setEnabled(True)

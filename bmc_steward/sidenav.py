@@ -20,6 +20,22 @@ SECTION_ROLE = Qt.ItemDataRole.UserRole + 3     # Überschrift über dem Punkt (
 LAMP_ROLE = Qt.ItemDataRole.UserRole + 4        # Farbe der Leuchte rechts („hier läuft gerade etwas“), sonst leer
 HEAD_H, ROW_H = 22, 31
 LAB_LAMP = "#f2c200"         # Leuchte „Testlabor“: virtuelle Server laufen
+DONE_LAMP = "#3fa45b"        # Leuchte „alle Server konfiguriert“ (Neuware, Bestandsserver)
+OPEN_LAMP = "#d9534f"        # Leuchte „noch kein Server konfiguriert“
+
+
+def list_lamp(total, done, running=False):
+    """Leuchte einer Serverliste als (Farbe, Tooltip): gelb, solange ein Lauf läuft oder nach der Konfiguration
+    neue Server dazugekommen sind, grün, wenn alle konfiguriert sind, rot, wenn noch keiner, aus bei leerer Liste."""
+    if running:
+        return LAB_LAMP, T("Hier läuft gerade etwas.")
+    if not total:
+        return None, None
+    if done >= total:
+        return DONE_LAMP, T("Alle Server sind konfiguriert.")
+    if not done:
+        return OPEN_LAMP, T("Noch kein Server konfiguriert.")
+    return LAB_LAMP, T("Neue Server seit der letzten Konfiguration.")
 
 
 class AccentDelegate(QStyledItemDelegate):
@@ -186,10 +202,13 @@ class SideNav(QObject):
     def count(self):
         return self.stack.count()
 
-    def setLamp(self, i, color=None):
-        """Leuchte rechts am Menüpunkt `i` ein- (Farbe, z. B. "#e8b400") oder ausschalten (None)."""
+    def setLamp(self, i, color=None, tip=None):
+        """Leuchte rechts am Menüpunkt `i` ein- (Farbe, z. B. "#e8b400") oder ausschalten (None). `tip` ist der
+        Tooltip des Menüpunkts, ohne Angabe „Hier läuft gerade etwas.“."""
         item = self.menu.item(i) if i is not None else None
-        if item is not None and item.data(LAMP_ROLE) != color:
+        if item is None:
+            return
+        tip = (tip or T("Hier läuft gerade etwas.")) if color else ""
+        if item.data(LAMP_ROLE) != color or item.toolTip() != tip:
             item.setData(LAMP_ROLE, color)
-            tip = T("Hier läuft gerade etwas.") if color else ""
             item.setToolTip(tip)

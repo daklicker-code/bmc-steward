@@ -105,6 +105,9 @@ der grüne Knopf.
 - Der Trockenlauf ist voreingestellt; ein scharfer Lauf zeigt vorher, was passiert, und „Abbrechen“ ist
   vorausgewählt
 - Fehlende Einträge sind gelb markiert, fehlerhafte rot, fertige grün
+- Eine Leuchte am Menüpunkt zeigt den Stand: „Neuware“ und „Bestandsserver“ rot, solange noch kein Server konfiguriert
+  bzw. getestet ist, grün, wenn alle es sind, gelb während eines Laufs oder wenn danach neue Server dazukommen;
+  die UEFI-Konsole leuchtet gelb, solange sie verbunden ist
 - Doppelte oder schon vergebene IP-Adressen werden abgelehnt, bevor etwas geändert wird
 - Ein belegter Dell-User-Slot wird nie überschrieben
 - Der DHCP-Server startet nicht in einem Netz, das nach Produktivnetz aussieht (Standardroute, per DHCP

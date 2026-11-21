@@ -1280,6 +1280,9 @@ class ConsoleMixin:
             self.con_info.clear()
         if state in ("idle", "error"):
             self.con_head.setText(T("Keine Verbindung"))
+        if self.__dict__.get("con_tab") is not None:       # gelbe Leuchte im Menü, solange die Konsole läuft
+            from .sidenav import LAB_LAMP
+            self.tabs.setLamp(self.con_tab, LAB_LAMP if state in ("busy", "live") else None)
         self.console_tools_update()
 
     def console_live_text(self, ip, how, vendor):

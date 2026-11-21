@@ -101,6 +101,9 @@ the green button.
 
 - Dry run is the default; a live run shows what will happen and "Cancel" is preselected
 - Missing entries are highlighted yellow, wrong ones red, finished ones green
+- A lamp on the menu item shows the state: “New hardware” and “Existing servers” red while no server is configured
+  or tested yet, green when all are, yellow during a run or when new servers are added afterwards; the UEFI console
+  lights up yellow while connected
 - Duplicate or already used IP addresses are rejected before anything is changed
 - An occupied Dell user slot is never overwritten
 - The DHCP server refuses to start on anything that looks like a production network

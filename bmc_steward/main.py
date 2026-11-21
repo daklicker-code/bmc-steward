@@ -532,8 +532,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             "(oder aus „DHCP-Server“ übernehmen), oben den neuen Administrator eingeben, im Trockenlauf prüfen, dann "
             "scharf starten. Fertige Zeilen werden grün und beim nächsten Lauf übersprungen.")))
         self.new_page = page
-        self.tabs.addTab(page, T("Neuware"), mark=1, scroll=True)
-        self.tabs.addTab(self.build_existing(), T("Bestandsserver"), mark=2)
+        self.new_tab = self.tabs.addTab(page, T("Neuware"), mark=1, scroll=True)
+        self.ex_tab = self.tabs.addTab(self.build_existing(), T("Bestandsserver"), mark=2)
         con_page = self.build_console()
         for widget, key in ((dhcp_page, "dhcp"), (page, "new"), (con_page, "console")):
             self.deps_footers.append(deps.attach(widget, key))
@@ -555,7 +555,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.swap_page = self.build_board_swap()
         self.tabs.addTab(self.swap_page, T("Mainboard-Tausch"), mark="⇄", section=T("Service"))
         self.tabs.addTab(self.build_audit(), T("Systemaudit"), mark="✓")
-        self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢")
+        self.con_tab = self.tabs.addTab(con_page, T("UEFI-Konsole"), mark="▢")
         self.tabs.addTab(self.build_capture(), T("Aufnahme"), mark="◉", section=T("Werkzeuge"))
         vbmc_page = self.build_vbmc()
         self.vbmc_page = vbmc_page
@@ -566,6 +566,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         for n, (title, mark, widget) in enumerate(self.plugin_host.build_pages()):
             self.tabs.addTab(widget, title, mark=mark, section=T("Plugins") if n == 0 else None)
         self.plugin_host.update_lamps()               # Konsolen, die Plugins schon beim Laden geöffnet haben
+        self.new_update_lamp()                        # Leuchten „Neuware“ und „Bestandsserver“ nach dem Aufbau
+        self.ex_update_lamp()
         help_page = QWidget()                      # Suche, Inhaltsverzeichnis und Text, darunter das animierte Logo
         hl = QVBoxLayout(help_page)
         hl.setContentsMargins(0, 0, 0, 0)
@@ -1497,6 +1499,18 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                            + (T(" · <span style='color:#3fa45b'>{0} fertig</span>").format(fertig) if fertig else '')
                            + (T(" · <span style='color:#d9534f'>{0} mit Fehlern</span>").format(bad) if bad else ''))
         self.update_missing()
+        self.new_update_lamp(total, fertig)
+
+    def new_update_lamp(self, total=None, fertig=None):
+        """Leuchte am Menüpunkt „Neuware“: rot, solange kein Server konfiguriert ist, grün, wenn alle fertig sind,
+        gelb während eines Laufs oder wenn nach der Konfiguration neue Server dazugekommen sind."""
+        if self.__dict__.get("new_tab") is None:
+            return                                      # Seite ist noch im Aufbau (oder Testattrappe)
+        if total is None:
+            total = len(self.rows())
+            fertig = total - len(self.rows(open_only=True))
+        from .sidenav import list_lamp
+        self.tabs.setLamp(self.new_tab, *list_lamp(total, fertig, self.__dict__.get("new_lamp_running", False)))
 
     def load(self, path, settings=False):
         """Liest eine Liste ein; mit settings=True auch die gespeicherten Felder der Maske."""
@@ -1939,6 +1953,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.stop.setEnabled(True)
         self.table.setEnabled(False)
         self.status.setText(T("Läuft …"))
+        self.new_lamp_running = True
+        self.new_update_lamp()
         self.worker.start()
 
     def show_line(self, line, kind=""):
@@ -1951,6 +1967,8 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
             self.status.setText(T("Wird nach dem aktuellen Server abgebrochen …"))
 
     def done(self, code, *_):
+        self.new_lamp_running = False
+        self.new_update_lamp()
         self.start.setEnabled(True)
         self.stop.setEnabled(False)
         self.table.setEnabled(True)
