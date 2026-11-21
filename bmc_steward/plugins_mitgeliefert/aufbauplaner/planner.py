@@ -29,7 +29,7 @@ ORIENTS = ("N", "S", "O", "W")             # Rackfront zeigt nach Norden, Süden
 TILE_M = 0.6                               # Bodenplatte 600 × 600 mm; ein Rack belegt 1 × 2 Platten
 CABLE_LENGTHS = (0.5, 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 30)
 PDU_RESERVE = 0.8                    # über 80 % Last bleibt keine Reserve für eine A/B-Einspeisung
-VENDORS = ("dell", "hpe", "lenovo", "smc", "gen", "netapp", "atto", "brocade")
+VENDORS = ("dell", "hpe", "lenovo", "smc", "gen", "netapp", "atto", "brocade", "cisco")
 KINDS = ("server", "switch", "fw", "patch", "pdu", "blank", "storage", "shelf", "bridge")
 NETS = ("mgmt", "data", "storage", "uplink", "patch", "fc", "sas", "cluster")
 # Portarten: bmc = eigener Management-Port eines Geräts, mgmt = Port eines OOB-Switches, data/up = Ethernet,
@@ -83,6 +83,21 @@ CATALOG = {
     "netapp_bes53248": dict(kind="switch", role="cluster", vendor="netapp", u=1, w=200, prefix="clsw",
                             model="NetApp BES-53248 Cluster-Switch", ports=[(16, "cl", "p"), (2, "up", "u")],
                             plist=[("mgmt", "bmc", "Mgmt")]),
+    # NetApp E-Series (Block-Speicher): E5760-Controller-Shelf mit zwei E5700-Controllern (je 2× FC-Baseboard, SAS-HIC
+    # 1a–1d, Laufwerks-Erweiterung Exp 1/2, Management P1, Service P2), DE460C-Erweiterungen, Cisco-Management-Switch.
+    "netapp_e5760": dict(kind="storage", role="eseries", vendor="netapp", u=4, w=1400, prefix="e5760",
+                         model="NetApp E5760 (2× E5700, 60 Laufwerke)", ports=[],
+                         plist=[(f"{n.lower()}_{pid}", kind, f"{n} {lab}") for n in ("A", "B") for pid, kind, lab in (
+                             ("p1", "bmc", "P1"), ("p2", "bmc", "P2"), ("0a", "fc", "0a"), ("0b", "fc", "0b"),
+                             ("1a", "sas", "1a"), ("1b", "sas", "1b"), ("1c", "sas", "1c"), ("1d", "sas", "1d"),
+                             ("exp1", "sas", "Exp 1"), ("exp2", "sas", "Exp 2"))]),
+    "netapp_de460c": dict(kind="shelf", role="shelf", vendor="netapp", u=4, w=1100, prefix="de460c",
+                          model="NetApp DE460C (60 Laufwerke)", ports=[],
+                          plist=[(f"{m.lower()}{i}", "sas", f"IOM-{m} {i}") for m in "AB" for i in (1, 2, 3, 4)]),
+    "cisco_9200l": dict(kind="switch", role="oob", vendor="cisco", u=1, w=60, prefix="mgmtsw",
+                        model="Cisco Catalyst 9200L-24T-4X", ports=[],
+                        plist=[(f"gi{i}", "mgmt", f"Gi1/0/{i}") for i in range(1, 25)] +
+                              [(f"te{i}", "up", f"Te1/1/{i}") for i in range(1, 5)]),
 }
 
 
@@ -97,12 +112,15 @@ def catalog_texts():
                                    ("leaf", T("Leaf-Switch"), "48×25G + 8×100G"),
                                    ("spine", T("Spine-Switch"), "32×100G"),
                                    ("netapp_bes53248", "NetApp BES-53248", T("Cluster-Interconnect-Switch")),
+                                   ("cisco_9200l", "Cisco Catalyst 9200L", T("Management-Switch 24×1G + 4×10G")),
                                    ("brocade_g620", "Brocade G620", T("FC-Switch 24 × 32G"))]),
         ("fw", T("Firewalls"), [("fw", T("Firewall"), "8×10G + 2 WAN")]),
         ("storage", T("Speicher"), [("netapp_aff", "NetApp AFF A400", T("Controller-HA-Paar, 2 Knoten")),
                                     ("netapp_ds224c", "NetApp DS224C", T("Disk Shelf, 24 SSD")),
                                     ("netapp_ds460c", "NetApp DS460C", T("Disk Shelf, 60 HDD")),
-                                    ("atto_7600n", "ATTO FibreBridge 7600N", T("FC-auf-SAS-Bridge"))]),
+                                    ("atto_7600n", "ATTO FibreBridge 7600N", T("FC-auf-SAS-Bridge")),
+                                    ("netapp_e5760", "NetApp E5760", T("E-Series-Block-Speicher, 2 Controller, 60 Laufwerke")),
+                                    ("netapp_de460c", "NetApp DE460C", T("E-Series-Erweiterung, 60 Laufwerke"))]),
         ("patch", T("Patchpanels"), [("patch", T("Patchpanel"), T("24 Ports Cat6a")),
                                      ("patch_lc", T("LWL-Spleißbox"), T("24 × LC Duplex"))]),
         ("power", T("Stromversorgung"), [("pdu", T("PDU 16 A"), T("3,7 kW Anschlussleistung"))]),
@@ -895,6 +913,8 @@ class Plan:
             return [], T("Zuerst ein Rack anlegen oder auswählen.")
         if key == "metrocluster":
             return self._metrocluster(rid)
+        if key == "eseries":
+            return self._eseries(rid)
         made = []
         for cat in {"head": ("patch", "oob"), "ha": ("leaf", "leaf")}[key]:
             d = self.new_device(cat)
@@ -944,6 +964,44 @@ class Plan:
                  (fb1, "sasa", sh1, "a1"), (sh1, "a3", sh2, "a1"), (sh1, "b3", sh2, "b1"), (fb2, "sasa", sh2, "b3"),
                  (aff, "a_e3a", cl1, "p1"), (aff, "a_e3b", cl2, "p1"), (aff, "b_e3a", cl1, "p2"),
                  (aff, "b_e3b", cl2, "p2"), (cl1, "u1", cl2, "u1"), (cl1, "u2", cl2, "u2")]
+        for a, ap, b, bp in links:
+            self.connect(a, ap, b, bp)
+        return made, None
+
+    def _place_all(self, rid, order):
+        """Geräte aus dem Katalog der Reihe nach von oben einbauen. Gibt (Geräte, Fehlertext oder None) zurück."""
+        r = self.rack(rid)
+        need = sum(CATALOG[k]["u"] for k in order)
+        free_u = r["h"] - self.rack_load(rid)["used"]
+        if free_u < need:
+            return [], T("Im Rack {0} ist nicht genug Platz.").format(r["name"]) + " " + \
+                T("Die Vorlage braucht {0} HE, frei sind {1}.").format(need, free_u)
+        made = []
+        for key in order:
+            d = self.new_device(key)
+            pos = self.free_pos(rid, d["u"])
+            if pos is None:
+                for x in made:
+                    self.unplace(x)
+                return [], T("Im Rack {0} ist nicht genug Platz.").format(r["name"])
+            self.place(d, rid, pos)
+            made.append(d)
+        return made, None
+
+    def _eseries(self, rid):
+        """NetApp E-Series FC-SAN wie im Lehrbuch: Cisco-Management-Switch, zwei FC-Switches (Fabric A/B), E5760 mit
+        DE460C-Erweiterung und zwei ATTO FibreBridges – fertig verkabelt. Jeder Controller hängt an beiden Fabrics."""
+        made, err = self._place_all(rid, ("cisco_9200l", "brocade_g620", "brocade_g620", "netapp_e5760",
+                                          "netapp_de460c", "atto_7600n", "atto_7600n"))
+        if err:
+            return made, err
+        mg, fa, fb, e, sh, b1, b2 = (d["id"] for d in made)
+        links = [(e, "a_0a", fa, "p1"), (e, "b_0a", fa, "p2"), (e, "a_0b", fb, "p1"), (e, "b_0b", fb, "p2"),
+                 (b1, "fc1", fa, "p3"), (b1, "fc2", fb, "p3"), (b2, "fc1", fa, "p4"), (b2, "fc2", fb, "p4"),
+                 (b1, "sasa", e, "a_1a"), (b1, "sasb", e, "b_1a"), (b2, "sasa", e, "a_1b"), (b2, "sasb", e, "b_1b"),
+                 (e, "a_exp1", sh, "a1"), (e, "b_exp1", sh, "b1"),
+                 (e, "a_p1", mg, "gi1"), (e, "b_p1", mg, "gi2"), (b1, "mgmt", mg, "gi3"), (b2, "mgmt", mg, "gi4"),
+                 (fa, "mgmt", mg, "gi5"), (fb, "mgmt", mg, "gi6")]
         for a, ap, b, bp in links:
             self.connect(a, ap, b, bp)
         return made, None
@@ -1054,9 +1112,19 @@ class Plan:
         for d in self.placed():
             name, did = d["name"], d["id"]
             if d["kind"] in ("storage", "bridge") or (d["kind"] == "switch" and d["role"] in ("fc", "cluster")):
-                if any(p["k"] == "bmc" and not self.cable_at(did, p["id"]) for p in d["ports"]):
+                mg = [p for p in d["ports"] if p["k"] == "bmc" and not (d["role"] == "eseries" and p["id"].endswith("_p2"))]
+                if any(not self.cable_at(did, p["id"]) for p in mg):        # E-Series: P2 bleibt für den Service frei
                     out.append(("warn", T("{0}: Management-Port nicht verkabelt").format(name), did))
-            if d["kind"] == "storage":
+            if d["kind"] == "storage" and d["role"] == "eseries":
+                for ctl in ("a", "b"):
+                    fc = [c for c in (self.cable_at(did, p["id"]) for p in d["ports"]
+                                      if p["k"] == "fc" and p["id"].startswith(ctl + "_")) if c]
+                    if not fc:
+                        out.append(("warn", T("{0}: Controller {1} ohne FC-Verbindung").format(name, ctl.upper()), did))
+                    elif len(self._peers(d, fc)) < 2:
+                        out.append(("warn", T("{0}: Controller {1} nur an einer Fabric – beim Ausfall eines Switches "
+                                              "fehlt ihm der Pfad").format(name, ctl.upper()), did))
+            elif d["kind"] == "storage":
                 fc = self._links(d, "fc")
                 if not fc:
                     out.append(("warn", T("{0}: keine FC-Verbindung").format(name), did))
@@ -1180,7 +1248,7 @@ class Plan:
                 state[d["id"]] = "down"
             elif d["kind"] == "storage":           # Controller: Management wie ein Server, dazu FC und Cluster
                 fc, cl = self._links(d, "fc"), self._links(d, "cl")
-                worst = [fraction(fc), fraction(cl)]
+                worst = [fraction(fc)] + ([] if d["role"] == "eseries" else [fraction(cl)])
                 state[d["id"]] = "down" if "down" in worst and fc else "degraded" if "degraded" in worst or \
                     "down" in worst else "ok"
             elif d["kind"] == "bridge":
@@ -1412,4 +1480,31 @@ def netapp_demo_plan(inventory):
         if spot:
             p.place(d, net["id"], spot)
     p.auto_cable()
+    return p
+
+
+def eseries_demo_plan(inventory):
+    """Beispiel NetApp E-Series FC-SAN: Speicher-Rack mit Cisco-Management-Switch, FC-Switches, E5760, DE460C und ATTO
+    FibreBridges, daneben zwei ESXi-Hosts mit FC-HBA (je ein Port pro Fabric) – fertig verkabelt."""
+    p = Plan()
+    p.name = T("Beispiel NetApp E-Series")
+    p.site, p.room, p.row = "FRA", T("Raum 2"), "C"
+    p.cols, p.rows = 20, 12
+    p.sync_inventory(inventory)
+    sto = p.add_rack("C04", 42, at=(2, 3))
+    srv = p.add_rack("D04", 42, at=(3, 3))
+    for rid in (sto["id"], sto["id"], srv["id"], srv["id"]):    # A- und B-Einspeisung
+        p.place(p.new_device("pdu"), rid, p.free_pos(rid, 1, top=False))
+    p.apply_template("eseries", sto["id"])
+    fa, fb = [d for d in p.placed("switch") if d["role"] == "fc"]
+    mg = next(d for d in p.placed("switch") if d["role"] == "oob")
+    for k in range(2):
+        h = p.new_device("server2")
+        h["name"] = f"esx{k + 1:02d}"
+        p.add_nic(h, "pcie_fc32")
+        p.place(h, srv["id"], p.free_pos(srv["id"], 2))
+        fc = [x["id"] for x in h["ports"] if x["k"] == "fc"]
+        p.connect(h["id"], fc[0], fa["id"], f"p{5 + k}")
+        p.connect(h["id"], fc[1], fb["id"], f"p{5 + k}")
+        p.connect(h["id"], "bmc", mg["id"], f"gi{7 + k}")
     return p

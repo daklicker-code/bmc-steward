@@ -95,7 +95,7 @@ the green button.
   racks, cabling and addresses, checks redundancy and PDU load, produces a bill of materials and hands hostnames and
   BMC addresses to “New hardware” or the servers to the test lab. Servers can be fitted with power supplies, network
   cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives; floor plan with tile coordinates, failure simulation,
-  undo. Its help is in the page's “Plan” menu.
+  undo; templates for NetApp MetroCluster FC and NetApp E-Series FC SAN (E5760, DE460C, Cisco management switch). Its help is in the page's “Plan” menu.
 
 ## Built to forgive mistakes
 

@@ -31,7 +31,7 @@ from bmc_steward.i18n import HERE
 
 from .planner import (CATALOG, DRIVE_MODELS, NIC_MODELS, PSU_BAYS, PSU_MODELS, compatible, MAX_COLS, MAX_DEV_U,
                       MAX_RACK_U, MAX_ROWS, MIN_GRID, MIN_RACK_U, NETS, RACK_SIZES, Plan, catalog_texts, col_name,
-                      coord_name, demo_plan, drive_bays, drive_name, netapp_demo_plan, nic_name, parse_coord,
+                      coord_name, demo_plan, drive_bays, drive_name, eseries_demo_plan, netapp_demo_plan, nic_name, parse_coord,
                       port_name, psu_name, rack_tiles, server_slots, vendor_of)
 from .texts import T, help_html
 
@@ -116,7 +116,7 @@ THEMES = {
 STRIPE_COLOR = {"dell": "#8a4fc0", "hpe": "#1f8f8f", "smc": "#4a8f2a", "lenovo": "#c9741a", "gen": "#6b7280",
                 "switch": "#0284c7", "fw": "#b0457a", "pdu": "#a07a1a", "patch": "#64748b", "blank": "#cbd5e1",
                 "netapp": "#3b6ea5", "atto": "#8c5a3c", "brocade": "#7a8c2e", "storage": "#3b6ea5", "shelf": "#51678a",
-                "bridge": "#8c5a3c"}
+                "bridge": "#8c5a3c", "cisco": "#2b7a9b"}
 
 
 def apply_theme(name):
@@ -717,7 +717,7 @@ class RackCanvas(ZoomPan, QWidget):
                     p.drawRoundedRect(box.adjusted(-2, -2, 2, 2), 1.5, 1.5)
         if self.view == "front" and d["kind"] != "blank":   # Herstellerkennung rechts an der Front
             badge = {"dell": "DELL", "hpe": "HPE", "lenovo": "LENOVO", "smc": "SMC", "netapp": "NETAPP",
-                     "atto": "ATTO", "brocade": "BROCADE"}.get(d.get("vendor") or "")
+                     "atto": "ATTO", "brocade": "BROCADE", "cisco": "CISCO"}.get(d.get("vendor") or "")
             badge = badge or {"switch": "SW", "fw": "FW", "pdu": "PDU", "patch": "PP"}.get(d["kind"], "")
             if badge:
                 f = QFont(self.font())
@@ -1777,6 +1777,7 @@ class PlannerTabMixin:
         fm.addSeparator()
         fm.addAction(T("Beispielaufbau laden"), self.planner_demo)
         fm.addAction(T("Beispiel NetApp MetroCluster laden"), self.planner_demo_netapp)
+        fm.addAction(T("Beispiel NetApp E-Series laden"), self.planner_demo_eseries)
         fm.addSeparator()
         fm.addAction(T("Hilfe zum Aufbauplaner"), self.planner_help)
         file_btn.setMenu(fm)
@@ -1810,6 +1811,8 @@ class PlannerTabMixin:
         tm.addSeparator()
         tm.addAction(T("NetApp MetroCluster FC (FC-Switches, Cluster-Switches, AFF, ATTO-Bridges, Shelves)"),
                      lambda: self.planner_template("metrocluster"))
+        tm.addAction(T("NetApp E-Series FC-SAN (Cisco, FC-Switches, E5760, DE460C, ATTO-Bridges)"),
+                     lambda: self.planner_template("eseries"))
         tm.addSeparator()
         tm.addAction(T("Offene Geräte automatisch verkabeln"), self.planner_auto_cable)
         tpl_btn.setMenu(tm)
@@ -3309,7 +3312,8 @@ class PlannerTabMixin:
             for key, text in (("head", T("Management-Kopf (Patchpanel, OOB-Switch, PDU)")),
                               ("ha", T("HA-Paar (zwei Leaf-Switches mit Querverbindung)")),
                               ("metrocluster", T("NetApp MetroCluster FC (FC-Switches, Cluster-Switches, AFF, "
-                                                 "ATTO-Bridges, Shelves)"))):
+                                                 "ATTO-Bridges, Shelves)")),
+                              ("eseries", T("NetApp E-Series FC-SAN (Cisco, FC-Switches, E5760, DE460C, ATTO-Bridges)"))):
                 tm.addAction(text, lambda k=key: (self.pl_canvas.select(("rack", ident)), self.planner_template(k)))
             menu.addSeparator()
             menu.addAction(T("Rack löschen …"), lambda: self.planner_delete_rack(ident))
@@ -3874,6 +3878,14 @@ class PlannerTabMixin:
         self.planner_set_plan(netapp_demo_plan(self.planner_inventory()), dirty=False)
         self.planner_say(T("Beispiel NetApp MetroCluster geladen: Rack D04 enthält AFF-HA-Paar, ATTO-Bridges, Shelves, "
                            "FC- und Cluster-Switches."))
+
+    def planner_demo_eseries(self):
+        if not self.planner_confirm_discard():
+            return
+        self.plan_path = None
+        self.planner_set_plan(eseries_demo_plan(self.planner_inventory()), dirty=False)
+        self.planner_say(T("Beispiel NetApp E-Series geladen: Rack C04 enthält Cisco-Management-Switch, FC-Switches, E5760, "
+                           "DE460C und ATTO-Bridges, Rack D04 zwei ESXi-Hosts mit FC-HBA."))
 
     def planner_demo(self):
         if not self.planner_confirm_discard():

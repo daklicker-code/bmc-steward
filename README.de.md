@@ -98,7 +98,8 @@ der grüne Knopf.
   Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt Hostnamen und
   BMC-Adressen an „Neuware“ oder die Server ans Testlabor. Server lassen sich mit Netzteilen, Netzwerkkarten,
   Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken; Grundriss mit Bodenplatten-Koordinaten,
-  Ausfall-Simulation, Rückgängig. Die Hilfe steht im Menü „Plan“ der Seite.
+  Ausfall-Simulation, Rückgängig; Vorlagen für NetApp MetroCluster FC und NetApp E-Series FC-SAN (E5760, DE460C,
+  Cisco-Management-Switch). Die Hilfe steht im Menü „Plan“ der Seite.
 
 ## Schutz vor Fehlbedienung
 

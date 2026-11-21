@@ -303,6 +303,43 @@ class TestNetApp(unittest.TestCase):
         self.assertEqual(made, [])
         self.assertIn("14 HE", err)
 
+    def test_eseries_template_clean_and_redundant(self):
+        p = Plan()
+        r = p.add_rack("S", 42)
+        p.place(p.new_device("pdu"), r["id"], 1)
+        made, err = p.apply_template("eseries", r["id"])
+        self.assertIsNone(err)
+        mg, fa, fb, e, sh, b1, b2 = made
+        self.assertEqual((e["role"], mg["vendor"], sh["cat"]), ("eseries", "cisco", "netapp_de460c"))
+        self.assertEqual(port_name(e, "a_0a"), "A 0a")
+        self.assertEqual(port_name(mg, "gi1"), "Gi1/0/1")
+        self.assertEqual(p.other_end(p.cable_at(e["id"], "a_0a"), e["id"], "a_0a")[0], fa["id"])
+        self.assertEqual(p.other_end(p.cable_at(e["id"], "a_0b"), e["id"], "a_0b")[0], fb["id"])
+        texts = [t for _, t, _ in p.checks()]
+        self.assertFalse([t for t in texts if e["name"] in t], texts)     # kein Cluster-Interconnect nötig, P2 frei
+        state = p.simulate(failed=[fa["id"]])
+        self.assertEqual(state[e["id"]], "degraded")             # Fabric B trägt
+        p.disconnect(p.cable_at(e["id"], "b_0b")["id"])
+        self.assertTrue(any("Controller B nur an einer Fabric" in t for t in (x[1] for x in p.checks())))
+        p.disconnect(p.cable_at(e["id"], "b_0a")["id"])
+        self.assertTrue(any("Controller B ohne FC-Verbindung" in t for t in (x[1] for x in p.checks())))
+
+    def test_eseries_example(self):
+        p = planner.eseries_demo_plan(INV)
+        e = p.placed("storage")[0]
+        self.assertEqual(e["cat"], "netapp_e5760")
+        hosts = [d for d in p.placed("server") if d["name"].startswith("esx")]
+        self.assertEqual(len(hosts), 2)
+        fa, fb = [d for d in p.placed("switch") if d["role"] == "fc"]
+        for h in hosts:
+            peers = {p.other_end(c, h["id"], c["a"][1] if c["a"][0] == h["id"] else c["b"][1])[0]
+                     for c in p._links(h, "fc")}
+            self.assertEqual(peers, {fa["id"], fb["id"]})
+        self.assertFalse([t for lvl, t, _ in p.checks() if lvl == "err"])
+        q = Plan.from_dict(json.loads(json.dumps(p.to_dict())))
+        self.assertEqual(len(q.cables), len(p.cables))
+        self.assertEqual(q.dev(p.placed("switch")[0]["id"])["vendor"], p.placed("switch")[0]["vendor"])
+
     def test_remove_rack_with_devices(self):
         p, r, oob, leaf, a, b = small_plan()
         p.place(a, r["id"], 5)
@@ -724,7 +761,7 @@ class TestPage(unittest.TestCase):
             self.assertEqual({it.data(0, 0x0100) for it in (lib.category("switch").child(i)
                                                              for i in range(lib.category("switch").childCount()))},
                              {"cat:oob", "cat:access", "cat:leaf", "cat:spine", "cat:netapp_bes53248",
-                              "cat:brocade_g620"})
+                              "cat:brocade_g620", "cat:cisco_9200l"})
             # Klick auf eine Kategorie klappt sie auf; das bleibt nach einer Änderung am Plan so
             lib.itemClicked.emit(lib.category("switch"), 0)
             self.assertTrue(lib.category("switch").isExpanded())
