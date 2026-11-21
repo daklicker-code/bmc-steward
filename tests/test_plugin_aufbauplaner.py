@@ -1,4 +1,4 @@
-"""Aufbauplaner-Plugin (docs/plugin-aufbauplaner): Platzprüfung, Kabel, Prüfung, Netzplan, Stückliste,
+"""Mitgeliefertes Aufbauplaner-Plugin (bmc_steward/plugins_mitgeliefert/aufbauplaner): Platzprüfung, Kabel, Prüfung, Netzplan, Stückliste,
 Ausfall-Simulation, Speichern/Laden und die Plugin-Seite im Hauptfenster (Übernahme in die Serverliste, Bestand
 aus „Neuware“)."""
 import json
@@ -833,7 +833,7 @@ class TestPluginIntegration(unittest.TestCase):
     def test_broken_close_request_never_blocks(self):
         from bmc_steward import plugins
         host = plugins.Host()
-        host.hooks["close_request"].append((plugins.Plugin(_aufbauplaner.SRC), lambda: 1 / 0))
+        host.hooks["close_request"].append((plugins.Plugin(_aufbauplaner.SRC, builtin=True), lambda: 1 / 0))
         self.assertTrue(host.allow_close())
 
     def test_to_testlab(self):
@@ -891,7 +891,7 @@ class TestPluginIntegration(unittest.TestCase):
         from bmc_steward import plugins
         mod = _aufbauplaner.package()[0]
         host = plugins.Host()
-        api = plugins.PluginAPI(plugins.Plugin(_aufbauplaner.install()), host)
+        api = plugins.PluginAPI(plugins.Plugin(_aufbauplaner.SRC, builtin=True), host)
         with mock.patch.object(api, "app_version", "3.13.1"), self.assertRaises(RuntimeError):
             mod.register(api)
         self.assertEqual(host.pages, [])
@@ -917,6 +917,89 @@ class TestPluginIntegration(unittest.TestCase):
         self.assertEqual(bad, [])
         self.assertFalse([k for k, v in _texts.TR.items() if len(v) != 3 or not all(v)])
         self.assertEqual(set(_texts.HELP), {"de", "en", "fr", "gsw"})
+
+
+class TestPreinstalled(unittest.TestCase):
+    """Der Aufbauplaner ist mitgeliefert: lädt ohne Kopieren und Freigabe, lässt sich abschalten, und eine eigene
+    Kopie gleichen Namens (aus 3.14.0) lädt nicht doppelt."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        self.tmp = Path(tempfile.mkdtemp(prefix="bmc-mitgeliefert-"))
+        p = patch.object(i18n, "DATA", self.tmp)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_loads_without_approval(self):
+        from bmc_steward import plugins
+        self.assertFalse((self.tmp / "bmc-plugins.json").exists())
+        host = plugins.Host()
+        found = host.load()
+        mine = next(p for p in found if p.id == "aufbauplaner")
+        self.assertTrue(mine.builtin)
+        self.assertTrue(mine.loaded, mine.error)
+        self.assertEqual(mine.status({})[0], "aktiv")
+        self.assertEqual([t for t, m, w in host.build_pages()], ["Aufbauplaner"])
+
+    def test_switch_off_and_on(self):
+        from bmc_steward import plugins
+        plugins.save_state({}, {"aufbauplaner"})
+        host = plugins.Host()
+        mine = next(p for p in host.load() if p.id == "aufbauplaner")
+        self.assertFalse(mine.loaded)
+        self.assertEqual(mine.status({})[0], "mitgeliefert, abgeschaltet")
+        self.assertEqual(host.pages, [])
+        plugins.save_state({})                                    # Freigaben speichern lässt „aus“ stehen
+        self.assertEqual(plugins.load_off(), {"aufbauplaner"})
+        plugins.save_state({}, set())
+        host = plugins.Host()
+        self.assertTrue(next(p for p in host.load() if p.id == "aufbauplaner").loaded)
+
+    def test_settings_page_switches_off(self):
+        from unittest.mock import patch
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QMessageBox
+        from bmc_steward import plugins
+        page = plugins.settings_page()
+        r = next(i for i, p in enumerate(page.found) if p.id == "aufbauplaner")
+        self.assertEqual(page.table.item(r, 0).checkState(), Qt.CheckState.Checked)
+        page.table.item(r, 0).setCheckState(Qt.CheckState.Unchecked)
+        with patch.object(QMessageBox, "warning") as warn:           # mitgeliefert: keine Sicherheitsrückfrage
+            self.assertTrue(page.apply())
+        warn.assert_not_called()
+        self.assertEqual(plugins.load_off(), {"aufbauplaner"})
+        page.table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+        self.assertTrue(page.apply())
+        self.assertEqual(plugins.load_off(), set())
+        self.assertFalse(page.apply())                                # nichts geändert
+
+    def test_own_copy_is_replaced(self):
+        import os
+        import shutil
+        from bmc_steward import plugins
+        dst = plugins.plugin_dir() / "aufbauplaner"
+        shutil.copytree(_aufbauplaner.SRC, dst, ignore=shutil.ignore_patterns("__pycache__"))
+        for root, ds, fs in os.walk(dst.parent):
+            os.chmod(root, 0o700)
+        plugins.save_state({"aufbauplaner": plugins.digest(dst)})
+        host = plugins.Host()
+        found = [p for p in host.load() if p.id == "aufbauplaner"]
+        self.assertEqual([p.builtin for p in found], [True, False])
+        self.assertTrue(found[0].loaded)
+        self.assertFalse(found[1].loaded)
+        self.assertIn("mitgelieferte", found[1].status(plugins.load_state())[0])
+        self.assertEqual(len(host.build_pages()), 1)                  # nicht doppelt im Menü
+
+    def test_safe_mode_skips_it(self):
+        import os
+        from unittest.mock import patch
+        from bmc_steward import plugins
+        with patch.dict(os.environ, {"BMC_STEWARD_NO_PLUGINS": "1"}):
+            host = plugins.Host()
+            self.assertEqual(host.load(), [])
+        self.assertEqual(host.pages, [])
 
 
 if __name__ == "__main__":

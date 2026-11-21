@@ -3,8 +3,8 @@
 Plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt
 Hostnamen und BMC-Adressen an „Neuware“ oder die Server ans Testlabor.
 
-Installieren: diesen Ordner nach <Datenordner>/plugins/aufbauplaner/ kopieren, BMC-Steward starten,
-unter ⚙ → „Plugins“ freigeben und neu starten. Die Seite „Aufbauplaner“ erscheint im Menü unter „Plugins“.
+Mitgeliefert: BMC-Steward lädt das Plugin ab 3.15.0 beim Start von selbst (bmc_steward/plugins_mitgeliefert/);
+abschalten lässt es sich unter ⚙ → „Plugins“. Die Seite „Aufbauplaner“ steht im Menü unter „Plugins“.
 """
 from . import texts
 from .page import PlannerPage           # beim Laden importieren: BMC-Steward schreibt dann kein .pyc in den Ordner

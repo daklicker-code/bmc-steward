@@ -347,20 +347,21 @@ class TestWindowLayout(unittest.TestCase):
     def test_page_order_and_sections(self):
         # Fest im Code: 0 = DHCP-Server, 1 = Neuware; alles andere wird über indexOf angesprungen
         from bmc_steward.sidenav import MARK_ROLE, SECTION_ROLE
-        self.assertEqual(self.w.tabs.count(), 13)
-        names = [self.w.tabs.menu.item(i).text() for i in range(13)]
+        self.assertEqual(self.w.tabs.count(), 14)
+        names = [self.w.tabs.menu.item(i).text() for i in range(14)]
         self.assertEqual(names, ["DHCP-Server", "Neuware", "Bestandsserver", "UEFI-Einstellungen", "Dienste",
                                  "Benutzerkonten", "Firmware", "Mainboard-Tausch", "Systemaudit", "UEFI-Konsole", "Aufnahme", "Testlabor",
-                                 "Hilfe"])
-        sections = {i: self.w.tabs.menu.item(i).data(SECTION_ROLE) for i in range(13)}
-        self.assertEqual({i: s for i, s in sections.items() if s}, {0: "Einrichtung", 3: "Konfiguration", 7: "Service", 10: "Werkzeuge"})
+                                 "Aufbauplaner", "Hilfe"])                       # Aufbauplaner: mitgeliefertes Plugin
+        sections = {i: self.w.tabs.menu.item(i).data(SECTION_ROLE) for i in range(14)}
+        self.assertEqual({i: s for i, s in sections.items() if s}, {0: "Einrichtung", 3: "Konfiguration", 7: "Service", 10: "Werkzeuge",
+                                                                12: "Plugins"})
         self.assertEqual([self.w.tabs.menu.item(i).data(MARK_ROLE) for i in range(7)], list(range(7)))
         self.assertEqual(self.w.tabs.indexOf(self.w.con_page), 9)
         self.assertEqual(self.w.tabs.indexOf(self.w.swap_page), 7)
 
     def test_help_page_shows_animated_logo(self):
         from bmc_steward.monitor import AnimatedLogo
-        page = self.w.tabs.widget(12)
+        page = self.w.tabs.widget(13)
         self.assertIs(self.w.help_logo.parent(), page)
         self.assertIsInstance(self.w.help_logo, AnimatedLogo)
 

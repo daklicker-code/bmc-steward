@@ -1,4 +1,4 @@
-"""Aufbauplaner-Plugin: die Seite – Racks zusammenstellen, Geräte einbauen, verkabeln, prüfen.
+"""Aufbauplaner (mitgeliefertes Plugin): die Seite – Racks zusammenstellen, Geräte einbauen, verkabeln, prüfen.
 
 Links die Bibliothek (Server aus der Serverliste, Switches, Infrastruktur, Platzhalter), in der Mitte die
 Racks als Zeichenfläche (RackCanvas), rechts Eigenschaften, Prüfung, Netze und Stückliste. Der Plan selbst

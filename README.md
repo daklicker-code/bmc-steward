@@ -89,12 +89,12 @@ the green button.
   Ready-made plugin **Port scan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): checks open TCP ports (presets for
   BMC and server services, optionally IPMI via UDP 623 and banners) on addresses, networks or the server list, with CSV export.
   Connection attempts only, no login.
-  Ready-made plugin **Rack planner** ([`docs/plugin-aufbauplaner/`](docs/plugin-aufbauplaner/), built in up to 3.13,
-  only available as a plugin since 3.14): plans racks, cabling and addresses, checks redundancy and PDU load, produces
-  a bill of materials and hands hostnames and BMC addresses to “New hardware” or the servers to the test lab. Servers
-  can be fitted with power supplies, network cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives; floor plan with
-  tile coordinates, failure simulation, undo. Copy the folder to `<data folder>/plugins/aufbauplaner/`, approve it,
-  restart; its help is in the page's “Plan” menu.
+  Bundled plugin **Rack planner** ([`bmc_steward/plugins_mitgeliefert/aufbauplaner/`](bmc_steward/plugins_mitgeliefert/aufbauplaner/)):
+  loads at startup by itself (can be switched off under ⚙ → “Plugins”) and sits in the menu under “Plugins”. Plans
+  racks, cabling and addresses, checks redundancy and PDU load, produces a bill of materials and hands hostnames and
+  BMC addresses to “New hardware” or the servers to the test lab. Servers can be fitted with power supplies, network
+  cards, transceivers (SFP+, SFP28, QSFP28, FC) and drives; floor plan with tile coordinates, failure simulation,
+  undo. Its help is in the page's “Plan” menu.
 
 ## Built to forgive mistakes
 

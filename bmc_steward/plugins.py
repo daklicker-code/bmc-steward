@@ -12,8 +12,12 @@ nur für den Benutzer lesbaren Datenordner, Konsolen-Sitzungen, die als Reiter i
 (api.add_console, Terminal-Widget über api.terminal), die Leuchte am eigenen Menüpunkt und Server fürs
 Testlabor (ab 3.14.0: put_servers, set_lamp, testlab_state, testlab_load, Ereignis close_request).
 
+Mitgelieferte Plugins (bmc_steward/plugins_mitgeliefert/<kennung>/, z. B. der Aufbauplaner) gehören zum
+Programm: Sie laden ab dem ersten Start ohne Freigabe und lassen sich in den Einstellungen abschalten. Ein
+eigenes Plugin mit derselben Kennung wird dann nicht geladen (es würde sonst doppelt erscheinen).
+
 Sicherheit: Ein Plugin ist Python-Code und läuft mit allen Rechten des Programms. Deshalb lädt BMC-Steward
-nichts von selbst:
+eigene Plugins nicht von selbst:
   - Jedes Plugin muss in den Einstellungen (Reiter „Plugins“) einzeln freigegeben werden.
   - Bei der Freigabe merkt sich das Tool einen SHA-256-Fingerabdruck aller Dateien des Ordners. Ändert sich
     danach auch nur ein Byte, wird das Plugin nicht mehr geladen, bis es erneut freigegeben wird.
@@ -41,6 +45,7 @@ MAX_BYTES = 20 * 1024 * 1024        # größere Plugin-Ordner werden nicht geles
 WINDOWS = sys.platform.startswith("win")
 
 _MODULES = {}                        # Kennung -> (Fingerabdruck, Modul); bleibt über einen Sprachwechsel
+BUILTIN_DIR = Path(__file__).resolve().parent / "plugins_mitgeliefert"
 
 
 def plugin_dir():
@@ -67,8 +72,21 @@ def load_state():
             if isinstance(k, str) and ID_RE.match(k) and isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v)}
 
 
-def save_state(enabled):
-    i18n.write_private(state_file(), json.dumps({"enabled": dict(sorted(enabled.items()))}, indent=1))
+def load_off():
+    """Kennungen der mitgelieferten Plugins, die der Benutzer abgeschaltet hat."""
+    try:
+        data = json.loads(state_file().read_text(encoding="utf-8"))
+        off = data.get("builtin_off", []) if isinstance(data, dict) else []
+    except (OSError, ValueError):
+        off = []
+    return {k for k in off if isinstance(k, str) and ID_RE.match(k)} if isinstance(off, list) else set()
+
+
+def save_state(enabled, off=None):
+    """Freigaben eigener Plugins speichern; `off` (abgeschaltete mitgelieferte) bleibt ohne Angabe erhalten."""
+    off = load_off() if off is None else set(off)
+    i18n.write_private(state_file(), json.dumps({"enabled": dict(sorted(enabled.items())),
+                                                 "builtin_off": sorted(off)}, indent=1))
 
 
 def _files(path):
@@ -122,9 +140,10 @@ def unsafe(path):
 class Plugin:
     """Ein gefundener Plugin-Ordner mit Angaben aus plugin.json und Ladezustand."""
 
-    def __init__(self, path):
+    def __init__(self, path, builtin=False):
         self.path = Path(path)
         self.id = self.path.name
+        self.builtin = bool(builtin)     # mitgeliefert: gehört zum Programm, keine Freigabe nötig
         self.name, self.version, self.description, self.author = self.id, "", "", ""
         self.digest, self.problem, self.error = "", "", ""
         self.loaded = False
@@ -143,16 +162,23 @@ class Plugin:
                     meta.get("api"), API_VERSION))
             if not (self.path / "plugin.py").is_file():
                 raise ValueError(T("plugin.py fehlt"))
-            self.digest = digest(self.path)
+            if not self.builtin:             # mitgelieferte prüft die Signatur des Programms, nicht die Freigabe
+                self.digest = digest(self.path)
         except (OSError, ValueError) as e:
             self.problem = str(e) if not isinstance(e, json.JSONDecodeError) else T("plugin.json ist kein gültiges JSON")
             if isinstance(e, FileNotFoundError):
                 self.problem = T("{0} fehlt").format(Path(e.filename or "plugin.json").name)
 
-    def status(self, enabled):
-        """(Kurztext, ladbar) für die Einstellungen und den Start."""
+    def status(self, enabled, off=None):
+        """(Kurztext, ladbar) für die Einstellungen und den Start. `off`: abgeschaltete mitgelieferte Plugins."""
         if self.problem:
             return T("fehlerhaft: {0}").format(self.problem), False
+        if self.builtin:
+            if self.id in (load_off() if off is None else off):
+                return T("mitgeliefert, abgeschaltet"), False
+            if self.error:
+                return T("Fehler: {0}").format(self.error), False
+            return (T("aktiv") if self.loaded else T("mitgeliefert")), True
         if self.id not in enabled:
             return T("nicht freigegeben"), False
         if enabled[self.id] != self.digest:
@@ -165,14 +191,24 @@ class Plugin:
         return (T("aktiv") if self.loaded else T("freigegeben")), True
 
 
-def discover():
-    """Alle Plugin-Ordner, nach Kennung sortiert."""
-    base = plugin_dir()
+def _folders(base):
     try:
-        entries = sorted(p for p in base.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith("."))
+        return sorted(p for p in Path(base).iterdir()
+                      if p.is_dir() and not p.is_symlink() and not p.name.startswith((".", "_")))
     except OSError:
         return []
-    return [Plugin(p) for p in entries]
+
+
+def discover():
+    """Alle Plugins: zuerst die mitgelieferten, dann die eigenen, jeweils nach Kennung sortiert. Ein eigenes
+    Plugin mit der Kennung eines mitgelieferten wird nicht geladen."""
+    builtin = [Plugin(p, builtin=True) for p in _folders(BUILTIN_DIR)]
+    ids = {p.id for p in builtin}
+    own = [Plugin(p) for p in _folders(plugin_dir())]
+    for p in own:
+        if p.id in ids and not p.problem:
+            p.problem = T("ersetzt durch das mitgelieferte Plugin gleichen Namens")
+    return builtin + own
 
 
 def _import(plugin):
@@ -395,13 +431,13 @@ class Host:
         if disabled():
             LOG.info(T("Plugins abgeschaltet (BMC_STEWARD_NO_PLUGINS)"))
             return []
-        enabled = load_state()
+        enabled, off = load_state(), load_off()
         self.plugins = discover()
         for p in self.plugins:
-            _, ok = p.status(enabled)
+            text, ok = p.status(enabled, off)
             if not ok:
-                if p.id in enabled:
-                    LOG.info(T("Plugin {0} nicht geladen: {1}").format(p.name, p.status(enabled)[0]))
+                if p.id in enabled or (p.builtin and p.id not in off):
+                    LOG.info(T("Plugin {0} nicht geladen: {1}").format(p.name, text))
                 continue
             pages, hooks, cons = len(self.pages), {e: len(v) for e, v in self.hooks.items()}, len(self.consoles)
             try:
@@ -519,6 +555,11 @@ def settings_page():
                              "der Freigabe, wird das Plugin nicht mehr geladen.").format(plugin_dir()))
             intro.setWordWrap(True)
             lay.addWidget(intro)
+            builtin = QLabel(T("Mitgelieferte Plugins (z. B. der Aufbauplaner) gehören zum Programm: Sie sind von "
+                               "Anfang an aktiv und lassen sich hier abschalten."))
+            builtin.setWordWrap(True)
+            builtin.setObjectName("muted")
+            lay.addWidget(builtin)
             if disabled():
                 off = QLabel(T("Plugins abgeschaltet (BMC_STEWARD_NO_PLUGINS)"))
                 off.setObjectName("muted")
@@ -549,7 +590,7 @@ def settings_page():
             self.fill()
 
         def fill(self):
-            self.enabled = load_state()
+            self.enabled, self.off = load_state(), load_off()
             self.found = discover()
             loaded = {pid for pid, (dg, _) in _MODULES.items()}
             self.table.setRowCount(len(self.found))
@@ -558,23 +599,30 @@ def settings_page():
                 box = QTableWidgetItem()
                 box.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsSelectable
                              | (Qt.ItemFlag.ItemIsEnabled if not p.problem else Qt.ItemFlag.NoItemFlags))
-                ok = p.id in self.enabled and self.enabled[p.id] == p.digest
+                ok = (p.id not in self.off) if p.builtin else (p.id in self.enabled and self.enabled[p.id] == p.digest)
                 box.setCheckState(Qt.CheckState.Checked if ok else Qt.CheckState.Unchecked)
                 self.table.setItem(r, 0, box)
                 name = QTableWidgetItem(p.name)
                 name.setToolTip("\n".join(x for x in (p.description, p.author and T("von {0}").format(p.author),
-                                                      str(p.path), "SHA-256 " + (p.digest or "–")) if x))
+                                                      T("mitgeliefert mit BMC-Steward") if p.builtin else "",
+                                                      str(p.path), "" if p.builtin else "SHA-256 " + (p.digest or "–"))
+                                           if x))
                 self.table.setItem(r, 1, name)
                 self.table.setItem(r, 2, QTableWidgetItem(p.version))
-                self.table.setItem(r, 3, QTableWidgetItem(p.status(self.enabled)[0]))
+                self.table.setItem(r, 3, QTableWidgetItem(p.status(self.enabled, self.off)[0]))
 
         def wanted(self):
             return {p.id: p for r, p in enumerate(self.found)
-                    if self.table.item(r, 0).checkState() == Qt.CheckState.Checked and not p.problem}
+                    if self.table.item(r, 0).checkState() == Qt.CheckState.Checked and not p.problem
+                    and not p.builtin}
+
+        def switched_off(self):
+            return {p.id for r, p in enumerate(self.found)
+                    if p.builtin and self.table.item(r, 0).checkState() != Qt.CheckState.Checked}
 
         def apply(self, parent=None):
             """Freigaben speichern. Neu freigegebene erst nach Rückfrage. True, wenn sich etwas geändert hat."""
-            want = self.wanted()
+            want, off = self.wanted(), self.switched_off()
             new = [p for pid, p in want.items() if self.enabled.get(pid) != p.digest]
             if new:
                 names = "\n".join(f"• {p.name} {p.version} ({p.path})" for p in new)
@@ -589,9 +637,9 @@ def settings_page():
                         want.pop(p.id)
             result = {pid: p.digest for pid, p in want.items()}
             # Freigaben für Ordner, die gerade fehlen (z. B. umbenannt), bleiben nicht stehen
-            changed = result != self.enabled
+            changed = result != self.enabled or off != self.off
             if changed:
-                save_state(result)
+                save_state(result, off)
             self.fill()
             return changed
 

@@ -92,12 +92,12 @@ der grüne Knopf.
   Fertiges Plugin **Portscan** ([`docs/plugin-portscan/`](docs/plugin-portscan/)): prüft offene TCP-Ports (Vorlagen für
   BMC- und Server-Dienste, optional IPMI über UDP 623 und Banner) auf Adressen, Netzen oder der Serverliste, mit CSV-Export.
   Nur Verbindungsaufbau, keine Anmeldung.
-  Fertiges Plugin **Aufbauplaner** ([`docs/plugin-aufbauplaner/`](docs/plugin-aufbauplaner/), bis 3.13 fest eingebaut,
-  seit 3.14 nur noch als Plugin): plant Racks, Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine
-  Stückliste und übergibt Hostnamen und BMC-Adressen an „Neuware“ oder die Server ans Testlabor. Server lassen sich mit
-  Netzteilen, Netzwerkkarten, Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken; Grundriss mit
-  Bodenplatten-Koordinaten, Ausfall-Simulation, Rückgängig. Ordner nach `<Datenordner>/plugins/aufbauplaner/`
-  kopieren, freigeben, neu starten; die Hilfe steht im Menü „Plan“ der Seite.
+  Mitgeliefertes Plugin **Aufbauplaner** ([`bmc_steward/plugins_mitgeliefert/aufbauplaner/`](bmc_steward/plugins_mitgeliefert/aufbauplaner/)):
+  lädt beim Start von selbst (abschaltbar unter ⚙ → „Plugins“) und steht im Menü unter „Plugins“. Plant Racks,
+  Verkabelung und Adressen, prüft Redundanz und PDU-Last, erstellt eine Stückliste und übergibt Hostnamen und
+  BMC-Adressen an „Neuware“ oder die Server ans Testlabor. Server lassen sich mit Netzteilen, Netzwerkkarten,
+  Transceivern (SFP+, SFP28, QSFP28, FC) und Laufwerken bestücken; Grundriss mit Bodenplatten-Koordinaten,
+  Ausfall-Simulation, Rückgängig. Die Hilfe steht im Menü „Plan“ der Seite.
 
 ## Schutz vor Fehlbedienung
 

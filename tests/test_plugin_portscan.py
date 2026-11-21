@@ -124,6 +124,9 @@ class TestAsPlugin(unittest.TestCase):
         p = patch.object(i18n, "DATA", self.tmp)
         p.start()
         self.addCleanup(p.stop)
+        b = patch.object(plugins, "BUILTIN_DIR", self.tmp / "mitgeliefert")   # nur die Plugins dieses Tests
+        b.start()
+        self.addCleanup(b.stop)
         plugins._MODULES.clear()
         self.addCleanup(plugins._MODULES.clear)
         os.environ.pop("BMC_STEWARD_NO_PLUGINS", None)

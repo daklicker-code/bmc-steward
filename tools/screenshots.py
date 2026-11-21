@@ -54,16 +54,7 @@ def main():
         fleet.start(b)
         bmcs[idx] = (v, f"127.0.0.1:{b._redfish[0].socket.getsockname()[1]}", b)
 
-    # Aufbauplaner-Plugin aus docs/ installieren und freigeben (Bild 7 zeigt seine Seite)
-    import shutil
-    from bmc_steward import plugins
-    dst = plugins.plugin_dir() / "aufbauplaner"
-    shutil.copytree(Path(__file__).resolve().parent.parent / "docs" / "plugin-aufbauplaner", dst,
-                    ignore=shutil.ignore_patterns("__pycache__"))
-    for q in [dst.parent, dst, *dst.rglob("*")]:
-        q.chmod(0o700 if q.is_dir() else 0o600)
-    plugins.save_state({"aufbauplaner": plugins.digest(dst)})
-
+    # Bild 7 zeigt die Seite des mitgelieferten Aufbauplaner-Plugins (lädt von selbst)
     from bmc_steward.main import Window
     w = Window()
     w.resize(*SIZE)
