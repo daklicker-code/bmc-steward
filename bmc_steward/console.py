@@ -23,6 +23,7 @@ from .monitor import MonitorWidget, SegmentSwitch
 from .netscan_dialog import NetScanDialog
 from .osk import KeyFeeder, OnScreenKeyboard, send_qt_key
 from .termkeys import ALT, CTRL, FKEY_ESC, KEYMAP, KEYMAP_ENUM, SHIFT, encode_key
+from .core import set_role
 
 
 
@@ -999,12 +1000,15 @@ class ConsoleMixin:
         f.addRow(self.con_serial_box)
 
         self.con_connect = QPushButton(T("Verbinden"))
+        set_role(self.con_connect, "go")
         self.con_connect.setMinimumHeight(30)
         self.con_connect.clicked.connect(self.console_connect)
         self.con_disconnect = QPushButton(T("Trennen"))
+        set_role(self.con_disconnect, "stop")
         self.con_disconnect.setEnabled(False)
         self.con_disconnect.clicked.connect(self.console_disconnect)
         self.con_start = QPushButton(T("Konsole starten"))
+        set_role(self.con_start, "go")
         self.con_start.setEnabled(False)
         self.con_start.setToolTip(T("Öffnet die Konsole des BMC in einem eigenen Reiter."))
         self.con_start.clicked.connect(self.console_goto)

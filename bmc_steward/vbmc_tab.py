@@ -28,7 +28,7 @@ from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 
 from .applog import LOG, LevelCombo, LogView, open_in_editor
 from .i18n import HERE, T
-from .core import WINDOWS
+from .core import WINDOWS, set_role
 
 # Muss zu tools/vbmc/vbmc.py passen (GENS / FACTORY)
 VENDORS = [("dell", "Böll"), ("hpe", "Häpe"), ("lenovo", "Venolo"), ("smc", "Hypernano")]
@@ -865,6 +865,7 @@ class VbmcTabMixin:
                 t.setItem(r, c, it)
             if lab:
                 b = QPushButton(T("Kabel ziehen") if s.get("link", True) else T("Kabel stecken"))
+                set_role(b, "stop" if s.get("link", True) else "go")       # trennen rot, verbinden grün
                 b.setToolTip(T('Zieht das Netzwerkkabel dieses Servers: Der Server läuft weiter, ist im Netz aber nicht mehr erreichbar (wie bei einem Kabelbruch oder abgeschaltetem Switch-Port).') if s.get("link", True) else T('Steckt das Netzwerkkabel dieses Servers wieder an: Er ist wieder erreichbar und kann sich per DHCP eine Adresse holen.'))
                 b.clicked.connect(lambda _=False, i=s.get("id"), up=not s.get("link", True): self.vbmc_link(i, up))
                 t.setCellWidget(r, S_LINK, b)

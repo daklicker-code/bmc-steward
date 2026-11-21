@@ -18,7 +18,7 @@ import tempfile
 import time
 from . import i18n
 from .i18n import HELP, HERE, LANGS, LIST, PROFILES, T, load_lang, set_language
-from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, loopback_to_real, mask, netmask, row_errors
+from .core import intro_label, ABOUT, DONE_BG, ERR_BG, ERR_CSS, LIVE_CSS, MISS_BG, MISS_CSS, USER_RE, WINDOWS, __version__, ipv4, ipv4_port, loopback_to_real, mask, netmask, row_errors, set_role
 from .branding import app_icon
 from .monitor import AnimatedLogo
 from .help_tab import HelpPage
@@ -392,10 +392,11 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         btns.addWidget(add)
         btns.addWidget(rem)
         btns.addWidget(again)
-        scan = QPushButton(T("Handy-Scanner …"))
+        scan = self.scan_btn = QPushButton(T("Handy-Scanner …"))
+        set_role(scan, "scan")
         scan.setToolTip(T("Passwörter vom Aufkleber/Anhänger mit der Handy-Kamera abfotografieren und direkt in die\n"
                         "Spalte „Passwort“ eintragen. Das Handy speichert keine Bilder."))
-        scan.clicked.connect(self.open_scanner)
+        scan.clicked.connect(lambda: self.open_scanner("new"))
         btns.addWidget(scan)
         find = QPushButton(T("Server suchen …"))
         find.setToolTip(T("Adresse unbekannt? Sucht im Netz nach BMCs (nur lesend, ohne Anmeldung) und übernimmt die\n"
@@ -443,6 +444,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.dry.setToolTip(T("Mit Haken wird nichts geändert: Das Protokoll zeigt nur, welche Aufrufe\n"
                             "an welches Gerät gingen. Ohne Haken werden die Geräte wirklich umgestellt."))
         self.start = QPushButton(T("Start"))
+        set_role(self.start, "go")
         self.start.setDefault(True)
         self.start.setMinimumHeight(38)
         self.start.setToolTip(T("Prüft die Eingaben und bearbeitet dann alle noch offenen Zeilen der Reihe nach:\n"
@@ -450,12 +452,13 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
                               "Fertige (grüne) Zeilen werden übersprungen. Vor einem scharfen Lauf\n"
                               "wird nachgefragt."))
         self.start.clicked.connect(self.run)
-        self.start.setObjectName("primary")
         self.stop = QPushButton(T("Abbrechen"))
+        set_role(self.stop, "stop")
         self.stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
         self.stop.setEnabled(False)
         self.stop.clicked.connect(self.abort)
         self.serial_btn = QPushButton(T("Seriennummern auslesen"))
+        set_role(self.serial_btn, "go")
         self.serial_btn.setToolTip(T("Liest für alle Zeilen ohne Seriennummer die Seriennummer (Dell: Service-Tag) aus dem BMC.\n"
                                      "Nur lesend, ein Anmeldeversuch je Gerät mit dem Passwort der Zeile (iLO 3/4: ohne Anmeldung).\n"
                                      "Das geschieht auch automatisch beim Eintragen einer Aktuellen IP. Eingetragenes wird nie überschrieben."))
@@ -837,6 +840,7 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         self.audit_page = page
         self.audit = AuditPage(page)
         self.audit.sources = self.audit_sources
+        self.audit.scanner = lambda: self.open_scanner("audit")
         lay.addWidget(self.audit, 1)
         return page
 
@@ -1785,11 +1789,46 @@ class Window(ConsoleMixin, FirmwareTabMixin, CaptureTabMixin, UsersTabMixin, Vbm
         threads.append(getattr(getattr(self, "swap", None), "thread", None))
         return self.running() or any(t is not None and t.isRunning() for t in threads)
 
-    def open_scanner(self):
-        if getattr(self, "scanner", None) is None:
+    def scan_targets(self, dest):
+        """Zielfelder des Handy-Scanners je Seite: (Anzeige, (Seite, Feld)) und die Voreinstellung (Passwort)."""
+        if dest == "existing":
+            cols = [T("Adresse (BMC)"), T("Port"), T("Benutzer"), T("Passwort")]
+            return [(name, ("existing", i)) for i, name in enumerate(cols)], 3
+        if dest == "audit":
+            fields = [("pw", T("Passwort")), ("user", T("Benutzer")), ("addr", T("Adresse")),
+                      ("maker", T("Hersteller")), ("model", T("Modell/Typ")), ("serial", T("Seriennummer"))]
+            return [(name, ("audit", key)) for key, name in fields], 0
+        return [(name, ("new", i)) for i, name in enumerate(i18n.COLS)], 1
+
+    def open_scanner(self, dest="new"):
+        """Handy-Scanner für „Neuware“, „Bestandsserver“ oder „Systemaudit“; die Scans landen auf dieser Seite."""
+        from PyQt6 import sip
+        if getattr(self, "scanner", None) is None or sip.isdeleted(self.scanner):
             self.scanner = ScannerDialog(self)
+        self.scanner.set_targets(*self.scan_targets(dest))
         self.scanner.show()
         self.scanner.raise_()
+
+    def scan_value(self, value, target):
+        """Wert vom Handy-Scanner eintragen. Zeilennummer (ab 1) in einer Tabelle, -1 bei einem Einzelfeld,
+        0 wenn nichts frei war."""
+        dest, field = target if isinstance(target, tuple) else ("new", target)
+        if dest == "audit":
+            getattr(self.audit, field).setText(value)
+            return -1
+        if dest == "existing":
+            t = self.ex_table
+            n, r = t.rowCount(), t.currentRow()
+            if not 0 <= r < n:
+                r = next((i for i in range(n) if not self.ex_cell(i, field)), -1)
+            if r < 0:
+                self.ex_add_row()
+                r = t.rowCount() - 1
+            t.setItem(r, field, QTableWidgetItem(value))
+            if r + 1 < t.rowCount():
+                t.setCurrentCell(r + 1, field)
+            return r + 1
+        return self.scan_to_row(value, field)
 
     def scan_to_row(self, value, col=1):
         """Trägt einen vom Handy gelesenen Wert in die gewählte Spalte (Scanner-Fenster, Standard: Passwort)

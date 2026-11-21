@@ -15,6 +15,7 @@ from . import capture, i18n
 from .applog import LOG
 from .core import intro_label
 from .i18n import T
+from .core import set_role
 
 
 class CaptureThread(QThread):
@@ -99,8 +100,10 @@ class CaptureTabMixin:
         form.addRow(QLabel(T("Zielordner")), dirrow)
         form.addRow(self.cap_redact)
         self.cap_start = QPushButton(T("Aufnehmen"))
+        set_role(self.cap_start, "go")
         self.cap_start.clicked.connect(self.capture_start)
         self.cap_stop = QPushButton(T("Abbrechen"))
+        set_role(self.cap_stop, "stop")
         self.cap_stop.setEnabled(False)
         self.cap_stop.clicked.connect(lambda: self.cap_thread and self.cap_thread.stop())
         self.cap_open = QPushButton(T("Ordner öffnen"))

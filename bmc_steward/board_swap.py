@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QFormLayout, 
 from . import i18n, trust
 from .i18n import T
 from .redfish import BiosEngine, RedfishClient
+from .core import set_role
 
 # UEFI-Attribute, die zur Kennung des Gehäuses gehören: werden nie aus einer Sicherung übernommen
 IDENT_ATTRS = ("serialnumber", "productid", "servicetag", "assettag", "uuid", "sku")
@@ -460,6 +461,7 @@ class BoardSwapPage(QWidget):
         h = QHBoxLayout()
         h.setContentsMargins(0, 0, 0, 0)
         self.check_btn = QPushButton(T("Prüfen (nur lesend)"))
+        set_role(self.check_btn, "go")
         self.check_btn.setToolTip(T("Liest, was das neue Board meldet, vergleicht es mit dem Aufkleber und sucht "
                                     "die Sicherung des alten Boards. Ändert nichts."))
         self.check_btn.clicked.connect(self.check)
@@ -583,7 +585,7 @@ class BoardSwapPage(QWidget):
         self.dry.setObjectName("toggle")
         self.dry.setChecked(True)
         self.run_btn = QPushButton(T("Ausführen"))
-        self.run_btn.setObjectName("primary")
+        set_role(self.run_btn, "go")
         self.run_btn.setMinimumHeight(34)
         self.run_btn.setEnabled(False)
         self.run_btn.clicked.connect(self.execute)

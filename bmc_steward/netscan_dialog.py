@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFileDialog,
                              QTableWidgetItem, QVBoxLayout)
 from . import netscan
 from .i18n import T
+from .core import set_role
 
 COLS = ("Adresse", "Hersteller", "Produkt", "Seriennummer", "Web", "IPMI", "MAC", "Hinweis")
 # Eigene Palette, keine Markenfarben
@@ -106,9 +107,11 @@ class NetScanDialog(QDialog):
         row2.addWidget(self.ssdp)
         row2.addStretch()
         self.go = QPushButton(T("Suche starten"))
+        set_role(self.go, "go")
         self.go.setDefault(True)
         self.go.clicked.connect(self.start)
         self.stop_btn = QPushButton(T("Stopp"))
+        set_role(self.stop_btn, "stop")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop)
         row2.addWidget(self.go)

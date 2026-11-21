@@ -20,6 +20,7 @@ from . import i18n
 from .applog import LOG
 from .i18n import HERE, T
 from .redfish import FirmwareEngineThread, FirmwareReadThread
+from .core import set_role
 
 
 # Download-Seiten der Hersteller (Anzeigename, Adresse, Hinweis). Die Seiten öffnen im Standardbrowser; das Tool
@@ -80,6 +81,7 @@ class FirmwareTabMixin:
         refresh.setFixedWidth(36)
         refresh.clicked.connect(self.fw_refresh_ips)
         read_btn = QPushButton(T("Inventar lesen"))
+        set_role(read_btn, "go")
         read_btn.clicked.connect(self.fw_read_inventory)
         iprow = QHBoxLayout()
         iprow.addWidget(QLabel(T("Adresse")))
@@ -174,9 +176,11 @@ class FirmwareTabMixin:
         self.fw_dry.setChecked(True)
         self.fw_dry.toggled.connect(self.fw_dry_changed)
         self.fw_start = QPushButton()
+        set_role(self.fw_start, "go")
         self.fw_start.setMinimumHeight(34)
         self.fw_start.clicked.connect(self.firmware_run)
         self.fw_stop = QPushButton(T("Abbrechen"))
+        set_role(self.fw_stop, "stop")
         self.fw_stop.setEnabled(False)
         self.fw_stop.clicked.connect(self.fw_abort)
         self.fw_status = QLabel(T("Bereit"))

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDateEdit,
 from . import i18n
 from .i18n import T
 from .redfish import RedfishClient
+from .core import set_role
 
 STAFF_FIELDS = ("name", "email", "phone", "address", "extra")
 
@@ -544,6 +545,7 @@ class AuditPage(_Exports, QWidget):
         super().__init__(parent)
         self.thread = None
         self.sources = lambda: []
+        self.scanner = lambda: None         # Hauptfenster: Handy-Scanner für diese Seite öffnen
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         left = QVBoxLayout()
@@ -580,6 +582,7 @@ class AuditPage(_Exports, QWidget):
         f.addRow(T("Passwort"), self.pw)
         h = QHBoxLayout()
         self.read_btn = QPushButton(T("Auslesen (nur lesend)"))
+        set_role(self.read_btn, "go")
         self.read_btn.setToolTip(T("Liest Hersteller, Modell, Seriennummer und die Bauteile (Arbeitsspeicher, "
                                    "Prozessoren, Netzteile, Datenträger) mit Part- und Seriennummern. Ändert nichts."))
         self.read_btn.clicked.connect(self.read)
@@ -590,6 +593,12 @@ class AuditPage(_Exports, QWidget):
                                     "Datum gelten für alle."))
         self.batch_btn.clicked.connect(lambda: BatchAuditDialog(self).exec())
         h.addWidget(self.batch_btn)
+        self.scan_btn = QPushButton(T("Handy-Scanner …"))
+        set_role(self.scan_btn, "scan")
+        self.scan_btn.setToolTip(T("Passwort, Seriennummer oder andere Felder dieser Seite mit der Handy-Kamera "
+                                   "abfotografieren und eintragen. Das Handy speichert keine Bilder."))
+        self.scan_btn.clicked.connect(lambda: self.scanner())
+        h.addWidget(self.scan_btn)
         h.addStretch(1)
         f.addRow("", h)
         left.addWidget(box)
@@ -982,6 +991,7 @@ class BatchAuditDialog(_Exports, QDialog):
             h.addWidget(b)
         h.addStretch(1)
         self.go = QPushButton(T("Auslesen und als PDF speichern …"))
+        set_role(self.go, "go")
         self.go.clicked.connect(self.start)
         h.addWidget(self.go)
         self.last_pdf = None
@@ -1156,6 +1166,7 @@ class MailDialog(QDialog):
         lay.addWidget(self.status)
         h = QHBoxLayout()
         self.send_btn = QPushButton(T("Senden"))
+        set_role(self.send_btn, "go")
         self.send_btn.setEnabled(bool(self.cfg["smtp_host"] and self.pdf))
         self.send_btn.clicked.connect(lambda: self.send())
         client = QPushButton(T("Im Mailprogramm öffnen"))

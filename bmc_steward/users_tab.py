@@ -21,6 +21,7 @@ from . import i18n, vault
 from .applog import LOG
 from .i18n import T
 from .redfish import Engine, UsersActionThread, UsersEngine, UsersEngineThread, UsersListThread
+from .core import set_role
 
 
 class NewAccountDialog(QDialog):
@@ -86,6 +87,7 @@ class UsersTabMixin:
         refresh.setFixedWidth(36)
         refresh.clicked.connect(self.users_refresh_ips)
         load_btn = QPushButton(T("Konten laden"))
+        set_role(load_btn, "go")
         load_btn.clicked.connect(self.users_load)
         iprow = QHBoxLayout()
         iprow.addWidget(QLabel(T("Adresse")))
@@ -142,6 +144,7 @@ class UsersTabMixin:
         self.rot_dry.setChecked(True)
         self.rot_dry.toggled.connect(self.rot_dry_changed)
         self.rot_now = QPushButton()
+        set_role(self.rot_now, "go")
         self.rot_now.clicked.connect(self.rot_run_now)
         row1 = QHBoxLayout()
         row1.addWidget(self.rot_dry)

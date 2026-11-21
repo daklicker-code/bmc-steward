@@ -20,6 +20,7 @@ from .core import WINDOWS, ipv4
 from .dhcp import DhcpThread, probe_dhcp_servers
 from . import deps
 from .i18n import T
+from .core import set_role
 
 
 class DhcpTabMixin:
@@ -53,6 +54,7 @@ class DhcpTabMixin:
         rng.addWidget(QLabel(T("bis")))
         rng.addWidget(self.dhcp_to)
         self.dhcp_btn = QPushButton(T("DHCP starten"))
+        set_role(self.dhcp_btn, "go")
         self.dhcp_btn.setMinimumHeight(34)
         self.dhcp_btn.setToolTip(T("Startet bzw. stoppt die Adressvergabe auf der gewählten Karte.\n"
                                  "Nur an einem getrennten Staging-Switch verwenden."))
@@ -302,6 +304,7 @@ class DhcpTabMixin:
         self.dhcp_log.clear()
         self.lease_state = None
         self.dhcp_btn.setText(T("DHCP stoppen"))
+        set_role(self.dhcp_btn, "stop")
         self.dhcp_ip = ip
         self.guard_timer.start()
         self.dhcp_state.setText(T("<b style='color:#3fa45b'>Läuft</b> auf {0}, {1} bis {2}").format(data[0] if not WINDOWS else data[1], lo, hi))
@@ -412,6 +415,7 @@ class DhcpTabMixin:
             shutil.rmtree(os.path.dirname(self.lease_file), ignore_errors=True)
             self.lease_file = None
         self.dhcp_btn.setText(T("DHCP starten"))
+        set_role(self.dhcp_btn, "go")
         self.iface.setEnabled(True)
         self.dhcp_from.setEnabled(True)
         self.dhcp_to.setEnabled(True)

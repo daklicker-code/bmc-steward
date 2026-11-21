@@ -13,6 +13,7 @@ from . import i18n
 from .applog import LOG
 from .i18n import BIOS_PROFILES, T
 from .redfish import BiosEngine, BiosEngineThread, BiosReadThread, Engine
+from .core import set_role
 
 
 class BiosTabMixin:
@@ -44,6 +45,7 @@ class BiosTabMixin:
         refrow.addWidget(self.bios_ref, 1)
         refrow.addWidget(ref_refresh)
         self.bios_read_btn = QPushButton(T("Attribute lesen"))
+        set_role(self.bios_read_btn, "go")
         self.bios_read_btn.setToolTip(T("Liest die tatsächlich vorhandenen UEFI-Attribute von diesem einen\n"
                                       "Gerät. Nur Lesen, es wird nichts verändert."))
         self.bios_read_btn.clicked.connect(self.bios_read)
@@ -97,11 +99,13 @@ class BiosTabMixin:
                                     "Reset-Taste), ein ausgeschalteter wird eingeschaltet. Nur für Server\n"
                                     "ohne laufendes Betriebssystem verwenden."))
         self.bios_start = QPushButton(T("Auf allen Servern der Liste setzen"))
+        set_role(self.bios_start, "go")
         self.bios_start.setMinimumHeight(34)
         self.bios_start.setToolTip(T("Wendet jedes ausgefüllte „Neuer Wert“-Feld auf jede Zeile der\n"
                                    "Serverliste („Neuware“) an, der Reihe nach, mit Login wie oben."))
         self.bios_start.clicked.connect(self.bios_run)
         self.bios_stop = QPushButton(T("Abbrechen"))
+        set_role(self.bios_stop, "stop")
         self.bios_stop.setToolTip(T("Bricht nach dem Server ab, der gerade bearbeitet wird"))
         self.bios_stop.setEnabled(False)
         self.bios_stop.clicked.connect(self.bios_abort)

@@ -166,6 +166,14 @@ QPushButton#primary {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:
                       color: {on_accent}; border: none; font-weight: bold; padding: 8px 18px; }}
 QPushButton#primary:disabled {{ background: {line2}; color: {dim}; }}
 QPushButton#danger {{ background: {err_soft}; color: {err}; border: 1px solid {err}; font-weight: bold; }}
+QPushButton[role="go"] {{ background: #2e9a55; color: #ffffff; border: 1px solid #23803f; font-weight: bold; }}
+QPushButton[role="go"]:hover {{ background: #278a4b; }}
+QPushButton[role="stop"] {{ background: #c9302c; color: #ffffff; border: 1px solid #a52623; font-weight: bold; }}
+QPushButton[role="stop"]:hover {{ background: #b02a26; }}
+QPushButton[role="scan"] {{ background: #00707a; color: #ffffff; border: 1px solid #005861; font-weight: bold; }}
+QPushButton[role="scan"]:hover {{ background: #005f68; }}
+QPushButton[role="go"]:disabled, QPushButton[role="stop"]:disabled, QPushButton[role="scan"]:disabled {{
+    background: {line2}; color: {dim}; border-color: {line}; }}
 QLineEdit, QComboBox, QAbstractSpinBox, QPlainTextEdit, QTextEdit, QTextBrowser {{
     background: {input}; color: {text}; border: 1px solid {line2}; border-radius: 6px; padding: 4px 7px;
     selection-background-color: {accent_strong}; selection-color: #ffffff; }}

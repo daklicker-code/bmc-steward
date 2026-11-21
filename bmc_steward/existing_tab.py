@@ -14,6 +14,7 @@ from .applog import LOG
 from .core import ipv4
 from .i18n import T
 from .redfish import ProbeEngine, ProbeThread
+from .core import set_role
 
 
 class PwDelegate(QStyledItemDelegate):
@@ -108,8 +109,14 @@ class ExistingTabMixin:
         self.ex_audit_btn.setToolTip(T("Liest den markierten Server (sonst den ersten) für das Audit-Blatt aus und "
                                        "öffnet „Systemaudit“. Nur lesend."))
         self.ex_audit_btn.clicked.connect(self.ex_audit)
+        self.ex_scan_btn = QPushButton(T("Handy-Scanner …"))
+        set_role(self.ex_scan_btn, "scan")
+        self.ex_scan_btn.setToolTip(T("Passwörter (oder Adresse, Port, Benutzer) mit der Handy-Kamera abfotografieren "
+                                      "und in die markierte Zeile dieser Liste eintragen. Das Handy speichert keine "
+                                      "Bilder."))
+        self.ex_scan_btn.clicked.connect(lambda: self.open_scanner("existing"))
         btns = QHBoxLayout()
-        for b in (add, rem, pull):
+        for b in (add, rem, pull, self.ex_scan_btn):
             btns.addWidget(b)
         btns.addStretch()
         btns.addWidget(self.ex_audit_btn)
@@ -119,6 +126,7 @@ class ExistingTabMixin:
         v.addLayout(btns)
 
         self.ex_test = QPushButton(T("Verbindung testen"))
+        set_role(self.ex_test, "go")
         self.ex_test.setMinimumHeight(38)
         self.ex_test.setDefault(True)
         self.ex_test.setToolTip(T("Prüft je Server nur lesend: Port, Verschlüsselung, Hersteller, Anmeldung, Modell,\n"
@@ -126,6 +134,7 @@ class ExistingTabMixin:
                                   "genau einen Anmeldeversuch, damit ein falsches Passwort kein Konto sperrt."))
         self.ex_test.clicked.connect(self.ex_run)
         self.ex_stop = QPushButton(T("Abbrechen"))
+        set_role(self.ex_stop, "stop")
         self.ex_stop.setEnabled(False)
         self.ex_stop.clicked.connect(self.ex_abort)
         self.ex_take = QPushButton(T("Übernehmen in Neuware, UEFI, Dienste"))

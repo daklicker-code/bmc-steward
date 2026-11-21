@@ -7,7 +7,7 @@ from .i18n import T
 
 
 __author__ = "Björn Franzke"
-__version__ = "3.17.1"
+__version__ = "3.18.0"
 __license__ = "MIT"
 URL = "https://github.com/daklicker-code/bmc-steward"
 
@@ -128,6 +128,16 @@ def mask(text):
     """Passwörter kommen nie ins Protokoll: nur Länge und Form (A Großbuchstabe, a Kleinbuchstabe, 9 Ziffer, # Rest)."""
     return f"{len(text)} Z. " + "".join("A" if c.isupper() else "a" if c.islower() else "9" if c.isdigit() else "#"
                                        for c in text[:40])
+
+
+def set_role(button, role):
+    """Farbe eines Knopfs nach seiner Wirkung (Stylesheet in theme.py): "go" = startet oder verbindet (grün),
+    "stop" = stoppt oder trennt (rot), "scan" = Handy-Scanner (dunkeltürkis), "" = neutral."""
+    button.setProperty("role", role)
+    st = button.style()
+    st.unpolish(button)
+    st.polish(button)
+    return button
 
 
 def intro_label(html):

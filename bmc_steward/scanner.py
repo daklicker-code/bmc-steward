@@ -22,6 +22,7 @@ from .ossl import find_openssl
 from . import deps
 from .i18n import T
 from .core import WINDOWS, __version__, mask
+from .core import set_role
 def _win():
     from . import main
     return main.Window
@@ -765,11 +766,11 @@ class ScannerDialog(QDialog):
         self.setMinimumHeight(560)
         self.target = QComboBox()
         for i, name in enumerate(i18n.COLS):
-            self.target.addItem(name, i)
+            self.target.addItem(name, ("new", i))
         self.target.setCurrentIndex(1)       # Passwort, die bisherige (einzige) Voreinstellung
-        self.target.setToolTip(T("In welche Spalte der Serverliste die Scans eingetragen werden, z. B. "
-                                 "„Passwort“ oder „Seriennummer“. Lässt sich jederzeit umschalten, auch "
-                                 "während der Scanner läuft - ab dem nächsten Scan gilt die neue Spalte."))
+        self.target.setToolTip(T("In welches Feld die Scans eingetragen werden, z. B. „Passwort“ oder "
+                                 "„Seriennummer“ – auf der Seite, von der aus der Scanner geöffnet wurde. Lässt "
+                                 "sich jederzeit umschalten, auch während der Scanner läuft."))
         self.way = QComboBox()
         for key, text in self.WAYS:
             self.way.addItem(T(text), key)
@@ -788,6 +789,7 @@ class ScannerDialog(QDialog):
         self.refresh.setToolTip(T("Adressen neu einlesen, z. B. nachdem das Handy angesteckt wurde."))
         self.refresh.clicked.connect(self.fill_ifaces)
         self.toggle = QPushButton(T("Starten"))
+        set_role(self.toggle, "go")
         self.toggle.clicked.connect(self.toggle_server)
         self.qr_wifi = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
         self.wifi_info = QLabel()
@@ -1079,6 +1081,7 @@ class ScannerDialog(QDialog):
         server.debug = self.debug.isChecked()
         self.server = server
         self.toggle.setText(T("Beenden"))
+        set_role(self.toggle, "stop")
         link = server.url()
         self.url.setText(f"<b>{html.escape(link)}</b>")
         if ssid:
@@ -1112,6 +1115,7 @@ class ScannerDialog(QDialog):
             self.server = None
         self.stop_hotspot()
         self.toggle.setText(T("Starten"))
+        set_role(self.toggle, "go")
         for w in (self.way, self.iface, self.refresh):
             w.setEnabled(True)
         for w in (self.qr, self.qr_wifi, self.url, self.wifi_info):
@@ -1123,15 +1127,25 @@ class ScannerDialog(QDialog):
         self.state.setText(T("Gestoppt"))
         self.fill_ifaces()
 
+    def set_targets(self, targets, default):
+        """Zielfelder je Seite (Neuware, Bestandsserver, Systemaudit); die Wahl gilt ab dem nächsten Scan."""
+        self.target.clear()
+        for name, data in targets:
+            self.target.addItem(name, data)
+        self.target.setCurrentIndex(default)
+
     def on_value(self, value, holder):
         """Ein Wert vom Handy ist da: ins gewählte Zielfeld, ohne ihn irgendwo anzuzeigen - auch nicht
         im Protokoll, egal ob Passwort oder ein unkritisches Feld wie Seriennummer."""
-        col = self.target.currentData()
-        row = self.win.scan_to_row(value, col)
-        holder["row"] = row
+        target = self.target.currentData()
+        row = self.win.scan_value(value, target) if hasattr(self.win, "scan_value") else \
+            self.win.scan_to_row(value, target[1])
+        holder["row"] = max(row, 0) if row != -1 else 1
         holder["done"].set()
         label = self.target.currentText()
-        if row:
+        if row == -1:
+            self.say(T("{0} eingetragen").format(label))
+        elif row:
             self.say(T('{0} in Zeile {1} eingetragen').format(label, row))
         else:
             self.say(T("Kein freies Feld, nichts eingetragen"))

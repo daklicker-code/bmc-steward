@@ -16,6 +16,7 @@ from .applog import LOG
 from .core import LIVE_CSS
 from .i18n import HERE, T
 from .redfish import ServicesEngine, ServicesEngineThread
+from .core import set_role
 
 
 class ServicesTabMixin:
@@ -252,9 +253,11 @@ class ServicesTabMixin:
         self.svc_dry.setChecked(True)
         self.svc_dry.setToolTip(T("Mit Haken wird nichts geändert; das Protokoll zeigt nur die Aufrufe."))
         self.svc_start = QPushButton(T("Trockenlauf für alle Server der Liste"))
+        set_role(self.svc_start, "go")
         self.svc_start.setMinimumHeight(34)
         self.svc_start.clicked.connect(self.services_run)
         self.svc_stop = QPushButton(T("Abbrechen"))
+        set_role(self.svc_stop, "stop")
         self.svc_stop.setEnabled(False)
         self.svc_stop.clicked.connect(self.svc_abort)
         self.svc_status = QLabel(T("Bereit"))
